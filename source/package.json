@@ -1,0 +1,17 @@
+{
+  "name": "object-accounting",
+  "version": "1.0.0",
+  "description": "Система учёта объектов и смет",
+  "private": true,
+  "scripts": {
+    "lint": "eslint static/js/",
+    "lint:fix": "eslint static/js/ --fix",
+    "format": "prettier --write \"static/js/**/*.js\" \"static/css/**/*.css\"",
+    "format:check": "prettier --check \"static/js/**/*.js\" \"static/css/**/*.css\"",
+    "check": "npm run format:check && npm run lint"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0"
+  }
+}

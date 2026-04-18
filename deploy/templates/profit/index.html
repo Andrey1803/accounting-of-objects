@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Прибыль по клиентам</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Page-specific styles */
+        .header { background: linear-gradient(135deg, #4CAF50, #388E3C); }
+        .card .val { color: #4CAF50; }
+        table th { background: #4CAF50; }
+        .profit-pos { color: #4CAF50; font-weight: bold; }
+        .profit-neg { color: #f44336; font-weight: bold; }
+        .margin-bar { height: 20px; border-radius: 4px; min-width: 30px; text-align: center; color: white; font-size: 11px; line-height: 20px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📈 Прибыль по клиентам</h1>
+        <p class="subtitle" style="margin:0.35rem 0 0;font-size:0.9rem;opacity:0.9;">Выручка: max(работы в карточке, по смете) + материалы по смете (розница). Затраты: закуп материалов по смете + прочие (поле «Затраты» минус дубль розницы сметы, если оно совпадает). Прибыль = выручка − эти затраты − зарплата.</p>
+        <div class="header-actions">
+            <a href="/" class="btn btn-secondary">← Объекты</a>
+            <a href="/stats" class="btn btn-secondary">📊 Статистика</a>
+        </div>
+    </div>
+    <div class="container">
+        <div class="summary">
+            <div class="card"><div class="val" id="s-clients">0</div><div class="lbl">Клиентов</div></div>
+            <div class="card"><div class="val" id="s-revenue">0</div><div class="lbl">Общая выручка</div></div>
+            <div class="card"><div class="val" id="s-profit">0</div><div class="lbl">Общая прибыль</div></div>
+            <div class="card"><div class="val" id="s-margin">0%</div><div class="lbl">Средняя маржа</div></div>
+        </div>
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th>№</th><th>Клиент</th><th>Объектов</th><th>Выручка</th><th>Затраты</th><th>Зарплата</th><th>Прибыль</th><th>Маржа</th><th>Долг</th></tr></thead>
+                <tbody id="tbl"></tbody>
+            </table>
+        </div>
+    </div>
+    <script>
+        function money(v){return Number(v||0).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' BYN';}
+        function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+        function objectTotalRevenue(o){
+            if(o.total_revenue!=null&&o.total_revenue!==''){var tr=Number(o.total_revenue);if(!Number.isNaN(tr))return tr;}
+            var sw=Number(o.sum_work)||0,ew=Number(o.estimate_works)||0,em=Number(o.estimate_materials)||0;
+            return Math.max(sw,ew)+em;
+        }
+        function objectBalance(o){
+            if(o.balance!=null&&o.balance!==''){var b=Number(o.balance);if(!Number.isNaN(b))return b;}
+            var rev=objectTotalRevenue(o),adv=Number(o.advance)||0;
+            return rev-adv;
+        }
+        function objectTotalExpensesFallback(o){
+            var em=Number(o.estimate_materials)||0,emp=Number(o.estimate_material_profit)||0,raw=Number(o.expenses)||0;
+            var mcogs=Math.max(0,em-emp);
+            var other=(em>0&&raw+1e-9>=em)?Math.max(0,raw-em):raw;
+            return mcogs+other;
+        }
+        function objectProfitFallback(o){
+            var rev=o.total_revenue!=null&&o.total_revenue!==''?Number(o.total_revenue):objectTotalRevenue(o);
+            var exp=o.total_expenses!=null&&o.total_expenses!==''?Number(o.total_expenses):objectTotalExpensesFallback(o);
+            var sal=Number(o.salary)||0;
+            return rev-exp-sal;
+        }
+        async function load(){
+            try{
+                const r=await fetch('/api/objects-with-estimates');
+                const d=await r.json();
+                const objs=d.objects||[];
+                const clients={};
+                objs.forEach(function(o){
+                    var c=o.client||'Без клиента';
+                    if(!clients[c])clients[c]={name:c,count:0,revenue:0,expenses:0,salary:0,profit:0,debt:0};
+                    clients[c].count++;
+                    var rev=o.total_revenue!=null&&o.total_revenue!==''?Number(o.total_revenue):objectTotalRevenue(o);
+                    var exp=o.total_expenses!=null&&o.total_expenses!==''?Number(o.total_expenses):objectTotalExpensesFallback(o);
+                    var sal=o.salary||0;
+                    var prof=o.total_profit!=null&&o.total_profit!==''?Number(o.total_profit):objectProfitFallback(o);
+                    var bal=objectBalance(o);
+                    clients[c].revenue+=rev;clients[c].expenses+=exp;clients[c].salary+=sal;
+                    clients[c].profit+=prof;
+                    if(bal>0&&o.status!=='Ожидает старта'&&o.status!=='Запланирован')clients[c].debt+=bal;
+                });
+                var arr=Object.values(clients).sort(function(a,b){return b.revenue-a.revenue;});
+                var totalRev=0,totalProf=0,totalDebt=0;
+                arr.forEach(function(c){totalRev+=c.revenue;totalProf+=c.profit;totalDebt+=c.debt;});
+                document.getElementById('s-clients').textContent=arr.length;
+                document.getElementById('s-revenue').textContent=money(totalRev);
+                document.getElementById('s-profit').textContent=money(totalProf);
+                var avgMarg=totalRev>0?((totalProf/totalRev)*100).toFixed(1):0;
+                document.getElementById('s-margin').textContent=avgMarg+'%';
+                var tbl=document.getElementById('tbl');tbl.innerHTML='';
+                arr.forEach(function(c,i){
+                    var marg=c.revenue>0?((c.profit/c.revenue)*100).toFixed(1):0;
+                    var margColor=marg>=30?'#4CAF50':marg>=10?'#FF9800':'#f44336';
+                    var tr=document.createElement('tr');
+                    tr.innerHTML='<td>'+(i+1)+'</td><td style="font-weight:600">'+esc(c.name)+'</td><td>'+c.count+'</td><td>'+money(c.revenue)+'</td><td>'+money(c.expenses)+'</td><td>'+money(c.salary)+'</td><td class="'+(c.profit>=0?'profit-pos':'profit-neg')+'">'+money(c.profit)+'</td><td><div class="margin-bar" style="background:'+margColor+'">'+marg+'%</div></td><td class="'+(c.debt>0?'profit-neg':'')+'">'+money(c.debt)+'</td>';
+                    tbl.appendChild(tr);
+                });
+            }catch(e){
+                document.getElementById('tbl').innerHTML='<tr><td colspan="9" style="padding:30px;text-align:center;color:red;">Ошибка: '+esc(e.message)+'</td></tr>';
+            }
+        }
+        load();
+    </script>
+</body>
+</html>

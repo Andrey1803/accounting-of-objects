@@ -1,0 +1,39 @@
+{
+  "env": {
+    "browser": true,
+    "es2021": true
+  },
+  "extends": "eslint:recommended",
+  "parserOptions": {
+    "ecmaVersion": "latest"
+  },
+  "rules": {
+    "no-unused-vars": ["warn", { "args": "none" }],
+    "no-console": "off",
+    "no-alert": "warn",
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-with": "error",
+    "no-var": "off",
+    "prefer-const": "warn",
+    "eqeqeq": ["warn", "always"],
+    "curly": ["warn", "all"],
+    "semi": ["warn", "always"],
+    "quotes": ["warn", "single", { "avoidEscape": true }],
+    "indent": ["warn", 4],
+    "comma-dangle": ["warn", "never"],
+    "space-before-function-paren": ["warn", "never"],
+    "keyword-spacing": "warn",
+    "key-spacing": "warn"
+  },
+  "globals": {
+    "API": "readonly",
+    "UI": "readonly",
+    "OfflineDB": "readonly",
+    "ObjectsPage": "readonly",
+    "ClientsPage": "readonly",
+    "WorkersPage": "readonly",
+    "EstimatesPage": "readonly",
+    "CatalogPage": "readonly"
+  }
+}

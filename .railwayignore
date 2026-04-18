@@ -1,0 +1,30 @@
+# Keep `railway up` uploads small (Railway limit ~few hundred MB). PyInstaller trees are huge.
+dist/
+distribution/
+build/
+backups/
+user_data/
+
+# Local / dev
+source/
+tests/
+scripts/
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+.qwen/
+.vscode/
+.idea/
+
+# Local data & secrets (use Railway Variables in dashboard)
+*.db
+.env
+.env.local
+.env.railway
+.secret_key
+.opt_config.json
+cookies.txt
+login_result.txt
+
+node_modules/

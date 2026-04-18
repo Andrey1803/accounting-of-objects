@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Регистрация</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Page-specific styles */
+        .toggle-pw{position:absolute;right:12px;cursor:pointer;font-size:18px;color:#999;background:none;border:none;padding:5px;user-select:none}
+        .pw-strength{height:4px;border-radius:2px;margin-top:5px;background:#eee;overflow:hidden}
+        .pw-strength .bar{height:100%;width:0%;transition:all 0.3s;border-radius:2px}
+        .pw-hint{font-size:11px;color:#999;margin-top:3px}
+        #pw-match{font-size:11px;margin-top:3px;display:none}
+        #pw-match.match{color:#2e7d32;display:block}
+        #pw-match.no-match{color:#c62828;display:block}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>👤 Регистрация</h1>
+        {% if needs_invite|default(true) %}
+        <p class="subtitle">Нужен ключ приглашения от администратора (или откройте ссылку из письма).</p>
+        {% else %}
+        <p class="subtitle">Вы создаёте первого пользователя — он станет администратором. Ключ приглашения не требуется.</p>
+        {% endif %}
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}{% endif %}{% endwith %}
+        
+        <form method="POST" id="reg-form">
+            <div class="form-group">
+                <label>Логин * (мин. 3 символа)</label>
+                <input type="text" name="username" required minlength="3" placeholder="Придумайте логин">
+            </div>
+            {% if needs_invite|default(true) %}
+            <div class="form-group">
+                <label>Ключ приглашения *</label>
+                <input type="text" name="invite_key" required autocomplete="off" placeholder="Вставьте ключ или откройте ссылку с ?invite=..." value="{{ invite_prefill|default('')|e }}">
+            </div>
+            {% endif %}
+            <div class="form-group">
+                <label>Пароль * (мин. 8 символов)</label>
+                <input type="password" name="password" id="pw1" required minlength="8" placeholder="Введите пароль">
+                <button type="button" class="toggle-pw" onclick="togglePw('pw1',this)" title="Показать пароль">👁️</button>
+                <div class="pw-strength"><div class="bar" id="pw-bar"></div></div>
+                <div class="pw-hint" id="pw-hint"></div>
+            </div>
+            <div class="form-group">
+                <label>Подтвердите пароль *</label>
+                <input type="password" name="password_confirm" id="pw2" required minlength="8" placeholder="Повторите пароль" oninput="checkMatch()">
+                <button type="button" class="toggle-pw" onclick="togglePw('pw2',this)" title="Показать пароль">👁️</button>
+                <div id="pw-match"></div>
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" name="email" placeholder="Необязательно">
+            </div>
+            <button type="submit" class="btn" id="submit-btn" disabled>Зарегистрироваться</button>
+        </form>
+        <div class="footer">
+            Уже есть аккаунт? <a href="/login">Войти</a>
+        </div>
+    </div>
+
+    <script>
+        function togglePw(id, btn) {
+            const pw = document.getElementById(id);
+            if (pw.type === 'password') {
+                pw.type = 'text';
+                btn.textContent = '🙈';
+                btn.title = 'Скрыть пароль';
+            } else {
+                pw.type = 'password';
+                btn.textContent = '👁️';
+                btn.title = 'Показать пароль';
+            }
+        }
+
+        function checkMatch() {
+            const pw1 = document.getElementById('pw1').value;
+            const pw2 = document.getElementById('pw2').value;
+            const match = document.getElementById('pw-match');
+            const btn = document.getElementById('submit-btn');
+            
+            if (pw2.length === 0) {
+                match.style.display = 'none';
+                btn.disabled = true;
+                return;
+            }
+            
+            if (pw1 === pw2) {
+                match.textContent = '✅ Пароли совпадают';
+                match.className = 'match';
+                btn.disabled = false;
+            } else {
+                match.textContent = '❌ Пароли не совпадают';
+                match.className = 'no-match';
+                btn.disabled = true;
+            }
+        }
+
+        // Проверка силы пароля
+        document.getElementById('pw1').addEventListener('input', function() {
+            const pw = this.value;
+            const bar = document.getElementById('pw-bar');
+            const hint = document.getElementById('pw-hint');
+            
+            let strength = 0;
+            if (pw.length >= 8) strength++;
+            if (pw.length >= 12) strength++;
+            if (/[A-Z]/.test(pw)) strength++;
+            if (/[0-9]/.test(pw)) strength++;
+            if (/[^A-Za-z0-9]/.test(pw)) strength++;
+            
+            const levels = [
+                { width: '0%', color: '#eee', text: '' },
+                { width: '20%', color: '#f44336', text: 'Очень слабый' },
+                { width: '40%', color: '#FF9800', text: 'Слабый' },
+                { width: '60%', color: '#FFC107', text: 'Средний' },
+                { width: '80%', color: '#8BC34A', text: 'Хороший' },
+                { width: '100%', color: '#4CAF50', text: 'Отличный' }
+            ];
+            
+            const level = levels[strength];
+            bar.style.width = level.width;
+            bar.style.background = level.color;
+            hint.textContent = level.text;
+            
+            checkMatch();
+        });
+    </script>
+</body>
+</html>

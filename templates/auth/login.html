@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Вход в систему</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Page-specific styles */
+        .login-card{background:white;border-radius:20px;padding:40px;width:420px;box-shadow:0 20px 60px rgba(0,0,0,0.3)}
+        .toggle-pw{position:absolute;right:12px;top:36px;cursor:pointer;font-size:18px;color:#999;user-select:none;background:none;border:none;padding:5px}
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h1>🔐 Учёт объектов</h1>
+        <p class="subtitle">Войдите для продолжения</p>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+        
+        <form method="POST" id="login-form">
+            <div class="form-group">
+                <label>Логин</label>
+                <input type="text" id="username" name="username" required placeholder="Введите логин" autocomplete="username" autofocus>
+            </div>
+            <div class="form-group">
+                <label>Пароль</label>
+                <input type="password" id="password" name="password" required placeholder="Введите пароль" autocomplete="current-password">
+                <button type="button" class="toggle-pw" onclick="togglePw()" title="Показать пароль">👁️</button>
+            </div>
+            <div class="options">
+                <label class="option">
+                    <input type="checkbox" name="remember" id="remember"> Запомнить меня
+                </label>
+            </div>
+            <button type="submit" class="btn">Войти</button>
+        </form>
+        {% if register_enabled %}
+        <div style="text-align:center;margin-top:15px;">
+            <a href="/register" style="color:#0f3460;font-size:13px;">Нет аккаунта? Зарегистрироваться</a>
+        </div>
+        {% endif %}
+        <div class="footer">
+            {% if register_enabled %}
+            <p style="font-size:12px;color:#666;line-height:1.45">Регистрация: если учётных записей ещё нет — можно создать первого (администратора) без ключа. После появления пользователей — только по ключу приглашения со страницы администратора.</p>
+            {% else %}
+            <p style="font-size:12px;color:#888;">Регистрация отключена. Вход только для существующих учётных записей.</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <script>
+        // Показать/скрыть пароль
+        function togglePw() {
+            const pw = document.getElementById('password');
+            const btn = document.querySelector('.toggle-pw');
+            if (pw.type === 'password') {
+                pw.type = 'text';
+                btn.textContent = '🙈';
+                btn.title = 'Скрыть пароль';
+            } else {
+                pw.type = 'password';
+                btn.textContent = '👁️';
+                btn.title = 'Показать пароль';
+            }
+        }
+        
+        // Сохранение логина при входе
+        const form = document.getElementById('login-form');
+        const rememberCheck = document.getElementById('remember');
+        
+        // Загружаем сохранённый логин
+        const savedUser = localStorage.getItem('saved_username');
+        if (savedUser) {
+            document.getElementById('username').value = savedUser;
+            rememberCheck.checked = true;
+        }
+        
+        // При отправке сохраняем логин если галочка стоит
+        form.addEventListener('submit', function() {
+            if (rememberCheck.checked) {
+                localStorage.setItem('saved_username', document.getElementById('username').value);
+            } else {
+                localStorage.removeItem('saved_username');
+            }
+        });
+    </script>
+</body>
+</html>

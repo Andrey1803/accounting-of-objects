@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Нет подключения</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Page-specific styles */
+        body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+        .offline-card { background: white; border-radius: var(--radius-2xl); padding: 40px; max-width: 400px; text-align: center; box-shadow: var(--shadow-lg); }
+        .offline-card h1 { font-size: 22px; color: var(--color-text); margin-bottom: 10px; }
+        .offline-card p { color: var(--color-text-secondary); font-size: 14px; line-height: 1.6; margin-bottom: 20px; }
+        .offline-icon { font-size: 64px; margin-bottom: 20px; }
+        .offline-status { font-size: 12px; color: var(--color-text-muted); margin-top: 15px; }
+    </style>
+</head>
+<body>
+    <div class="offline-card">
+        <div class="offline-icon">📡</div>
+        <h1>Нет подключения к серверу</h1>
+        <p>Проверьте интернет-соединение. Приложение попробует синхронизировать данные автоматически при восстановлении связи.</p>
+        <button class="btn" onclick="location.reload()">🔄 Попробовать снова</button>
+        <div class="offline-status" id="status">Ожидание подключения...</div>
+    </div>
+    <script>
+        // Автопроверка каждые 5 секунд
+        setInterval(function() {
+            fetch('/health').then(function(r) {
+                if (r.ok) location.reload();
+            }).catch(function() {});
+            document.getElementById('status').textContent = 'Проверка соединения...';
+        }, 5000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#2E75B6" rx="60"/>
+  <text x="256" y="200" text-anchor="middle" font-family="Arial,sans-serif" font-size="60" font-weight="bold" fill="white">УЧЁТ</text>
+  <text x="256" y="320" text-anchor="middle" font-family="Arial,sans-serif" font-size="120" fill="white">📋</text>
+  <text x="256" y="430" text-anchor="middle" font-family="Arial,sans-serif" font-size="36" fill="rgba(255,255,255,0.8)">Объекты · Сметы</text>
+</svg>

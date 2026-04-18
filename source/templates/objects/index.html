@@ -1,0 +1,2081 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <!-- PWA -->
+    <meta name="theme-color" content="#2E75B6">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
+    <title>Учёт объектов</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Page-specific styles */
+        .header {
+            background: linear-gradient(135deg, #2E75B6, #1E5A8E);
+            padding: 10px 30px;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: auto;
+            position: relative;
+        }
+        .header.offline { background: linear-gradient(135deg, #f44336, #d32f2f); }
+        .header > div { width: 100%; }
+
+        .online-badge {
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.25);
+            display: inline-flex;
+            align-items: center;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .online-badge.offline { background: #b71c1c; }
+
+        .sync-btn {
+            position: fixed;
+            bottom: 70px;
+            right: 20px;
+            z-index: 9998;
+            background: #FF9800;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            display: none;
+        }
+        .sync-btn:hover { background: #F57C00; }
+
+        .stat-card {
+            background: rgba(255,255,255,0.15);
+            padding: clamp(5px, 1vw, 15px) clamp(10px, 1.5vw, 25px);
+            border-radius: var(--radius);
+            text-align: center;
+            min-width: 0;
+        }
+        .stat-card .value { font-size: clamp(14px, 2vw, 28px); font-weight: bold; }
+        .stat-card .label { font-size: var(--fs-sm); opacity: 0.9; }
+
+        .header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
+        .header-actions .btn-group { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+
+        .filters input, .filters select {
+            padding: clamp(5px, 0.8vw, 10px) clamp(8px, 1vw, 14px);
+            font-size: var(--fs-sm);
+            min-width: 0;
+            flex: 1;
+            max-width: 300px;
+        }
+
+        table {
+            width: 100%;
+            min-width: 900px;
+        }
+        th {
+            padding: var(--pad-sm);
+            font-size: var(--fs-sm);
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        td {
+            padding: var(--pad-sm);
+            font-size: var(--fs-sm);
+            text-align: center;
+        }
+        td:nth-child(4) { text-align: left; }
+
+        .debt-row td { font-weight: 600; }
+        .balance-cell { font-weight: bold; text-align: right; }
+
+        #pagination {
+            display: flex;
+            justify-content: center;
+            gap: clamp(3px, 0.5vw, 8px);
+            padding: var(--pad-sm);
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .modal-content {
+            padding: clamp(15px, 3vw, 40px);
+            max-width: 1400px;
+        }
+        .modal-content h2 { margin-bottom: var(--gap); font-size: var(--fs-md); color: #2E75B6; }
+
+        .estimates-modal .modal-content { width: 99vw !important; max-width: 99vw !important; max-height: 98vh !important; min-height: 80vh; }
+        .estimates-modal .modal-content > div:first-child { flex-wrap: wrap; }
+        .estimates-modal .est-table { font-size: 14px; }
+        .est-table { width: 100%; border-collapse: collapse; margin-top: var(--gap); }
+        .est-table th { background: #FF6B35; padding: clamp(4px, 0.8vw, 10px); font-size: var(--fs-sm); }
+        .est-table td { padding: clamp(4px, 0.8vw, 10px); border-bottom: 1px solid #eee; font-size: var(--fs-sm); }
+
+        .user-menu-container {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .user-menu-btn {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0 5px;
+            display: flex;
+            align-items: center;
+        }
+        .user-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            color: #333;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            width: 200px;
+            z-index: 2000;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .user-dropdown.active { display: block; }
+        .user-dropdown-item {
+            padding: 12px 15px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: background 0.2s;
+            color: #333;
+            text-decoration: none;
+        }
+        .user-dropdown-item:last-child { border-bottom: none; }
+        .user-dropdown-item:hover { background: #f5f5f5; }
+        .user-dropdown-item.danger { color: #f44336; }
+        .user-dropdown-item.danger:hover { background: #ffebee; }
+    </style>
+</head>
+<body>
+    <div class="header" id="mainHeader">
+        <!-- Верхний ряд: Название (слева) и Пользователь/Меню (справа) -->
+        <div style="display:flex; justify-content:space-between; align-items:center; width:100%; margin-bottom:8px;">
+            <h1 style="margin:0;">Учёт объектов</h1>
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <div class="user-menu-container" style="position:relative;">
+                    <span style="font-size:13px; font-weight:600; color:white; white-space:nowrap;">👤 {{ current_user.username }}</span>
+                    <button class="user-menu-btn" onclick="toggleUserMenu()" title="Меню">☰</button>
+                    <div class="user-dropdown" id="userDropdown">
+                        <a href="/estimate/catalog" class="user-dropdown-item">
+                            <span>📦</span> Каталог
+                        </a>
+                        <div class="user-dropdown-item" onclick="openPriceSyncModal()">
+                            <span>🔄</span> Синхронизация цен
+                        </div>
+                        <div class="user-dropdown-item" onclick="openPasswordModal()">
+                            <span>🔑</span> Сменить пароль
+                        </div>
+                        <a href="/logout" class="user-dropdown-item danger">
+                            <span>🚪</span> Выйти
+                        </a>
+                        <div class="user-dropdown-item danger" onclick="deleteAccount()">
+                            <span>🗑️</span> Удалить аккаунт
+                        </div>
+                    </div>
+                </div>
+                <span class="online-badge" id="onlineBadge">🟢 Онлайн</span>
+            </div>
+        </div>
+
+        <!-- Статистика -->
+        <div class="stats" style="display:flex; gap: 20px; flex-wrap:wrap; justify-content:center; width:100%; margin-bottom:15px;">
+            <div class="stat-card"><div class="value" id="stat-total">0</div><div class="label">Всего</div></div>
+            <div class="stat-card"><div class="value" id="stat-progress">0</div><div class="label">В работе</div></div>
+            <div class="stat-card"><div class="value" id="stat-completed">0</div><div class="label">Выполнено / закрыто</div></div>
+        </div>
+
+        <!-- Навигация -->
+        <div style="display:flex; flex-wrap:wrap; gap: 10px; justify-content:center; width:100%; margin-bottom:8px;">
+            <div class="btn-group">
+                <a href="/estimate/" style="text-decoration:none"><button class="btn" style="background:#FF6B35; color:white;">📊 Сметы</button></a>
+                <a href="/estimate/catalog" style="text-decoration:none"><button class="btn" style="background:#4CAF50; color:white;">📦 Каталог</button></a>
+                <a href="/profit" style="text-decoration:none"><button class="btn" style="background:#8BC34A; color:white;">📈 Прибыль</button></a>
+                <a href="/report" style="text-decoration:none"><button class="btn" style="background:#673AB7; color:white;">📋 Отчёт</button></a>
+                <a href="/stats" style="text-decoration:none"><button class="btn" style="background:#009688; color:white;">📊 Статистика</button></a>
+                <a href="/workers" style="text-decoration:none"><button class="btn" style="background:#FF5722; color:white;">👷 Рабочие</button></a>
+                <a href="/clients" style="text-decoration:none"><button class="btn" style="background:#9C27B0; color:white;">👥 Клиенты</button></a>
+            </div>
+        </div>
+
+        <!-- Быстрое создание + Кнопка добавить -->
+        <div style="display:flex; justify-content:center; gap:10px; flex-wrap:wrap; width:100%; margin-bottom:5px;">
+            <input type="text" id="quickName" placeholder="Название объекта..." style="padding:6px 14px; border:2px solid #4CAF50; border-radius:6px; font-size:14px; width:250px;" onkeydown="if(event.key==='Enter')quickAdd()">
+            <button class="btn btn-primary" style="font-size:14px; padding:6px 16px;" onclick="quickAdd()">⚡ Быстро создать</button>
+            <button class="btn" style="background:#2196F3; color:white; font-size:14px; padding:6px 16px;" onclick="openModal()">+ Полный</button>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="filters" autocomplete="off">
+            <input type="text" id="filter-search" name="filter_search" placeholder="Поиск по наименованию..." autocomplete="off" readonly>
+            <button type="button" class="btn" style="background:#2E75B6; color:white; font-size:12px; padding:6px 12px;" onclick="enableSearch()">🔍</button>
+            <select id="filter-status" autocomplete="off">
+                <option value="">Все статусы</option>
+                <option>Ожидает старта</option><option>В работе</option><option>Приостановлен</option><option>Выполнен</option><option>Закрыт</option>
+            </select>
+            <select id="filter-client" autocomplete="off"><option value="">Все клиенты</option></select>
+        </div>
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th onclick="sortTable(1)" style="cursor:pointer">Дата начала ↕</th>
+                        <th onclick="sortTable(2)" style="cursor:pointer">Дата завершения ↕</th>
+                        <th onclick="sortTable(3)" style="cursor:pointer">Наименование ↕</th>
+                        <th onclick="sortTable(4)" style="cursor:pointer">Клиент ↕</th>
+                        <th onclick="sortTable(5)" style="cursor:pointer" title="max(сумма работ, работы по смете) + материалы по смете">Выручка ↕</th>
+                        <th onclick="sortTable(6)" style="cursor:pointer" title="Закуп материалов по смете + прочие затраты (без двойного учёта розницы сметы)">Затраты ↕</th>
+                        <th onclick="sortTable(7)" style="cursor:pointer">Статус ↕</th>
+                        <th onclick="sortTable(8)" style="cursor:pointer">Аванс ↕</th>
+                        <th onclick="sortTable(9)" style="cursor:pointer">Затраты на рабочих ↕</th>
+                        <th onclick="sortTable(10)" style="cursor:pointer">Прибыль ↕</th>
+                        <th onclick="sortTable(11)" style="cursor:pointer">Прибыль с матер. ↕</th>
+                        <th onclick="sortTable(12)" style="cursor:pointer">Маржа ↕</th>
+                        <th onclick="sortTable(13)" style="cursor:pointer">Остаток ↕</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body"></tbody>
+            </table>
+        </div>
+        <!-- Пагинация -->
+        <div id="pagination" style="display:flex;justify-content:center;gap:5px;padding:15px;align-items:center;"></div>
+    </div>
+
+    <!-- Модалка объекта -->
+    <div class="modal" id="modal">
+        <div class="modal-content">
+            <h2 id="modal-title">Добавить объект</h2>
+            <form id="object-form">
+                <input type="hidden" id="obj-id">
+                <div class="form-row">
+                    <div class="form-group"><label>Дата начала</label><input type="date" id="date-start"></div>
+                    <div class="form-group"><label>Дата завершения</label><input type="date" id="date-end"></div>
+                </div>
+                <div class="form-group"><label>Наименование *</label><input type="text" id="name" required placeholder="Например: Колодищи - насос"></div>
+                <div class="form-group">
+                    <label>Клиент</label>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <select id="client" style="flex:1">
+                            <option value="">-- Выберите клиента --</option>
+                            <option value="__new__">+ Создать нового клиента...</option>
+                        </select>
+                        <button type="button" class="btn" style="background:#9C27B0; color:white; padding:6px 12px; font-size:12px;" onclick="openNewClientModal()" title="Создать клиента">+</button>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Сумма работ</label><input type="number" id="sum-work" step="0.01" value="0"></div>
+                    <div class="form-group"><label>Затраты</label><input type="number" id="expenses" step="0.01" value="0"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Статус</label>
+                        <select id="status" title="Ожидает старта — ещё не начали. Выполнен — работы сданы. Закрыт — объект финансово закрыт."><option>Ожидает старта</option><option>В работе</option><option>Приостановлен</option><option>Выполнен</option><option>Закрыт</option></select>
+                    </div>
+                    <div class="form-group"><label>Аванс</label><input type="number" id="advance" step="0.01" value="0"></div>
+                </div>
+                <div class="form-group"><label>Затраты на рабочих</label>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input type="number" id="salary" step="0.01" value="0" style="flex:1;" readonly title="Рассчитывается автоматически">
+                        <button type="button" class="btn" style="background:#9C27B0; color:white; font-size:11px; padding:6px 10px;" onclick="openWorkersModal(editingId)">👷 Рабочие</button>
+                    </div>
+                    <small id="salary-info" style="color:#666; display:block; margin-top:3px;"></small>
+                </div>
+                <div class="form-group"><label>Примечания</label><textarea id="notes" rows="2" placeholder="Дополнительная информация..."></textarea></div>
+                <div class="modal-buttons">
+                    <button type="submit" class="btn btn-primary">💾 Сохранить</button>
+                    <button type="button" class="btn" style="background:#FF9800; color:white;" id="btnDuplicate" onclick="duplicateObject()" title="Создать копию объекта">📋 Дублировать</button>
+                    <button type="button" class="btn btn-cancel" onclick="closeModal()">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Модалка смены пароля -->
+    <div class="modal" id="passwordModal">
+        <div class="modal-content" style="width: min(90vw, 500px);">
+            <h2>🔑 Смена пароля</h2>
+            <form id="password-form" onsubmit="submitPasswordChange(); return false;">
+                <div class="form-group"><label>Текущий пароль</label><input type="password" id="current-pass" placeholder="Введите текущий пароль" required></div>
+                <div class="form-group"><label>Новый пароль</label><input type="password" id="new-pass" placeholder="Введите новый пароль" required minlength="8"></div>
+                <div class="modal-buttons">
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                    <button type="button" class="btn btn-cancel" onclick="closePasswordModal()">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Модалка удаления аккаунта -->
+    <div class="modal" id="deleteAccountModal">
+        <div class="modal-content" style="width: min(90vw, 500px);">
+            <h2 style="color:#f44336;">⚠️ Удаление аккаунта</h2>
+            <p style="color:#666;margin:10px 0;font-size:14px;">ВНИМАНИЕ: Это действие необратимо. Все данные (объекты, сметы, клиенты) будут удалены.</p>
+            <form id="delete-account-form" onsubmit="submitDeleteAccount(); return false;">
+                <div class="form-group"><label>Введите пароль для подтверждения</label><input type="password" id="delete-pass" placeholder="Введите текущий пароль" required></div>
+                <div class="modal-buttons">
+                    <button type="submit" class="btn btn-danger" style="background:#f44336;color:white;">Удалить навсегда</button>
+                    <button type="button" class="btn btn-cancel" onclick="closeDeleteAccountModal()">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Модалка управления рабочими объекта -->
+    <div class="modal" id="objectWorkersModal">
+        <div class="modal-content" style="width: min(95vw, 700px);">
+            <h2>👷 Рабочие на объекте</h2>
+            <p style="color:#666; margin:5px 0 15px; font-size:13px;">Добавьте рабочих и укажите количество дней. Зарплата рассчитается автоматически.</p>
+            
+            <div style="display:flex; gap:10px; margin-bottom:15px; align-items:flex-end;">
+                <div style="flex:2;">
+                    <label style="font-size:12px; font-weight:600; display:block; margin-bottom:3px;">Рабочий</label>
+                    <select id="ow-worker" style="width:100%; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:13px;"></select>
+                </div>
+                <div style="flex:1;">
+                    <label style="font-size:12px; font-weight:600; display:block; margin-bottom:3px;">Дата начала</label>
+                    <input type="date" id="ow-date" style="width:100%; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
+                </div>
+                <div style="flex:0.7;">
+                    <label style="font-size:12px; font-weight:600; display:block; margin-bottom:3px;">Дней</label>
+                    <input type="number" id="ow-days" value="1" min="0.5" step="0.5" style="width:100%; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
+                </div>
+                <button type="button" class="btn" style="background:#4CAF50; color:white; padding:8px 12px;" onclick="addWorkerToObject()">+ Добавить</button>
+            </div>
+
+            <div id="object-workers-list" style="max-height:300px; overflow-y:auto;"></div>
+            
+            <div style="text-align:center; margin-top:15px; padding:10px; background:#e3f2fd; border-radius:5px;">
+                <small style="color:#666;">💡 Затраты на рабочих распределяются поровну между всеми объектами за день</small>
+            </div>
+            
+            <div class="modal-actions" style="display:flex; gap:10px; margin-top:15px; justify-content:flex-end;">
+                <button class="btn" style="background:#999" onclick="closeWorkersModal()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка смет -->
+    <div class="modal estimates-modal" id="estimates-modal">
+        <div class="modal-content" style="width:99vw !important; max-width:99vw !important; max-height:98vh !important; min-height:80vh;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <div>
+                    <h2 style="color:#FF6B35; margin:0;">📊 Сметы объекта</h2>
+                    <p style="margin:4px 0 0 0; font-size:14px; color:#666;" id="est-object-name"></p>
+                    <p style="margin:2px 0 0 0; font-size:12px; color:#999;" id="est-object-client"></p>
+                </div>
+                <button class="btn btn-cancel" onclick="closeEstimates()">✕ Закрыть</button>
+            </div>
+            <div style="margin-bottom:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <button type="button" class="btn btn-primary" onclick="openNewEstimate()" style="font-size:13px; padding:8px 16px;">+ Новая смета для этого объекта</button>
+                <button type="button" class="btn btn-secondary" onclick="copyEstimateInObjectModal()" style="font-size:13px; padding:8px 16px;" title="Копировать выбранную смету целиком">📋 Копировать</button>
+                <button type="button" class="btn btn-secondary" onclick="cutEstimateInObjectModal()" style="font-size:13px; padding:8px 16px;" title="Копировать в буфер и удалить">✂️ Вырезать</button>
+                <button type="button" class="btn btn-secondary" onclick="pasteEstimateInObjectModal()" style="font-size:13px; padding:8px 16px;" title="Вставить смету в этот объект">📥 Вставить</button>
+            </div>
+            <div style="max-height: 60vh; overflow-y: auto;">
+                <table class="est-table">
+                    <thead><tr>
+                        <th style="width:36px;text-align:center;" title="Выбрать смету"><input type="checkbox" class="est-select-all-cb" aria-label="Выделить все сметы" onchange="toggleSelectAllEstimatesModal(this.checked)"></th>
+                        <th>№</th><th>Дата</th><th>Статус</th><th>Материалы</th><th>Работы</th><th>Итого</th><th>Действия</th>
+                    </tr></thead>
+                    <tbody id="estimates-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка создания нового клиента -->
+    <div class="modal" id="newClientModal">
+        <div class="modal-content" style="width: min(90vw, 700px);">
+            <h2>👤 Новый клиент</h2>
+            <form id="new-client-form">
+                <div class="form-group"><label>ФИО / Организация *</label><input type="text" id="nc-name" required placeholder="Иванов Иван Иванович"></div>
+                <div class="form-group"><label>Телефон</label><input type="text" id="nc-phone" placeholder="+375 (29) 123-45-67"></div>
+                <div class="form-group"><label>Email</label><input type="email" id="nc-email" placeholder="example@mail.by"></div>
+                <div class="form-group"><label>Адрес</label><input type="text" id="nc-address" placeholder="г. Минск, ул. Примерная, 1"></div>
+                <div class="modal-buttons">
+                    <button type="submit" class="btn btn-primary">💾 Создать и выбрать</button>
+                    <button type="button" class="btn btn-cancel" onclick="closeNewClientModal()">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <button class="sync-btn" id="syncBtn" onclick="syncNow()">🔄 Синхронизация</button>
+
+    <script src="/static/js/utils.js?v=5"></script>
+    <script src="/static/js/offline.js?v=3"></script>
+    <script>
+        let objects = [], clients = [], editingId = null, currentObjectId = null;
+        let currentPage = 1;
+        const perPage = 50;
+
+        function objectTotalRevenue(obj) {
+            if (obj.total_revenue != null && obj.total_revenue !== '') {
+                const n = Number(obj.total_revenue);
+                if (!Number.isNaN(n)) return n;
+            }
+            const sw = Number(obj.sum_work) || 0;
+            const ew = Number(obj.estimate_works) || 0;
+            const em = Number(obj.estimate_materials) || 0;
+            return Math.max(sw, ew) + em;
+        }
+
+        function statusPriorityForSort(st) {
+            if (st === 'Ожидает старта' || st === 'Запланирован') return 0;
+            if (st === 'В работе') return 1;
+            return 2;
+        }
+
+        function sortObjectsDefaultOrder(arr) {
+            arr.sort(function(a, b) {
+                var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
+                if (pa !== pb) return pa - pb;
+                return String(b.date_start || '').localeCompare(String(a.date_start || ''));
+            });
+        }
+
+        function resetTableSortHeaders() {
+            document.querySelectorAll('thead th[onclick]').forEach(function(th) {
+                th.textContent = th.textContent.replace(/ [↑↓]/, ' ↕');
+            });
+        }
+
+        async function loadData(page = 1) {
+            try {
+                console.log('loadData: starting, page =', page);
+                currentPage = page;
+                
+                const params = new URLSearchParams({ page, per_page: perPage });
+                
+                console.log('loadData: fetching objects with params:', params.toString());
+                const res = await fetch(`/api/objects-with-estimates?${params}`);
+                if (!res.ok) {
+                    if (res.status === 401) { window.location.href = '/login'; return; }
+                    throw new Error(`HTTP ${res.status}`);
+                }
+                
+                // Проверяем что это JSON, а не HTML (редирект на логин)
+                const ct = res.headers.get('content-type');
+                if (!ct || !ct.includes('application/json')) {
+                    window.location.href = '/login';
+                    return;
+                }
+                
+                const data = await res.json();
+                console.log('loadData: received', (data.objects || []).length, 'objects');
+                objects = data.objects || [];
+
+                // Вычисляем маржу для каждого объекта
+                objects.forEach(obj => {
+                    const revenue = objectTotalRevenue(obj);
+                    const profit = obj.total_profit || 0;
+                    obj.margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
+                });
+                sortObjectsDefaultOrder(objects);
+                sortCol = -1;
+                resetTableSortHeaders();
+
+                // Кэшируем в IndexedDB
+                try {
+                    await OfflineDB.bulkPut('objects', objects);
+                    await OfflineDB.saveSetting('lastSync', new Date().toISOString());
+                } catch(e) { console.log('Cache error:', e); }
+
+                const clientsRes = await fetch('/api/clients');
+                if (clientsRes.ok) {
+                    const ct2 = clientsRes.headers.get('content-type');
+                    if (ct2 && ct2.includes('application/json')) {
+                        clients = await clientsRes.json();
+                        try { await OfflineDB.bulkPut('clients', clients); } catch(e) {}
+                    }
+                } else {
+                    clients = [];
+                }
+
+                renderStats(data);
+                renderClients();
+                renderTable();
+                renderPagination(data);
+                updateOnlineStatus();
+                console.log('loadData: finished');
+            } catch (e) {
+                console.error('loadData error:', e);
+                // Загрузка из кэша
+                try {
+                    console.log('Loading from cache...');
+                    objects = await OfflineDB.getAll('objects') || [];
+                    clients = await OfflineDB.getAll('clients') || [];
+                    var total = objects.length;
+                    var inProg = objects.filter(function(o){return o.status==='В работе';}).length;
+                    var compl = objects.filter(function(o){
+                        var s=o.status;
+                        return s==='Выполнен'||s==='Закрыт'||s==='Завершён'||s==='Оплачен';
+                    }).length;
+                    objects.forEach(function(obj) {
+                        var revenue = objectTotalRevenue(obj);
+                        var profit = obj.total_profit || 0;
+                        obj.margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
+                    });
+                    sortObjectsDefaultOrder(objects);
+                    sortCol = -1;
+                    resetTableSortHeaders();
+                    renderStats({ total: total, in_progress: inProg, completed: compl });
+                    renderClients();
+                    renderTable();
+                    renderPagination({ total: total, page: 1, per_page: 50, total_pages: 1 });
+                    console.log('Loaded from cache:', objects.length, 'objects');
+                    updateOnlineStatus();
+                } catch(e2) {
+                    console.error('Cache load error:', e2);
+                    var tbody = document.getElementById('table-body');
+                    tbody.innerHTML = '<tr><td colspan="12" style="padding:30px;text-align:center;color:red;">Нет подключения. Данные недоступны.</td></tr>';
+                }
+            }
+        }
+
+        function renderStats(data) {
+            document.getElementById('stat-total').textContent = data.total || 0;
+            document.getElementById('stat-progress').textContent = data.in_progress || 0;
+            document.getElementById('stat-completed').textContent = data.completed || 0;
+        }
+        
+        function renderPagination(data) {
+            const container = document.getElementById('pagination');
+            if (!container) return;
+            if (data.total_pages <= 1) { container.innerHTML = ''; return; }
+            let html = '';
+            if (data.page > 1) html += `<button class="btn" style="padding:5px 10px;" onclick="loadData(${data.page - 1})">←</button>`;
+            const start = Math.max(1, data.page - 2);
+            const end = Math.min(data.total_pages, data.page + 2);
+            for (let i = start; i <= end; i++) {
+                const active = i === data.page ? 'background:#2E75B6;color:white;' : '';
+                html += `<button class="btn" style="padding:5px 10px;${active}" onclick="loadData(${i})">${i}</button>`;
+            }
+            if (data.page < data.total_pages) html += `<button class="btn" style="padding:5px 10px;" onclick="loadData(${data.page + 1})">→</button>`;
+            html += `<span style="margin-left:10px;font-size:12px;color:#666;">${data.total} объектов, стр. ${data.page}/${data.total_pages}</span>`;
+            container.innerHTML = html;
+        }
+
+        function clientLabel(c) {
+            return (c.name || '') + ' (ID ' + c.id + ')';
+        }
+
+        function clientSelectValueForObject(obj) {
+            if (!obj) return '';
+            if (obj.client_id != null && obj.client_id !== '') {
+                var idNum = Number(obj.client_id);
+                if (!Number.isNaN(idNum) && clients.some(function(c) { return Number(c.id) === idNum; }))
+                    return String(idNum);
+            }
+            var matches = clients.filter(function(c) { return (c.name || '') === (obj.client || ''); });
+            if (matches.length === 1) return String(matches[0].id);
+            return '';
+        }
+
+        function objectClientDisplay(obj) {
+            if (!obj) return '-';
+            if (obj.client_id != null && obj.client_id !== '') {
+                var idNum = Number(obj.client_id);
+                if (!Number.isNaN(idNum)) {
+                    var c = clients.find(function(x) { return Number(x.id) === idNum; });
+                    if (c) return c.name + ' (ID ' + c.id + ')';
+                    return (obj.client || '-') + ' (ID ' + idNum + ')';
+                }
+            }
+            return obj.client || '-';
+        }
+
+        function objectMatchesClientFilter(obj, filterVal) {
+            if (!filterVal) return true;
+            var cid = parseInt(filterVal, 10);
+            if (Number.isNaN(cid)) return (obj.client || '') === filterVal;
+            if (obj.client_id != null && Number(obj.client_id) === cid) return true;
+            var c = clients.find(function(x) { return Number(x.id) === cid; });
+            if (c && (obj.client || '') === c.name) return true;
+            return false;
+        }
+
+        function renderClients() {
+            const select = document.getElementById('client');
+            const filterSelect = document.getElementById('filter-client');
+            select.innerHTML = '';
+            clients.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = String(c.id);
+                opt.textContent = clientLabel(c);
+                select.appendChild(opt);
+            });
+            const newOpt = document.createElement('option');
+            newOpt.value = '__new__';
+            newOpt.textContent = '+ Добавить нового клиента...';
+            select.appendChild(newOpt);
+
+            filterSelect.innerHTML = '';
+            const allOpt = document.createElement('option');
+            allOpt.value = '';
+            allOpt.textContent = 'Все клиенты';
+            filterSelect.appendChild(allOpt);
+            clients.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = String(c.id);
+                opt.textContent = clientLabel(c);
+                filterSelect.appendChild(opt);
+            });
+        }
+
+        function renderTable() {
+            const search = document.getElementById('filter-search').value.toLowerCase();
+            const statusFilter = document.getElementById('filter-status').value;
+            const clientFilter = document.getElementById('filter-client').value;
+            
+            console.log('renderTable: objects count =', objects.length);
+            
+            let filtered = objects.filter(obj => {
+                if (search && !obj.name.toLowerCase().includes(search)) return false;
+                if (statusFilter && obj.status !== statusFilter) return false;
+                if (!objectMatchesClientFilter(obj, clientFilter)) return false;
+                return true;
+            });
+
+            console.log('renderTable: filtered count =', filtered.length);
+
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '';
+            
+            if (filtered.length === 0) {
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 15;
+                td.style.padding = '30px';
+                td.style.textAlign = 'center';
+                td.style.color = '#666';
+                td.textContent = objects.length === 0 ? 'Нет объектов. Нажмите "+ Добавить объект" чтобы создать первый.' : 'Нет объектов, соответствующих фильтрам';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                return;
+            }
+            
+            filtered.forEach((obj, idx) => {
+                const balance = Math.abs(obj.balance || 0) < 0.005 ? 0 : (obj.balance || 0);
+                const hasDebt = obj.status !== 'Ожидает старта' && obj.status !== 'Запланирован' && balance > 0.01;
+                const tr = document.createElement('tr');
+                if (hasDebt) tr.className = 'debt-row';
+                else if (obj.status === 'Выполнен' || obj.status === 'Завершён') tr.style.background = '#f0f0f0';
+                else if (obj.status === 'Закрыт' || obj.status === 'Оплачен') tr.style.background = '#e8f5e9';
+                else if (obj.status === 'В работе') tr.style.background = '#e8f4fd';
+                else if (obj.status === 'Приостановлен') tr.style.background = '#fff3f3';
+
+                const td0 = document.createElement('td'); td0.textContent = obj.id; tr.appendChild(td0);
+                const td1 = document.createElement('td'); td1.textContent = formatDate(obj.date_start); tr.appendChild(td1);
+                const td2 = document.createElement('td'); td2.textContent = formatDate(obj.date_end); tr.appendChild(td2);
+                const td3 = document.createElement('td'); td3.style.textAlign = 'left'; td3.textContent = obj.name; tr.appendChild(td3);
+                const td4 = document.createElement('td'); td4.textContent = objectClientDisplay(obj); tr.appendChild(td4);
+                const td5 = document.createElement('td'); td5.textContent = formatMoney(objectTotalRevenue(obj)); tr.appendChild(td5);
+                const td6 = document.createElement('td'); td6.textContent = formatMoney(obj.total_expenses||obj.expenses); tr.appendChild(td6);
+                const td7 = document.createElement('td');
+                    const span = document.createElement('span');
+                    span.className = 'status status-' + obj.status.replace(/ /g, '-');
+                    span.textContent = obj.status;
+                    td7.appendChild(span);
+                tr.appendChild(td7);
+                const td8 = document.createElement('td'); td8.textContent = formatMoney(obj.advance); tr.appendChild(td8);
+                const td9 = document.createElement('td'); td9.textContent = formatMoney(obj.salary); tr.appendChild(td9);
+                const td10 = document.createElement('td');
+                    const profit = obj.total_profit || 0;
+                    td10.style.fontWeight = 'bold';
+                    td10.style.color = profit >= 0 ? '#4CAF50' : '#f44336';
+                    td10.textContent = formatMoney(profit);
+                tr.appendChild(td10);
+                const td10a = document.createElement('td');
+                    const matProfit = obj.estimate_material_profit || 0;
+                    td10a.style.fontWeight = 'bold';
+                    td10a.style.color = matProfit >= 0 ? '#2196F3' : '#f44336';
+                    td10a.textContent = formatMoney(matProfit);
+                tr.appendChild(td10a);
+                const td10b = document.createElement('td');
+                    const revenue = objectTotalRevenue(obj);
+                    const margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
+                    td10b.style.fontWeight = 'bold';
+                    td10b.style.color = margin >= 20 ? '#4CAF50' : (margin >= 0 ? '#FF9800' : '#f44336');
+                    td10b.textContent = margin.toFixed(1) + '%';
+                tr.appendChild(td10b);
+                const td11 = document.createElement('td');
+                    td11.className = 'balance-cell ' + (hasDebt ? 'negative' : 'positive');
+                    td11.textContent = formatMoney(balance);
+                tr.appendChild(td11);
+                const td12 = document.createElement('td');
+                    const btn1 = document.createElement('button');
+                    btn1.className = 'btn btn-estimate'; btn1.title = 'Сметы объекта'; btn1.textContent = '📊';
+                    btn1.onclick = () => openEstimates(obj.id);
+                    td12.appendChild(btn1);
+                    const btn2 = document.createElement('button');
+                    btn2.className = 'btn btn-edit'; btn2.title = 'Редактировать'; btn2.textContent = '✏️';
+                    btn2.onclick = () => openModal(obj.id);
+                    td12.appendChild(btn2);
+                    const btn3 = document.createElement('button');
+                    btn3.className = 'btn btn-danger'; btn3.title = 'Удалить'; btn3.textContent = '🗑️';
+                    btn3.onclick = () => deleteObject(obj.id);
+                    td12.appendChild(btn3);
+                tr.appendChild(td12);
+
+                tbody.appendChild(tr);
+            });
+        }
+
+        function formatDate(dateStr) { if (!dateStr) return '-'; const parts = dateStr.split('-'); return `${parts[2]}.${parts[1]}.${parts[0]}`; }
+        function formatMoney(val) { return Number(val).toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' BYN'; }
+
+        function openModal(id = null) {
+            editingId = id;
+            document.getElementById('modal').classList.add('active');
+            document.getElementById('modal-title').textContent = id ? 'Редактировать объект' : 'Добавить объект';
+            document.getElementById('salary-info').textContent = '';
+
+            if (id) {
+                const obj = objects.find(o => o.id === id);
+                document.getElementById('obj-id').value = obj.id;
+                document.getElementById('date-start').value = obj.date_start || '';
+                document.getElementById('date-end').value = obj.date_end || '';
+                document.getElementById('name').value = obj.name;
+                document.getElementById('client').value = clientSelectValueForObject(obj);
+                document.getElementById('status').value = obj.status;
+                document.getElementById('advance').value = obj.advance;
+                document.getElementById('salary').value = obj.salary;
+                document.getElementById('notes').value = obj.notes || '';
+
+                // Автозаполнение из сметы
+                loadEstimateData(obj.id, function(estTotals) {
+                    const sumWork = estTotals.total_works || obj.sum_work || 0;
+                    const expenses = estTotals.total_materials || obj.expenses || 0;
+                    document.getElementById('sum-work').value = sumWork;
+                    document.getElementById('expenses').value = expenses;
+                });
+
+                // Загружаем инфо о рабочих
+                loadSalaryInfo(obj.id);
+            } else {
+                document.getElementById('object-form').reset();
+                document.getElementById('date-start').value = new Date().toISOString().split('T')[0];
+                document.getElementById('salary-info').textContent = '';
+                // Автозаполнение для нового объекта: покажем предполагаемую зарплату
+                showExpectedSalary();
+
+                // Пересчёт при изменении даты
+                var dsInput = document.getElementById('date-start');
+                if (dsInput) {
+                    dsInput.removeEventListener('change', showExpectedSalary);
+                    dsInput.addEventListener('change', showExpectedSalary);
+                }
+
+                // Пересчёт при изменении статуса
+                var statusInput = document.getElementById('status');
+                if (statusInput) {
+                    statusInput.removeEventListener('change', onStatusChange);
+                    statusInput.addEventListener('change', onStatusChange);
+                }
+            }
+        }
+
+        async function onStatusChange() {
+            if (!editingId) return;
+            try {
+                const statusVal = document.getElementById('status').value;
+                await fetchCsrf('/api/objects/' + editingId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ status: statusVal })
+                });
+                // Обновляем локальные данные
+                const obj = objects.find(o => o.id === editingId);
+                if (obj) obj.status = statusVal;
+                // Показываем предполагаемую зарплату
+                showExpectedSalary();
+                // Пересчитываем зарплату
+                await loadSalaryInfo(editingId);
+                // Обновляем таблицу
+                loadData(currentPage);
+            } catch(e) {
+                console.error('Status change error:', e);
+            }
+        }
+
+        async function loadEstimateData(objId, callback) {
+            try {
+                const res = await fetch('/estimate/api/estimates/by-object/' + objId);
+                if (!res.ok) { callback({ total_works: 0, total_materials: 0 }); return; }
+                const data = await res.json();
+                callback({
+                    total_works: data.total_works || 0,
+                    total_materials: data.total_materials || 0,
+                    total_material_profit: data.total_material_profit || 0
+                });
+            } catch(e) {
+                callback({ total_works: 0, total_materials: 0 });
+            }
+        }
+
+        async function showExpectedSalary() {
+            try {
+                const dateStart = document.getElementById('date-start').value || new Date().toISOString().split('T')[0];
+                // Загружаем всех активных рабочих
+                const workersRes = await fetch('/api/workers');
+                if (!workersRes.ok) return;
+                const allWorkers = await workersRes.json();
+                const activeWorkers = allWorkers.filter(w => w.is_active);
+                if (activeWorkers.length === 0) {
+                    document.getElementById('salary-info').textContent = '⚠️ Нет активных рабочих';
+                    return;
+                }
+                // Считаем сколько объектов началось в этот же день
+                const objsRes = await fetch('/api/objects');
+                const allObjects = await objsRes.json();
+                const sameDayObjects = allObjects.filter(o => o.date_start && o.date_start.startsWith(dateStart));
+                const numObjects = Math.max(sameDayObjects.length, 1);
+                // Формула: (Σ daily_rate) / кол-во объектов за день
+                let totalDailyRate = 0;
+                activeWorkers.forEach(function(w) {
+                    totalDailyRate += w.daily_rate;
+                });
+                const salaryPerObject = totalDailyRate / numObjects;
+                document.getElementById('salary-info').textContent =
+                    `👷 ${activeWorkers.length} рабочих (${totalDailyRate} руб/день) / ${numObjects} объект(ов) = ${salaryPerObject.toFixed(2)} руб`;
+            } catch(e) {}
+        }
+
+        // === Управление рабочими на объекте ===
+        let objectWorkersData = [];
+
+        async function loadSalaryInfo(objId) {
+            try {
+                const res = await fetch(`/api/objects/${objId}/workers`);
+                if (!res.ok) return;
+                const ct = res.headers.get('content-type');
+                if (!ct || !ct.includes('application/json')) return;
+                const data = await res.json();
+                const count = (data.assignments || []).length;
+                const total = data.total_salary || 0;
+                if (count > 0) {
+                    document.getElementById('salary-info').textContent = `👷 ${count} рабочих, ${Number(total).toLocaleString('ru-RU', {minimumFractionDigits:2})} руб`;
+                }
+            } catch(e) {}
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.remove('active');
+            document.getElementById('object-form').reset();
+            editingId = null;
+        }
+
+        async function duplicateObject() {
+            if (!editingId) { alert('Сначала откройте объект для редактирования'); return; }
+            var obj = objects.find(o => o.id === editingId);
+            if (!obj) return;
+
+            var newName = prompt('Название для копии (по умолчанию: ' + obj.name + ' (копия)):', obj.name + ' (копия)');
+            if (newName === null) return;
+            if (!newName.trim()) { alert('Введите название'); return; }
+
+            var data = {
+                date_start: obj.date_start || new Date().toISOString().split('T')[0],
+                date_end: obj.date_end || '',
+                name: newName.trim(),
+                client: obj.client || '',
+                client_id: obj.client_id != null && obj.client_id !== '' ? Number(obj.client_id) : null,
+                sum_work: obj.sum_work || 0,
+                expenses: obj.expenses || 0,
+                status: 'Ожидает старта',
+                advance: obj.advance || 0,
+                salary: obj.salary || 0,
+                notes: obj.notes || ''
+            };
+
+            try {
+                var res = await fetchCsrf('/api/objects', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) { var e = await res.json(); alert('Ошибка: ' + (e.error||'')); return; }
+                loadData(currentPage);
+            } catch(e) { alert('Ошибка: ' + e.message); }
+        }
+
+        document.getElementById('object-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const nameVal = document.getElementById('name').value.trim();
+            if (!nameVal) {
+                alert('Введите наименование объекта');
+                return;
+            }
+
+            // Если выбран "__new__" — сначала создаём клиента
+            let clientVal = document.getElementById('client').value;
+            if (clientVal === '__new__') {
+                alert('Выберите клиента или создайте нового');
+                return;
+            }
+
+            var clientIdNum = parseInt(clientVal, 10);
+            var selClient = !Number.isNaN(clientIdNum) ? clients.find(function(c) { return Number(c.id) === clientIdNum; }) : null;
+            const data = {
+                date_start: document.getElementById('date-start').value,
+                date_end: document.getElementById('date-end').value,
+                name: nameVal,
+                client: selClient ? selClient.name : '',
+                client_id: !Number.isNaN(clientIdNum) ? clientIdNum : null,
+                sum_work: parseFloat(document.getElementById('sum-work').value) || 0,
+                expenses: parseFloat(document.getElementById('expenses').value) || 0,
+                status: document.getElementById('status').value,
+                advance: parseFloat(document.getElementById('advance').value) || 0,
+                salary: parseFloat(document.getElementById('salary').value) || 0,
+                notes: document.getElementById('notes').value
+            };
+
+            try {
+                let res;
+                if (editingId) {
+                    res = await fetchCsrf(`/api/objects/${editingId}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(data)
+                    });
+                } else {
+                    res = await fetchCsrf('/api/objects', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(data)
+                    });
+                }
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => null);
+                    alert('Ошибка: ' + (err && err.error ? err.error : 'Не удалось сохранить объект'));
+                    return;
+                }
+
+                const savedObj = await res.json();
+                editingId = savedObj.id;
+                try { await OfflineDB.put('objects', savedObj); } catch(e) {}
+
+                closeModal();
+                loadData(currentPage);
+            } catch (e) {
+                try {
+                    const action = {
+                        method: editingId ? 'PUT' : 'POST',
+                        url: editingId ? `/api/objects/${editingId}` : '/api/objects',
+                        body: data
+                    };
+                    await OfflineDB.addToQueue(action, data);
+                    alert('Сохранено локально. Синхронизируйте при подключении.');
+                    closeModal();
+                    loadData(currentPage);
+                } catch(e2) {
+                    alert('Ошибка: ' + e.message);
+                }
+            }
+        });
+
+        async function deleteObject(id) {
+            if (confirm('Удалить объект?')) {
+                try {
+                    await fetchCsrf(`/api/objects/${id}`, { method: 'DELETE' });
+                    try { await OfflineDB.delete('objects', id); } catch(e) {}
+                } catch(e) {
+                    try {
+                        await OfflineDB.addToQueue({ method: 'DELETE', url: `/api/objects/${id}` });
+                        await OfflineDB.delete('objects', id);
+                    } catch(e2) { alert('Ошибка удаления'); return; }
+                }
+                loadData(currentPage);
+            }
+        }
+
+        // ============================
+        // Создание нового клиента из модалки
+        // ============================
+
+        function openNewClientModal() {
+            document.getElementById('newClientModal').classList.add('active');
+            document.getElementById('nc-name').focus();
+        }
+
+        function closeNewClientModal() {
+            document.getElementById('newClientModal').classList.remove('active');
+            document.getElementById('new-client-form').reset();
+        }
+
+        // Обработка формы создания клиента
+        document.getElementById('new-client-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const data = {
+                name: document.getElementById('nc-name').value.trim(),
+                phone: document.getElementById('nc-phone').value.trim(),
+                email: document.getElementById('nc-email').value.trim(),
+                address: document.getElementById('nc-address').value.trim()
+            };
+            if (!data.name) return;
+
+            try {
+                const res = await fetchCsrf('/api/clients', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                console.log('createClient response status:', res.status);
+                if (res.ok) {
+                    const newClient = await res.json();
+                    console.log('createClient new client:', JSON.stringify(newClient));
+                    clients.push(newClient);
+                    renderClients();
+                    document.getElementById('client').value = String(newClient.id);
+                    console.log('Client select set to:', document.getElementById('client').value);
+                    closeNewClientModal();
+                    document.getElementById('name').focus();
+                } else {
+                    const errData = await res.json();
+                    console.error('createClient error:', errData);
+                    alert('Ошибка: ' + (errData.error || 'Не удалось создать клиента'));
+                }
+            } catch (e) {
+                console.error('createClient exception:', e);
+                alert('Ошибка соединения при создании клиента');
+            }
+        });
+
+        // При выборе "__new__" в селекте — открываем модалку
+        document.getElementById('client').addEventListener('change', function() {
+            if (this.value === '__new__') {
+                openNewClientModal();
+                // Сбрасываем select на пустое значение, пока клиент не создан
+                this.value = '';
+            }
+        });
+
+        // Обработчики фильтров
+
+        var OA_FULL_PREFIX = 'OA_ESTIMATE_FULL:v1:';
+
+        function toggleSelectAllEstimatesModal(checked) {
+            document.querySelectorAll('#estimates-body .est-modal-cb').forEach(function(cb) {
+                cb.checked = !!checked;
+            });
+        }
+
+        function getSelectedEstimateIdsFromModal() {
+            var ids = [];
+            document.querySelectorAll('#estimates-body .est-modal-cb:checked').forEach(function(cb) {
+                var id = parseInt(cb.getAttribute('data-est-id'), 10);
+                if (!isNaN(id)) ids.push(id);
+            });
+            return ids;
+        }
+
+        function estimateApiToClipboardPayload(est) {
+            var meta = {
+                date: est.date || '',
+                status: est.status || 'Черновик',
+                vat_percent: est.vat_percent,
+                markup_percent: est.markup_percent,
+                discount_percent: est.discount_percent,
+                notes: est.notes != null ? est.notes : ''
+            };
+            var items = (est.items || []).map(function(it) {
+                var sec = it.section === 'work' ? 'work' : 'material';
+                return {
+                    section: sec,
+                    name: it.name,
+                    unit: it.unit || 'шт',
+                    quantity: parseFloat(it.quantity) || 0,
+                    price: parseFloat(it.price) || 0,
+                    purchase_price: sec === 'material' ? (parseFloat(it.purchase_price) || 0) : 0,
+                    wholesale_price: parseFloat(it.wholesale_price) || 0
+                };
+            });
+            return { meta: meta, items: items };
+        }
+
+        async function writeFullEstimateClipboard(obj) {
+            var text = OA_FULL_PREFIX + JSON.stringify(obj);
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch (e) {
+                console.warn('clipboard.writeText', e);
+            }
+            window.__oaLastFullEstClipboard = text;
+        }
+
+        async function copyEstimateInObjectModal() {
+            var ids = getSelectedEstimateIdsFromModal();
+            if (ids.length === 0) {
+                alert('Отметьте одну смету галочкой');
+                return;
+            }
+            if (ids.length > 1) {
+                alert('Отметьте только одну смету');
+                return;
+            }
+            try {
+                var res = await fetch('/estimate/api/estimates/' + ids[0]);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                var est = await res.json();
+                if (est.error) throw new Error(est.error);
+                var payload = estimateApiToClipboardPayload(est);
+                await writeFullEstimateClipboard(payload);
+            } catch (e) {
+                alert('Не удалось скопировать: ' + e.message);
+            }
+        }
+
+        async function cutEstimateInObjectModal() {
+            var ids = getSelectedEstimateIdsFromModal();
+            if (ids.length === 0) {
+                alert('Отметьте одну смету галочкой');
+                return;
+            }
+            if (ids.length > 1) {
+                alert('Отметьте только одну смету');
+                return;
+            }
+            if (!confirm('Вырезать смету? Она будет удалена; копия останется в буфере обмена.')) return;
+            try {
+                var res = await fetch('/estimate/api/estimates/' + ids[0]);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                var est = await res.json();
+                if (est.error) throw new Error(est.error);
+                var payload = estimateApiToClipboardPayload(est);
+                await writeFullEstimateClipboard(payload);
+                var delRes = await fetchCsrf('/estimate/api/estimates/' + ids[0], { method: 'DELETE' });
+                if (!delRes.ok) throw new Error('HTTP ' + delRes.status);
+                var sel = document.querySelector('.estimates-modal .est-select-all-cb');
+                if (sel) sel.checked = false;
+                openEstimates(currentObjectId);
+                loadData();
+            } catch (e) {
+                alert('Не удалось вырезать: ' + e.message);
+            }
+        }
+
+        function parseFullEstimateClipboard(text) {
+            if (!text || text.indexOf(OA_FULL_PREFIX) !== 0) return null;
+            try {
+                var o = JSON.parse(text.slice(OA_FULL_PREFIX.length));
+                if (!o || typeof o !== 'object') return null;
+                if (!Array.isArray(o.items)) return null;
+                o.meta = o.meta || {};
+                return o;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function readFullClipboardText() {
+            try {
+                var t = await navigator.clipboard.readText();
+                if (t && t.indexOf(OA_FULL_PREFIX) === 0) return t;
+            } catch (e) {}
+            var fb = window.__oaLastFullEstClipboard;
+            if (fb && fb.indexOf(OA_FULL_PREFIX) === 0) return fb;
+            return null;
+        }
+
+        async function pasteEstimateInObjectModal() {
+            if (!currentObjectId) {
+                alert('Сначала откройте список смет объекта');
+                return;
+            }
+            var text = await readFullClipboardText();
+            var payload = text ? parseFullEstimateClipboard(text) : null;
+            if (!payload) {
+                alert('В буфере нет сметы. Скопируйте или вырежьте смету в этом окне.');
+                return;
+            }
+            var obj = objects.find(function(o) { return o.id === currentObjectId; });
+            if (!obj) {
+                alert('Объект не найден');
+                return;
+            }
+            var meta = payload.meta || {};
+            var createBody = {
+                date: meta.date || new Date().toISOString().split('T')[0],
+                object_id: currentObjectId,
+                object_name: obj.name || '',
+                client: obj.client || '',
+                status: meta.status || 'Черновик',
+                notes: meta.notes || '',
+                vat_percent: meta.vat_percent,
+                markup_percent: meta.markup_percent,
+                discount_percent: meta.discount_percent
+            };
+            try {
+                var res = await fetchCsrf('/estimate/api/estimates', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(createBody)
+                });
+                if (!res.ok) {
+                    var errJ = await res.json().catch(function() { return {}; });
+                    throw new Error(errJ.error || 'HTTP ' + res.status);
+                }
+                var created = await res.json();
+                var newId = created.id;
+                for (var i = 0; i < payload.items.length; i++) {
+                    var row = payload.items[i];
+                    if (!row || (row.section !== 'material' && row.section !== 'work')) continue;
+                    if (!String(row.name || '').trim()) continue;
+                    var section = row.section === 'work' ? 'work' : 'material';
+                    var qty = parseFloat(row.quantity);
+                    if (isNaN(qty) || qty <= 0) qty = 1;
+                    var price = parseFloat(row.price) || 0;
+                    var purchase = section === 'material' ? (parseFloat(row.purchase_price) || 0) : 0;
+                    var wholesale = parseFloat(row.wholesale_price) || 0;
+                    var resIt = await fetchCsrf('/estimate/api/estimates/' + newId + '/items', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            section: section,
+                            name: String(row.name || ''),
+                            unit: row.unit || 'шт',
+                            quantity: qty,
+                            price: price,
+                            purchase_price: purchase,
+                            wholesale_price: wholesale
+                        })
+                    });
+                    if (!resIt.ok) {
+                        throw new Error('Не удалось добавить позицию: ' + (row.name || ''));
+                    }
+                }
+                var sel = document.querySelector('.estimates-modal .est-select-all-cb');
+                if (sel) sel.checked = false;
+                openEstimates(currentObjectId);
+                loadData();
+            } catch (e) {
+                alert('Вставка не удалась: ' + e.message);
+            }
+        }
+
+        async function openEstimates(objectId) {
+            currentObjectId = objectId;
+            const obj = objects.find(o => o.id === objectId);
+            document.getElementById('est-object-name').textContent = obj ? obj.name : '';
+            document.getElementById('est-object-client').textContent = obj ? objectClientDisplay(obj) : '';
+            var selAll = document.querySelector('.estimates-modal .est-select-all-cb');
+            if (selAll) selAll.checked = false;
+
+            try {
+                const res = await fetch(`/estimate/api/estimates/by-object/${objectId}`);
+                if (!res.ok) throw new Error('Failed to fetch');
+                const data = await res.json();
+                const estimates = data.estimates || [];
+
+                const tbody = document.getElementById('estimates-body');
+                tbody.innerHTML = '';
+                if(estimates.length === 0) {
+                    const tr = document.createElement('tr');
+                    const td = document.createElement('td');
+                    td.colSpan = 8;
+                    td.style.padding = '20px';
+                    td.style.color = '#999';
+                    td.textContent = 'Нет смет для этого объекта';
+                    tr.appendChild(td);
+                    tbody.appendChild(tr);
+                } else {
+                    estimates.forEach((est) => {
+                        const tr = document.createElement('tr');
+                        const tdCb = document.createElement('td');
+                        tdCb.style.textAlign = 'center';
+                        tdCb.style.verticalAlign = 'middle';
+                        const cb = document.createElement('input');
+                        cb.type = 'checkbox';
+                        cb.className = 'est-modal-cb';
+                        cb.setAttribute('data-est-id', String(est.id));
+                        cb.setAttribute('aria-label', 'Выбрать смету ' + (est.number || est.id));
+                        tdCb.appendChild(cb);
+                        tr.appendChild(tdCb);
+                        const fields = [
+                            est.number,
+                            formatDate(est.date),
+                            est.status,
+                            formatMoney(est.total_materials),
+                            formatMoney(est.total_works),
+                            formatMoney(est.total)
+                        ];
+                        fields.forEach(val => {
+                            const td = document.createElement('td');
+                            td.textContent = val;
+                            tr.appendChild(td);
+                        });
+                        const tdActions = document.createElement('td');
+                        const linkEdit = document.createElement('a');
+                        linkEdit.href = `/estimate/${est.id}`;
+                        linkEdit.className = 'btn btn-edit';
+                        linkEdit.style.textDecoration = 'none';
+                        linkEdit.style.fontSize = '11px';
+                        linkEdit.style.padding = '4px 8px';
+                        linkEdit.textContent = '✏️';
+                        tdActions.appendChild(linkEdit);
+                        const btnDel = document.createElement('button');
+                        btnDel.className = 'btn btn-danger';
+                        btnDel.style.fontSize = '11px';
+                        btnDel.style.padding = '4px 8px';
+                        btnDel.textContent = '✕';
+                        btnDel.onclick = () => deleteEstimate(est.id);
+                        tdActions.appendChild(btnDel);
+                        tr.appendChild(tdActions);
+                        tbody.appendChild(tr);
+                    });
+                }
+            } catch (e) {
+                console.error(e);
+            }
+
+            document.getElementById('estimates-modal').classList.add('active');
+        }
+
+        function closeEstimates() { document.getElementById('estimates-modal').classList.remove('active'); currentObjectId = null; }
+        function openNewEstimate() {
+            const obj = objects.find(o => o.id === currentObjectId);
+            if (!obj) return;
+            const params = new URLSearchParams({
+                object_id: currentObjectId,
+                object_name: obj.name || '',
+                client: obj.client || ''
+            });
+            window.location.href = '/estimate/new?' + params.toString();
+        }
+        async function deleteEstimate(id) {
+            if (confirm('Удалить смету?')) {
+                await fetchCsrf(`/estimate/api/estimates/${id}`, { method: 'DELETE' });
+                openEstimates(currentObjectId);
+                loadData();
+            }
+        }
+
+        function toggleUserMenu() {
+            const menu = document.getElementById('userDropdown');
+            menu.classList.toggle('active');
+        }
+
+        window.addEventListener('click', function(e) {
+            try {
+                const menu = document.getElementById('userDropdown');
+                const btn = document.querySelector('.user-menu-btn');
+                if (menu && !menu.contains(e.target) && e.target !== btn) {
+                    menu.classList.remove('active');
+                }
+            } catch (err) {
+                console.error('click handler error:', err);
+            }
+        });
+
+        function openPasswordModal() {
+            document.getElementById('userDropdown').classList.remove('active');
+            document.getElementById('passwordModal').classList.add('active');
+        }
+
+        function closePasswordModal() {
+            document.getElementById('passwordModal').classList.remove('active');
+            document.getElementById('current-pass').value = '';
+            document.getElementById('new-pass').value = '';
+        }
+
+        async function submitPasswordChange() {
+            const oldPass = document.getElementById('current-pass').value;
+            const newPass = document.getElementById('new-pass').value;
+
+            if (!oldPass || !newPass) {
+                alert('Заполните оба поля');
+                return;
+            }
+
+            try {
+                const res = await fetchCsrf('/api/user/change-password', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ old_password: oldPass, new_password: newPass })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    alert('Пароль успешно изменен!');
+                    closePasswordModal();
+                }
+            } catch (e) {
+                alert('Ошибка соединения');
+            }
+        }
+
+        async function deleteAccount() {
+            document.getElementById('userDropdown').classList.remove('active');
+            document.getElementById('deleteAccountModal').classList.add('active');
+        }
+
+        function closeDeleteAccountModal() {
+            document.getElementById('deleteAccountModal').classList.remove('active');
+            document.getElementById('delete-pass').value = '';
+        }
+
+        async function submitDeleteAccount() {
+            const pass = document.getElementById('delete-pass').value;
+            if (!pass) {
+                alert('Введите пароль');
+                return;
+            }
+            try {
+                const res = await fetchCsrf('/api/user/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ password: pass })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    window.location.href = '/login';
+                }
+            } catch (e) {
+                alert('Ошибка при удалении аккаунта');
+            }
+        }
+
+        // Закрытие модалок по клику на фон
+        var ncm = document.getElementById('newClientModal');
+        if (ncm) ncm.addEventListener('click', function(e) {
+            if (e.target.id === 'newClientModal') closeNewClientModal();
+        });
+
+        var modal = document.getElementById('modal');
+        if (modal) modal.addEventListener('click', function(e) {
+            if (e.target.id === 'modal') closeModal();
+        });
+
+        var passModal = document.getElementById('passwordModal');
+        if (passModal) passModal.addEventListener('click', function(e) {
+            if (e.target.id === 'passwordModal') closePasswordModal();
+        });
+
+        var estModal = document.getElementById('estimates-modal');
+        if (estModal) estModal.addEventListener('click', function(e) {
+            if (e.target.id === 'estimates-modal') closeEstimates();
+        });
+
+        // Функция включения поиска
+        function enableSearch() {
+            var input = document.getElementById('filter-search');
+            input.removeAttribute('readonly');
+            input.focus();
+            console.log('Поиск активирован');
+        }
+
+        // Быстрое создание объекта
+        async function quickAdd() {
+            var name = document.getElementById('quickName').value.trim();
+            if (!name) { document.getElementById('quickName').focus(); return; }
+
+            var data = {
+                date_start: new Date().toISOString().split('T')[0],
+                date_end: '',
+                name: name,
+                client: '',
+                sum_work: 0, expenses: 0, status: 'Ожидает старта',
+                advance: 0, salary: 0, notes: ''
+            };
+
+            try {
+                var res = await fetchCsrf('/api/objects', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) { var e = await res.json(); alert('Ошибка: ' + (e.error||'')); return; }
+                document.getElementById('quickName').value = '';
+                loadData(currentPage);
+            } catch(e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // Сортировка таблицы
+        var sortCol = -1, sortAsc = true;
+        function sortTable(colIdx) {
+            if (sortCol === colIdx) { sortAsc = !sortAsc; }
+            else { sortCol = colIdx; sortAsc = true; }
+
+            // Обновляем заголовки
+            document.querySelectorAll('th').forEach(function(th, i) {
+                if (i === colIdx) th.textContent = th.textContent.replace(' ↕', sortAsc ? ' ↑' : ' ↓');
+                else if (th.onclick) th.textContent = th.textContent.replace(/ [↑↓]/, ' ↕');
+            });
+
+            objects.sort(function(a, b) {
+                var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
+                if (pa !== pb) return pa - pb;
+                var keys = ['id','date_start','date_end','name','client','__revenue__','__total_expenses__','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
+                var key = keys[colIdx] || 'name';
+                var va, vb;
+                if (key === '__revenue__') {
+                    va = objectTotalRevenue(a); vb = objectTotalRevenue(b);
+                } else if (key === '__total_expenses__') {
+                    va = Number(a.total_expenses != null && a.total_expenses !== '' ? a.total_expenses : a.expenses) || 0;
+                    vb = Number(b.total_expenses != null && b.total_expenses !== '' ? b.total_expenses : b.expenses) || 0;
+                } else {
+                    va = a[key] || 0; vb = b[key] || 0;
+                }
+                if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+                return sortAsc ? (va - vb) : (vb - va);
+            });
+            renderTable();
+        }
+        
+        // Поиск ТОЛЬКО по кнопке Enter, НЕ по каждому вводу
+        document.getElementById('filter-search').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                renderTable();
+            }
+        });
+        document.getElementById('filter-status').addEventListener('change', function() {
+            renderTable();
+        });
+        document.getElementById('filter-client').addEventListener('change', function() {
+            renderTable();
+        });
+
+        console.log('Страница загружена');
+        console.log('Фильтры очищены, загружаем данные...');
+        loadData();
+        
+        // Принудительно загружаем данные через 2 секунды после автозаполнения
+        setTimeout(function() {
+            var searchInput = document.getElementById('filter-search');
+            if (searchInput && searchInput.value) {
+                console.log('Обнаружено автозаполнение, очищаю:', searchInput.value);
+                searchInput.value = '';
+                renderTable();
+            }
+        }, 2000);
+
+        // === PWA ===
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js?v=6')
+                .then(function(reg) { console.log('SW OK:', reg.scope); })
+                .catch(function(err) { console.log('SW err:', err); });
+        }
+        // Кнопка установки
+        var deferredPrompt;
+        window.addEventListener('beforeinstallprompt', function(e) {
+            e.preventDefault();
+            deferredPrompt = e;
+            var btn = document.createElement('button');
+            btn.id = 'installBtn';
+            btn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;background:#4CAF50;color:white;border:none;padding:12px 20px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+            btn.textContent = '📱 Установить приложение';
+            btn.onclick = function() {
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then(function() { btn.style.display = 'none'; });
+            };
+            document.body.appendChild(btn);
+        });
+
+        // === Мониторинг сети ===
+        function updateOnlineStatus() {
+            var badge = document.getElementById('onlineBadge');
+            var header = document.getElementById('mainHeader');
+            var syncBtn = document.getElementById('syncBtn');
+            if (navigator.onLine) {
+                badge.textContent = '🟢 Онлайн';
+                badge.className = 'online-badge';
+                header.className = 'header';
+                syncBtn.style.display = 'none';
+            } else {
+                badge.textContent = '🔴 Офлайн';
+                badge.className = 'online-badge offline';
+                header.className = 'header offline';
+                OfflineDB.getQueueCount().then(function(count) {
+                    if (count > 0) {
+                        syncBtn.style.display = 'block';
+                        syncBtn.textContent = '🔄 Синхронизация (' + count + ')';
+                    } else {
+                        syncBtn.style.display = 'block';
+                        syncBtn.textContent = '🔄 Проверить связь';
+                    }
+                });
+            }
+        }
+        window.addEventListener('online', function() { updateOnlineStatus(); OfflineDB.trySync(); loadData(); });
+        window.addEventListener('offline', updateOnlineStatus);
+        updateOnlineStatus();
+
+        // Ручная синхронизация
+        window.syncNow = function() {
+            if (!navigator.onLine) {
+                // Проверяем связь
+                fetch('/health').then(function(r) {
+                    if (r.ok) { updateOnlineStatus(); loadData(); }
+                }).catch(function() { alert('Нет подключения к серверу'); });
+                return;
+            }
+            var syncBtn = document.getElementById('syncBtn');
+            syncBtn.textContent = '⏳ Синхронизация...';
+            syncBtn.disabled = true;
+            OfflineDB.trySync();
+            setTimeout(function() {
+                syncBtn.style.display = 'none';
+                syncBtn.disabled = false;
+                loadData();
+            }, 3000);
+        };
+
+        // ============================
+        // УПРАВЛЕНИЕ РАБОЧИМИ ОБЪЕКТА
+        // ============================
+        let allWorkers = [];
+
+        function openWorkersModal(objId) {
+            if (!objId) {
+                alert('Сначала сохраните объект, чтобы добавить рабочих');
+                return;
+            }
+            currentObjectId = objId;
+            document.getElementById('objectWorkersModal').classList.add('active');
+            loadWorkersForObject();
+        }
+
+        function closeWorkersModal() {
+            document.getElementById('objectWorkersModal').classList.remove('active');
+        }
+
+        async function loadWorkersForObject() {
+            try {
+                // Загружаем всех рабочих
+                const wr = await fetch('/api/workers');
+                if (!wr.ok) { 
+                    console.warn('Не удалось загрузить рабочих, статус:', wr.status);
+                    allWorkers = [];
+                } else {
+                    const ct = wr.headers.get('content-type');
+                    if (ct && ct.includes('application/json')) {
+                        allWorkers = await wr.json();
+                    } else {
+                        console.warn('workers API returned non-JSON');
+                        allWorkers = [];
+                    }
+                }
+                
+                // Заполняем select
+                const sel = document.getElementById('ow-worker');
+                sel.innerHTML = '';
+                allWorkers.filter(w => w.is_active).forEach(w => {
+                    const opt = document.createElement('option');
+                    opt.value = w.id;
+                    opt.textContent = `${w.full_name} (${w.daily_rate} руб/день)`;
+                    sel.appendChild(opt);
+                });
+                
+                if (allWorkers.length === 0) {
+                    sel.innerHTML = '<option value="">Нет рабочих — добавьте на стр. /workers</option>';
+                }
+                
+                // Устанавливаем сегодняшнюю дату
+                document.getElementById('ow-date').value = new Date().toISOString().split('T')[0];
+                document.getElementById('ow-days').value = 1;
+                
+                // Загружаем привязанных рабочих
+                const ar = await fetch(`/api/objects/${currentObjectId}/workers`);
+                if (!ar.ok) {
+                    console.warn('Не удалось загрузить рабочих объекта');
+                    objectWorkersData = [];
+                } else {
+                    const ct = ar.headers.get('content-type');
+                    if (ct && ct.includes('application/json')) {
+                        const aData = await ar.json();
+                        objectWorkersData = aData.assignments || [];
+                    } else {
+                        objectWorkersData = [];
+                    }
+                }
+
+                renderObjectWorkers();
+            } catch(e) {
+                console.error('loadWorkersForObject error:', e);
+                document.getElementById('object-workers-list').innerHTML = '<p style="text-align:center;color:#999;">Ошибка загрузки</p>';
+            }
+        }
+
+        function renderObjectWorkers() {
+            const list = document.getElementById('object-workers-list');
+            if (objectWorkersData.length === 0) {
+                list.innerHTML = '<p style="text-align:center;color:#999;padding:20px;">Нет рабочих. Добавьте первого рабочего выше.</p>';
+                return;
+            }
+            
+            let html = '<table style="width:100%; border-collapse:collapse; font-size:12px;">';
+            html += '<thead><tr style="background:#f5f5f5;"><th style="padding:6px;text-align:left;">Рабочий</th><th style="padding:6px;text-align:center;">Ставка</th><th style="padding:6px;text-align:center;">Дней</th><th style="padding:6px;text-align:right;">Сумма</th><th style="padding:6px;"></th></tr></thead>';
+            html += '<tbody>';
+            
+            objectWorkersData.forEach(aw => {
+                html += `<tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:6px;">${escHtml(aw.full_name)}</td>
+                    <td style="padding:6px;text-align:center;">${aw.daily_rate} руб</td>
+                    <td style="padding:6px;text-align:center;">${aw.days_worked}</td>
+                    <td style="padding:6px;text-align:right;font-weight:600;">${Number(aw.total_pay).toLocaleString('ru-RU', {minimumFractionDigits:2})} руб</td>
+                    <td style="padding:6px;text-align:center;">
+                        <button type="button" onclick="removeWorkerFromObject(${aw.id})" style="background:#f44336;color:white;border:none;border-radius:3px;padding:3px 6px;cursor:pointer;font-size:11px;">✕</button>
+                    </td>
+                </tr>`;
+            });
+            
+            html += '</tbody></table>';
+            list.innerHTML = html;
+        }
+
+        async function addWorkerToObject() {
+            const workerId = parseInt(document.getElementById('ow-worker').value);
+            const workDate = document.getElementById('ow-date').value;
+            const days = parseFloat(document.getElementById('ow-days').value) || 1;
+            
+            if (!workerId) { alert('Выберите рабочего'); return; }
+            if (days <= 0) { alert('Количество дней должно быть больше 0'); return; }
+            
+            const worker = allWorkers.find(w => w.id === workerId);
+            if (!worker) return;
+            
+            try {
+                const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                const csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+                
+                const res = await fetch(`/api/objects/${currentObjectId}/workers`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ worker_id: workerId, work_date: workDate, days_worked: days })
+                });
+                
+                if (!res.ok) { 
+                    let errMsg = `HTTP ${res.status}`;
+                    try {
+                        const ct = res.headers.get('content-type');
+                        if (ct && ct.includes('application/json')) {
+                            const e = await res.json();
+                            errMsg = e.error || errMsg;
+                        } else {
+                            const txt = await res.text();
+                            // Извлекаем сообщение об ошибке из HTML (Flask debug)
+                            const match = txt.match(/<h1>(.*?)<\/h1>/s);
+                            if (match) errMsg = match[1].trim();
+                        }
+                    } catch(e2) {}
+                    alert('Ошибка добавления рабочего: ' + errMsg); 
+                    return; 
+                }
+                
+                const data = await res.json();
+
+                // Добавляем в список
+                objectWorkersData.push({
+                    id: data.id,
+                    full_name: worker.full_name,
+                    daily_rate: worker.daily_rate,
+                    days_worked: days,
+                    total_pay: data.total_pay
+                });
+
+                // Обновляем поле зарплаты в форме объекта
+                const salaryInput = document.getElementById('salary');
+                if (salaryInput) salaryInput.value = Number(data.total_pay).toLocaleString('ru-RU', {minimumFractionDigits:2});
+                document.getElementById('salary-info').textContent = `👷 ${objectWorkersData.length} рабочих, ${Number(data.total_pay).toLocaleString('ru-RU', {minimumFractionDigits:2})} руб`;
+
+                renderObjectWorkers();
+            } catch(e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function removeWorkerFromObject(assignmentId) {
+            if (!confirm('Удалить рабочего из объекта?')) return;
+            
+            try {
+                const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                const csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+                
+                await fetch(`/api/objects/${currentObjectId}/workers/${assignmentId}`, {
+                    method: 'DELETE',
+                    headers: { 'X-CSRF-Token': csrfToken }
+                });
+                
+                objectWorkersData = objectWorkersData.filter(a => a.id !== assignmentId);
+
+                const salaryInput = document.getElementById('salary');
+                if (salaryInput) salaryInput.value = '0.00';
+                document.getElementById('salary-info').textContent = 'Рабочий удалён';
+
+                renderObjectWorkers();
+            } catch(e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // === Синхронизация цен ===
+        function openPriceSyncModal() {
+            document.getElementById('priceSyncModal').classList.add('active');
+            loadPriceSyncCheckpoint();
+        }
+
+        function loadPriceSyncCheckpoint() {
+            var hint = document.getElementById('priceSyncCheckpointHint');
+            if (hint) hint.textContent = '';
+            fetch('/estimate/api/price-sync/checkpoint')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.login) document.getElementById('optLogin').value = d.login;
+                    var pw = document.getElementById('optPassword');
+                    pw.value = '';
+                    if (hint) {
+                        if (!d.configured) {
+                            hint.textContent = 'Учётные данные ещё не сохранялись.';
+                        } else if (d.password_saved) {
+                            hint.textContent = 'Пароль в файле: ' + d.password_length + ' симв. ' + (d.password_mask || '') + ' — нажмите «Показать пароль» или введите заново.';
+                        } else {
+                            hint.textContent = 'Логин есть, пароль не сохранён — введите пароль.';
+                        }
+                    }
+                })
+                .catch(function() {
+                    if (hint) hint.textContent = 'Не удалось загрузить чекпоинт.';
+                });
+        }
+
+        function toggleOptPasswordVisible() {
+            var el = document.getElementById('optPassword');
+            var cb = document.getElementById('optPasswordShow');
+            if (!el || !cb) return;
+            el.type = cb.checked ? 'text' : 'password';
+        }
+
+        function revealSavedOptPassword() {
+            var csrf = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            fetch('/estimate/api/price-sync/reveal-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+                body: '{}'
+            })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.error && !d.password) { alert(d.error); return; }
+                    var el = document.getElementById('optPassword');
+                    var cb = document.getElementById('optPasswordShow');
+                    if (el) el.value = d.password || '';
+                    if (cb) { cb.checked = true; toggleOptPasswordVisible(); }
+                })
+                .catch(function(e) { alert('Ошибка: ' + e.message); });
+        }
+        function closePriceSyncModal() {
+            document.getElementById('priceSyncModal').classList.remove('active');
+        }
+
+        function savePriceSyncConfig() {
+            const login = document.getElementById('optLogin').value.trim();
+            const password = document.getElementById('optPassword').value.trim();
+            if (!login || !password) { alert('Укажите логин и пароль'); return; }
+
+            const csrf = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            fetch('/estimate/api/price-sync/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+                body: JSON.stringify({ login, password })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) { alert('Ошибка: ' + data.error); return; }
+                alert('✅ Настройки сохранены');
+            })
+            .catch(e => alert('Ошибка: ' + e.message));
+        }
+
+        function runPriceSync() {
+            const csrf = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            const btn = document.getElementById('runSyncBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Синхронизация...';
+
+            document.getElementById('priceSyncResults').innerHTML = '<div style="text-align:center;padding:30px;color:#666;">Подключение к opt-akvabreg.by...</div>';
+
+            fetch('/estimate/api/price-sync/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }
+            })
+            .then(r => r.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.textContent = '🔄 Запустить синхронизацию';
+
+                if (data.error) {
+                    document.getElementById('priceSyncResults').innerHTML = `<div style="color:#f44336;padding:15px;">❌ ${escHtml(data.error)}</div>`;
+                    return;
+                }
+
+                let html = `<div style="margin-bottom:10px;font-size:13px;color:#666;">
+                    Сравнено: ${data.total_compared || 0} товаров | 
+                    ⬆️ Подорожало: ${data.price_increased?.length || 0} | 
+                    ⬇️ Подешевело: ${data.price_decreased?.length || 0}
+                </div>`;
+
+                if (data.price_increased && data.price_increased.length > 0) {
+                    html += '<h4 style="color:#f44336;margin:10px 0 5px;">⬆️ Подорожало:</h4>';
+                    html += '<div style="max-height:200px;overflow-y:auto;border:1px solid #fdd;border-radius:6px;font-size:12px;">';
+                    data.price_increased.slice(0, 30).forEach(item => {
+                        html += `<div style="padding:4px 8px;border-bottom:1px solid #fee;display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <label style="display:flex;align-items:center;gap:4px;">
+                                    <input type="checkbox" class="sync-check" data-article="${escAttr(item.article)}" data-price="${item.new_price}" checked>
+                                    ${escHtml(item.name)}
+                                </label>
+                                <small style="color:#999;">${item.old_price} → ${item.new_price} (${item.pct}%)</small>
+                            </div>
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+
+                if (data.price_decreased && data.price_decreased.length > 0) {
+                    html += '<h4 style="color:#4CAF50;margin:10px 0 5px;">⬇️ Подешевело:</h4>';
+                    html += '<div style="max-height:200px;overflow-y:auto;border:1px solid #dfd;border-radius:6px;font-size:12px;">';
+                    data.price_decreased.slice(0, 30).forEach(item => {
+                        html += `<div style="padding:4px 8px;border-bottom:1px solid #dfd;display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <label style="display:flex;align-items:center;gap:4px;">
+                                    <input type="checkbox" class="sync-check" data-article="${escAttr(item.article)}" data-price="${item.new_price}" checked>
+                                    ${escHtml(item.name)}
+                                </label>
+                                <small style="color:#999;">${item.old_price} → ${item.new_price} (${item.pct}%)</small>
+                            </div>
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+
+                html += `<div style="margin-top:10px;display:flex;gap:8px;">
+                    <button class="sort-btn" onclick="selectAllSync(true)" style="flex:1;padding:8px;">☑ Выбрать все</button>
+                    <button class="sort-btn" onclick="selectAllSync(false)" style="flex:1;padding:8px;">☐ Снять все</button>
+                    <button class="sort-btn" onclick="applyPriceSync()" style="flex:2;padding:8px;background:#4CAF50;color:white;font-weight:600;">✅ Применить цены</button>
+                </div>`;
+
+                document.getElementById('priceSyncResults').innerHTML = html;
+            })
+            .catch(e => {
+                btn.disabled = false;
+                btn.textContent = '🔄 Запустить синхронизацию';
+                document.getElementById('priceSyncResults').innerHTML = `<div style="color:#f44336;padding:15px;">Ошибка: ${escHtml(e.message)}</div>`;
+            });
+        }
+
+        function selectAllSync(checked) {
+            document.querySelectorAll('.sync-check').forEach(cb => cb.checked = checked);
+        }
+
+        function applyPriceSync() {
+            const updates = [];
+            document.querySelectorAll('.sync-check').forEach(cb => {
+                if (cb.checked) {
+                    updates.push({
+                        article: cb.dataset.article,
+                        new_price: parseFloat(cb.dataset.price)
+                    });
+                }
+            });
+
+            if (!updates.length) { alert('Не выбрано ни одной позиции'); return; }
+
+            const csrf = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            fetch('/estimate/api/price-sync/apply', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+                body: JSON.stringify({ updates })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) { alert('Ошибка: ' + data.error); return; }
+                alert(`✅ Обновлено ${data.updated} цен`);
+                closePriceSyncModal();
+                loadData(); // Обновить таблицу
+            })
+            .catch(e => alert('Ошибка: ' + e.message));
+        }
+
+        function escHtml(s) {
+            if (!s) return '';
+            const d = document.createElement('div');
+            d.textContent = String(s);
+            return d.innerHTML;
+        }
+        function escAttr(s) {
+            return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+    </script>
+
+    <!-- Модальное окно синхронизации цен -->
+    <div class="modal" id="priceSyncModal">
+        <div class="modal-content" style="max-width:700px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                <h2 style="margin:0;">🔄 Синхронизация цен</h2>
+                <button class="btn-close" onclick="closePriceSyncModal()" style="background:#f44336;">✕</button>
+            </div>
+
+            <div style="background:#f5f5f5;border-radius:8px;padding:15px;margin-bottom:15px;">
+                <h4 style="margin:0 0 10px;">⚙️ Настройки</h4>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:200px;">
+                        <label style="font-size:12px;display:block;margin-bottom:3px;">Логин opt-akvabreg.by</label>
+                        <input type="text" id="optLogin" placeholder="Логин" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                    </div>
+                    <div style="flex:1;min-width:200px;">
+                        <label style="font-size:12px;display:block;margin-bottom:3px;">Пароль</label>
+                        <input type="password" id="optPassword" placeholder="Пароль" autocomplete="off" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                        <label style="font-size:11px;margin-top:4px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" id="optPasswordShow" onchange="toggleOptPasswordVisible()"> Показать пароль в поле
+                        </label>
+                    </div>
+                </div>
+                <div id="priceSyncCheckpointHint" style="font-size:12px;color:#555;margin:8px 0;line-height:1.4;"></div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;">
+                    <button type="button" onclick="revealSavedOptPassword()" style="padding:6px 12px;background:#6d4c41;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;">👁 Показать сохранённый пароль</button>
+                    <button onclick="savePriceSyncConfig()" style="padding:6px 12px;background:#2E75B6;color:white;border:none;border-radius:4px;cursor:pointer;">💾 Сохранить</button>
+                </div>
+            </div>
+
+            <button id="runSyncBtn" onclick="runPriceSync()" style="width:100%;padding:12px;background:#4CAF50;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
+                🔄 Запустить синхронизацию
+            </button>
+
+            <div id="priceSyncResults" style="margin-top:15px;"></div>
+        </div>
+    </div>
+</body>
+</html>

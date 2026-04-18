@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Отчёт за период</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Page-specific styles */
+        .header { background: linear-gradient(135deg, #673AB7, #512DA8); }
+        .summary-card .value { color: #673AB7; }
+        .summary-card.revenue .value { color: #2196F3; }
+        .summary-card.expenses .value { color: #FF9800; }
+        .summary-card.profit .value { color: #4CAF50; }
+        .summary-card.debt .value { color: #f44336; }
+        table th { background: #673AB7; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 ОТЧЁТ ЗА ПЕРИОД</h1>
+        <div class="header-actions">
+            <a href="/" class="btn btn-secondary">Объекты</a>
+            <a href="/stats" class="btn btn-secondary">Статистика</a>
+        </div>
+    </div>
+    <div class="container">
+        <div class="filters">
+            <div class="filter-group"><label>С даты:</label><input type="date" id="start-date"></div>
+            <div class="filter-group"><label>По дату:</label><input type="date" id="end-date"></div>
+            <button class="btn btn-primary" onclick="loadReport()">Сформировать отчёт</button>
+        </div>
+        <div id="summary" style="display:none">
+            <div class="summary-cards">
+                <div class="summary-card revenue"><div class="value" id="s-revenue">0</div><div class="label">Выручка</div></div>
+                <div class="summary-card expenses"><div class="value" id="s-expenses">0</div><div class="label">Затраты</div></div>
+                <div class="summary-card"><div class="value" id="s-salary">0</div><div class="label">Зарплата</div></div>
+                <div class="summary-card"><div class="value" id="s-mat-profit">0</div><div class="label">Прибыль мат.</div></div>
+                <div class="summary-card profit"><div class="value" id="s-profit">0</div><div class="label">Прибыль</div></div>
+                <div class="summary-card debt"><div class="value" id="s-debt">0</div><div class="label">Долги</div></div>
+            </div>
+            <div class="table-wrapper">
+                <table>
+                    <thead><tr><th>№</th><th>Дата</th><th>Объект</th><th>Клиент</th><th>Выручка</th><th>Затраты</th><th>Зарплата</th><th>Приб.мат</th><th>Прибыль</th><th>Статус</th></tr></thead>
+                    <tbody id="table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <script src="/static/js/offline.js?v=3"></script>
+    <script>
+        function formatMoney(v){return Number(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' BYN';}
+        function formatDate(d){if(!d)return'-';const p=d.split('-');return `${p[2]}.${p[1]}.${p[0]}`;}
+        async function loadReport(){
+            const start=document.getElementById('start-date').value;
+            const end=document.getElementById('end-date').value;
+            const params=new URLSearchParams();
+            if(start)params.set('start',start);
+            if(end)params.set('end',end);
+            try{
+                const res=await fetch(`/api/report?${params}`);
+                if(!res.ok) throw new Error('HTTP '+res.status);
+                const data=await res.json();
+                try{await OfflineDB.put('settings',{key:'lastReport',value:JSON.stringify(data)});}catch(e){}
+                renderReport(data);
+            }catch(e){
+                console.error('Report error:',e);
+                try{
+                    const cached=await OfflineDB.getSetting('lastReport');
+                    if(cached){renderReport(typeof cached==='string'?JSON.parse(cached):cached);return;}
+                }catch(e2){}
+                alert('Нет подключения');
+            }
+        }
+        function renderReport(data){
+            const t=data.totals;
+            document.getElementById('s-revenue').textContent=formatMoney(t.revenue);
+            document.getElementById('s-expenses').textContent=formatMoney(t.expenses);
+            document.getElementById('s-salary').textContent=formatMoney(t.salary);
+            document.getElementById('s-mat-profit').textContent=formatMoney(t.material_profit);
+            document.getElementById('s-profit').textContent=formatMoney(t.profit);
+            document.getElementById('s-debt').textContent=formatMoney(t.debt);
+            const tbody=document.getElementById('table-body');
+            tbody.innerHTML='';
+            if(data.objects.length===0){
+                tbody.innerHTML='<tr><td colspan="10" style="padding:30px;color:#999;">Нет объектов за этот период</td></tr>';
+            }else{
+                data.objects.forEach((o,i)=>{
+                    const tr=document.createElement('tr');
+                    const f0=document.createElement('td'); f0.textContent=i+1; tr.appendChild(f0);
+                    const f1=document.createElement('td'); f1.textContent=formatDate(o.date_start); tr.appendChild(f1);
+                    const f2=document.createElement('td'); f2.style.textAlign='left'; f2.textContent=o.name; tr.appendChild(f2);
+                    const f3=document.createElement('td'); f3.textContent=o.client||'-'; tr.appendChild(f3);
+                    const f4=document.createElement('td'); f4.textContent=formatMoney(o.total_revenue); tr.appendChild(f4);
+                    const f5=document.createElement('td'); f5.textContent=formatMoney(o.total_expenses); tr.appendChild(f5);
+                    const f6=document.createElement('td'); f6.textContent=formatMoney(o.salary); tr.appendChild(f6);
+                    const f7=document.createElement('td'); f7.textContent=formatMoney(o.estimate_material_profit||0); tr.appendChild(f7);
+                    const f8=document.createElement('td'); f8.style.fontWeight='bold'; f8.style.color=o.total_profit>=0?'#4CAF50':'#f44336'; f8.textContent=formatMoney(o.total_profit); tr.appendChild(f8);
+                    const f9=document.createElement('td'); f9.textContent=o.status; tr.appendChild(f9);
+                    tbody.appendChild(tr);
+                });
+            }
+            document.getElementById('summary').style.display='block';
+        }
+        const now=new Date();
+        document.getElementById('end-date').value=now.toISOString().split('T')[0];
+        document.getElementById('start-date').value=new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0];
+        loadReport();
+    </script>
+</body>
+</html>

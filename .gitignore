@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Database files (users data)
+user_data/
+*.db
+*.db-shm
+*.db-wal
+
+# Large local Excel dumps (not app source)
+akvabreg_mega.xlsx
+
+# Backups
+backups/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment
+.env
+.env.local
+.env.railway
+.secret_key
+.opt_config.json
+
+# Railway CLI local link
+.railway/
+
+# Portable Railway CLI (scripts/download-railway-cli.ps1)
+scripts/.local/
+
+# Compiled files
+*.pyc
+
+# Node modules
+node_modules/
+
+# Local debug / session artifacts (do not commit)
+cookies.txt
+login_result.txt
+
+# Large local catalog images (restore from backup or sync separately)
+static/images/catalog/
+source/static/images/catalog/
+deploy/static/images/catalog/
+
+# Local price PDF dumps at repo root
+/*.pdf
+
+# Local AI IDE settings
+.qwen/

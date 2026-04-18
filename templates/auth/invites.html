@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Приглашения</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=2">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        .invite-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+        .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all;background:#f5f5f5;padding:6px 8px;border-radius:6px;max-width:420px}
+        .create-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:560px}
+        @media(max-width:600px){.create-grid{grid-template-columns:1fr}}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎟️ Приглашения</h1>
+        <div class="header-actions">
+            <a href="/" class="btn btn-secondary">На главную</a>
+            <a href="/admin/users" class="btn btn-secondary">Пользователи</a>
+        </div>
+    </div>
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}{% endif %}{% endwith %}
+
+        <div class="card" style="margin-bottom:20px">
+            <h2 style="margin-top:0">Новое приглашение</h2>
+            <p style="color:#666;font-size:14px;margin-bottom:16px">
+                Будет сгенерирован уникальный ключ. Отправьте его или ссылку ниже приглашённому — после регистрации ключ учитывается по числу использований.
+            </p>
+            <form action="/admin/invites/create" method="POST" class="create-grid">
+                <div class="form-group" style="grid-column:1/-1">
+                    <label>Заметка (для себя)</label>
+                    <input type="text" name="note" maxlength="500" placeholder="Например: Иван, бригадир">
+                </div>
+                <div class="form-group">
+                    <label>Срок действия (дней, пусто = без срока)</label>
+                    <input type="number" name="valid_days" min="1" max="365" placeholder="Не ограничено">
+                </div>
+                <div class="form-group">
+                    <label>Макс. регистраций по этому ключу</label>
+                    <input type="number" name="max_uses" value="1" min="1" max="50">
+                </div>
+                <div style="grid-column:1/-1">
+                    <button type="submit" class="btn btn-primary">Создать ключ</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2 style="margin-top:0">Активные и прошлые ключи</h2>
+            <div class="table-wrapper table-pan-viewport" title="Прокрутка и перетаскивание мышью по таблице">
+            <table>
+                <thead>
+                    <tr>
+                        <th>№</th>
+                        <th>Ключ / ссылка</th>
+                        <th>Заметка</th>
+                        <th>Создано</th>
+                        <th>Истекает</th>
+                        <th>Использовано</th>
+                        <th>Кем</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for i in invitations %}
+                    {% set reg_url = url_for('auth.register', invite=i.token, _external=True) %}
+                    <tr>
+                        <td>{{ i.id }}</td>
+                        <td>
+                            <div class="mono">{{ i.token }}</div>
+                            <div class="invite-actions" style="margin-top:8px">
+                                <button type="button" class="btn btn-secondary" onclick="copyText({{ i.token|tojson }})">Копировать ключ</button>
+                                <button type="button" class="btn btn-secondary" onclick="copyText({{ reg_url|tojson }})">Копировать ссылку</button>
+                            </div>
+                        </td>
+                        <td>{{ i.note or '—' }}</td>
+                        <td>{{ (i.created_at|string)[:16] if i.created_at else '—' }}</td>
+                        <td>{% if i.expires_at %}{{ i.expires_at|string|replace('T', ' ')[:16] }}{% else %}—{% endif %}</td>
+                        <td>{{ i.used_count }} / {{ i.max_uses }}</td>
+                        <td>{{ i.creator_name or '—' }}</td>
+                        <td>
+                            <form action="/admin/invites/{{ i.id }}/delete" method="POST" style="display:inline" onsubmit="return confirm('Удалить приглашение?')">
+                                <button type="submit" class="btn btn-danger" title="Удалить">🗑️</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="8" style="color:#888">Пока нет приглашений</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+        </div>
+    </div>
+    <script>
+        function copyText(t) {
+            if (!t) return;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(t).then(function() {
+                    alert('Скопировано в буфер обмена');
+                }).catch(function() {
+                    fallbackCopy(t);
+                });
+            } else {
+                fallbackCopy(t);
+            }
+        }
+        function fallbackCopy(t) {
+            var ta = document.createElement('textarea');
+            ta.value = t;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+                alert('Скопировано в буфер обмена');
+            } catch (e) {
+                prompt('Скопируйте вручную:', t);
+            }
+            document.body.removeChild(ta);
+        }
+    </script>
+    <script src="/static/js/table-pan.js?v=1"></script>
+</body>
+</html>

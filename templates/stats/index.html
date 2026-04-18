@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Статистика</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Page-specific styles */
+        .header { background: #2E75B6; }
+        .chart-box { height: 250px; display: flex; align-items: flex-end; gap: 6px; overflow-x: auto; padding: 10px 0; }
+        .bar-col { display: flex; flex-direction: column; align-items: center; flex: 0 0 50px; }
+        .bar { width: 20px; border-radius: 3px 3px 0 0; }
+        .bar-r { background: #2E75B6; } .bar-p { background: #4CAF50; }
+        .bar-label { font-size: 10px; color: #888; margin-top: 4px; text-align: center; }
+        .status-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; margin: 3px; }
+        .st-Запланирован, .st-Ожидает-старта { background: #FFEB9C; color: #666; } .st-В-работе { background: #BDD7EE; color: #1E5A8E; }
+        .st-Приостановлен { background: #FFC7CE; color: #9C0006; } .st-Завершён, .st-Выполнен { background: #C6EFCE; color: #006100; } .st-Оплачен, .st-Закрыт { background: #E2EFDA; color: #333; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 Статистика</h1>
+        <a href="/" class="btn btn-back">← На главную</a>
+    </div>
+    <div id="loading" class="loading">Загрузка...</div>
+    <div id="content" style="display:none;">
+        <div class="grid" id="metrics"></div>
+        <div class="section">
+            <h2>Статусы</h2>
+            <div id="statuses"></div>
+        </div>
+        <div class="section">
+            <h2>Выручка и прибыль по месяцам</h2>
+            <div class="chart-box" id="chart"></div>
+            <div style="display:flex;gap:15px;justify-content:center;margin-top:5px;">
+                <span style="font-size:11px;color:#2E75B6;">■ Выручка</span>
+                <span style="font-size:11px;color:#4CAF50;">■ Прибыль</span>
+            </div>
+        </div>
+        <div class="two-col">
+            <div class="section"><h2>🏆 Топ клиентов</h2><div id="clients"></div></div>
+            <div class="section"><h2>💰 Должники</h2><div id="debtors"></div></div>
+        </div>
+    </div>
+    <script>
+        function money(v) {
+            return Number(v || 0).toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' BYN';
+        }
+
+        function esc(s) {
+            if (!s) return '';
+            var d = document.createElement('div');
+            d.textContent = String(s);
+            return d.innerHTML;
+        }
+
+        function load() {
+            console.log('Stats: loading...');
+            fetch('/api/stats/detailed')
+                .then(function(r) {
+                    console.log('Stats: status', r.status);
+                    if (!r.ok) {
+                        throw new Error('HTTP ' + r.status);
+                    }
+                    return r.json();
+                })
+                .then(function(data) {
+                    console.log('Stats: data received');
+                    renderPage(data);
+                })
+                .catch(function(err) {
+                    console.error('Stats error:', err);
+                    document.getElementById('loading').textContent = 'Ошибка: ' + err.message;
+                });
+        }
+
+        function renderPage(data) {
+            var trend = data.monthly_trend || {};
+            var clients = data.top_clients || [];
+            var debtors = data.top_debtors || [];
+            var statuses = data.status_distribution || {};
+
+            var totalRev = 0;
+            var totalProf = 0;
+            var totalMatProf = 0;
+            var keys = Object.keys(trend);
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                totalRev += trend[k].revenue || 0;
+                totalProf += trend[k].profit || 0;
+                totalMatProf += trend[k].material_profit || 0;
+            }
+            var avgCheck = clients.length > 0 ? totalRev / clients.length : 0;
+            var totalObj = data.year.count || 0;
+            var margin = totalRev > 0 ? ((totalProf / totalRev) * 100).toFixed(1) : 0;
+
+            // Показатели
+            var mDiv = document.getElementById('metrics');
+            mDiv.innerHTML = '';
+            var items = [
+                {lbl:'Всего', val:totalObj, cls:'blue'},
+                {lbl:'За месяц', val:data.month.count||0, cls:'purple'},
+                {lbl:'Выручка', val:money(totalRev), cls:'blue'},
+                {lbl:'Прибыль', val:money(totalProf), cls:'green'},
+                {lbl:'Прибыль мат.', val:money(totalMatProf), cls:'orange'},
+                {lbl:'Маржа', val:margin+'%', cls: margin>=30?'green':'orange'},
+                {lbl:'Ср. чек', val:money(avgCheck), cls:'orange'},
+                {lbl:'Клиентов', val:clients.length, cls:'blue'}
+            ];
+            for (var j = 0; j < items.length; j++) {
+                var it = items[j];
+                var card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = '<h3>' + it.lbl + '</h3><div class="val ' + it.cls + '">' + it.val + '</div>';
+                mDiv.appendChild(card);
+            }
+
+            // Статусы
+            var stDiv = document.getElementById('statuses');
+            stDiv.innerHTML = '';
+            var stKeys = Object.keys(statuses);
+            for (var si = 0; si < stKeys.length; si++) {
+                var name = stKeys[si];
+                var sp = document.createElement('span');
+                sp.className = 'status-badge st-' + name.replace(/ /g, '-');
+                sp.textContent = name + ': ' + statuses[name];
+                stDiv.appendChild(sp);
+            }
+
+            // График
+            var chart = document.getElementById('chart');
+            chart.innerHTML = '';
+            var months = Object.keys(trend).sort();
+            if (months.length === 0) {
+                chart.innerHTML = '<div style="margin:auto;color:#999;">Нет данных</div>';
+            } else {
+                var maxV = 1;
+                for (var mi = 0; mi < months.length; mi++) {
+                    var r = trend[months[mi]].revenue || 0;
+                    var p = trend[months[mi]].profit || 0;
+                    if (r > maxV) maxV = r;
+                    if (p > maxV) maxV = p;
+                }
+                for (var mj = 0; mj < months.length; mj++) {
+                    var m = months[mj];
+                    var rev = trend[m].revenue || 0;
+                    var prof = trend[m].profit || 0;
+                    var col = document.createElement('div');
+                    col.className = 'bar-col';
+                    var bars = document.createElement('div');
+                    bars.style.cssText = 'display:flex;gap:2px;align-items:flex-end;height:200px;';
+                    var b1 = document.createElement('div');
+                    b1.className = 'bar bar-r';
+                    b1.style.height = Math.max((rev / maxV) * 180, 3) + 'px';
+                    var b2 = document.createElement('div');
+                    b2.className = 'bar bar-p';
+                    b2.style.height = Math.max((prof / maxV) * 180, 3) + 'px';
+                    bars.appendChild(b1);
+                    bars.appendChild(b2);
+                    col.appendChild(bars);
+                    var lbl = document.createElement('div');
+                    lbl.className = 'bar-label';
+                    lbl.textContent = m.substring(5);
+                    col.appendChild(lbl);
+                    chart.appendChild(col);
+                }
+            }
+
+            // Топ клиентов
+            var clDiv = document.getElementById('clients');
+            clDiv.innerHTML = '';
+            if (clients.length === 0) {
+                clDiv.innerHTML = '<div style="color:#999;padding:10px;">Нет данных</div>';
+            } else {
+                for (var ci = 0; ci < clients.length; ci++) {
+                    var c = clients[ci];
+                    var d = document.createElement('div');
+                    d.className = 'li';
+                    d.innerHTML = '<span>' + (ci + 1) + '. ' + esc(c.name) + '</span><span style="color:#2E75B6;font-weight:600;">' + money(c.revenue) + '</span>';
+                    clDiv.appendChild(d);
+                }
+            }
+
+            // Должники
+            var dbDiv = document.getElementById('debtors');
+            dbDiv.innerHTML = '';
+            if (debtors.length === 0) {
+                dbDiv.innerHTML = '<div style="color:#999;padding:10px;">Нет должников ✓</div>';
+            } else {
+                for (var di = 0; di < debtors.length; di++) {
+                    var dd = debtors[di];
+                    var ddEl = document.createElement('div');
+                    ddEl.className = 'li';
+                    ddEl.innerHTML = '<span>' + (di + 1) + '. ' + esc(dd.name) + '</span><span style="color:#f44336;font-weight:600;">' + money(dd.debt) + '</span>';
+                    dbDiv.appendChild(ddEl);
+                }
+            }
+
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('content').style.display = 'block';
+        }
+
+        load();
+    </script>
+</body>
+</html>

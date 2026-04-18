@@ -1,0 +1,1898 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Редактор сметы</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Маппинг переменных на base.css */
+        :root {
+            --primary: var(--color-primary);
+            --green: var(--color-success);
+            --orange: var(--color-warning);
+            --red: var(--color-danger);
+        }
+
+        body { padding-bottom: 80px; }
+
+        /* Заголовок секции (h2 вместо h3) */
+        .section-head h2 { font-size: 18px; color: #555; }
+
+        /* Сортируемые заголовки таблиц */
+        .items-table th { background: #eee; color: #666; cursor: pointer; user-select: none; }
+        .items-table th:hover { background: #ddd; }
+        .items-table th.sorted-asc::after { content: ' ▲'; }
+        .items-table th.sorted-desc::after { content: ' ▼'; }
+
+        /* Мобильные карточки позиций */
+        .item-card .field { margin-bottom: 10px; }
+        .item-card label { display: block; font-size: 11px; color: #888; margin-bottom: 4px; }
+        .item-card input, .item-card select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; }
+        .item-card .actions { display: flex; justify-content: flex-end; margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px; }
+
+        /* Итоги — дополнения */
+        .total-row:last-child { margin-top: 10px; }
+
+        /* Фиксированная нижняя панель (вместо sticky) */
+        .bottom-bar { position: fixed; }
+        .bottom-bar .btn { flex: 1; padding: 12px; font-size: 15px; }
+
+        /* Модалка — дополнения */
+        .modal-sheet.wide-editor { width: 99vw; max-width: 99vw; }
+        .modal-header h2 { font-size: 18px; margin-bottom: 10px; color: var(--primary); }
+        .modal-controls select { flex: 1; min-width: 120px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+        .modal-controls input { flex: 2; min-width: 180px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+        .modal-item:active { background: #f0f8ff; }
+        .modal-footer .btn-close { width: 100%; padding: 12px; background: var(--red); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+        .modal-footer .btn-close:hover { background: #d32f2f; }
+
+        .item-count { font-size: 12px; color: #999; padding: 5px 0; }
+
+        /* Drag-over PDF — дополнение к components.css */
+        #pdfDropZone.dragover { transform: scale(1.02); }
+
+        /* Адаптив */
+        @media (max-width: 768px) {
+            .items-table { display: none; }
+            .item-card { display: block; }
+            .info-row { grid-template-columns: 1fr; }
+            .modal-controls { flex-direction: column; }
+            .modal-controls select, .modal-controls input { min-width: auto; }
+        }
+        @media (min-width: 769px) {
+            .bottom-bar { display: none; }
+            .modal-body { max-height: 50vh; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Смета <span id="estimate-number"></span></h1>
+        <div style="display:flex; gap:10px;">
+            <button class="btn btn-secondary" onclick="window.location.href='/'" title="На главную">🏠</button>
+            <button class="btn btn-secondary" onclick="window.location.href='/estimate/'">← Назад</button>
+            <button class="btn btn-primary" onclick="saveEstimate()">💾 Сохранить</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="info-card">
+            <div class="info-row">
+                <div><label>Дата</label><input type="date" id="date"></div>
+                <div><label>Статус</label>
+                    <select id="status"><option>Черновик</option><option>Отправлена</option><option>Утверждена</option></select>
+                </div>
+            </div>
+            <div class="info-row">
+                <div><label>Объект</label><input type="text" id="object-name" placeholder="Название объекта"></div>
+                <div><label>Клиент</label><input type="text" id="client" placeholder="ФИО"></div>
+            </div>
+        </div>
+
+        <div class="items-section">
+            <div class="section-head" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
+                <h2 style="margin:0;">🔧 Материалы</h2>
+                <div style="display:flex;gap:8px;margin-left:auto;">
+                    <button type="button" class="btn btn-danger" onclick="deleteSelectedInSection('material')">🗑 Удалить</button>
+                    <button type="button" class="btn" style="background:var(--orange)" onclick="openSearch('material')">+ Добавить</button>
+                </div>
+            </div>
+            <table class="items-table"><thead><tr>
+                <th style="width:36px;text-align:center;" title="Выделить все"><input type="checkbox" aria-label="Выделить все материалы" onchange="toggleSectionSelectAll('material', this.checked)"></th>
+                <th width="22%">Наименование</th><th width="8%">Ед.</th><th width="8%">Кол-во</th>
+                <th width="12%">Розница</th><th width="12%">Закуп</th><th width="12%">Сумма</th>
+            </tr></thead><tbody id="mat-body"></tbody></table>
+            <div id="mat-cards"></div>
+        </div>
+
+        <div class="items-section">
+            <div class="section-head" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
+                <h2 style="margin:0;">⚙️ Работы</h2>
+                <div style="display:flex;gap:8px;margin-left:auto;">
+                    <button type="button" class="btn btn-danger" onclick="deleteSelectedInSection('work')">🗑 Удалить</button>
+                    <button type="button" class="btn" style="background:var(--orange)" onclick="openSearch('work')">+ Добавить</button>
+                </div>
+            </div>
+            <table class="items-table"><thead><tr>
+                <th style="width:36px;text-align:center;" title="Выделить все"><input type="checkbox" aria-label="Выделить все работы" onchange="toggleSectionSelectAll('work', this.checked)"></th>
+                <th width="32%">Наименование</th><th width="10%">Ед.</th><th width="14%">Кол-во</th>
+                <th width="14%">Расценка</th><th width="14%">Сумма</th>
+            </tr></thead><tbody id="work-body"></tbody></table>
+            <div id="work-cards"></div>
+        </div>
+
+        <div class="totals-card">
+            <div class="total-row"><span>Материалы:</span><span id="sum-mat">0.00 BYN</span></div>
+            <div class="total-row"><span>Работы:</span><span id="sum-work">0.00 BYN</span></div>
+            <div class="total-row" style="color:var(--green); font-size:14px;"><span>Прибыль с мат.:</span><span id="sum-profit">0.00 BYN</span></div>
+            <div class="total-row"><span>ИТОГО:</span><span id="sum-total">0.00 BYN</span></div>
+        </div>
+    </div>
+
+    <div class="bottom-bar">
+        <button class="btn btn-primary" onclick="saveEstimate()">💾 Сохранить</button>
+        <button class="btn btn-secondary" style="background:#FF9800" onclick="openSearch('material')">📦 Мат.</button>
+        <button class="btn btn-secondary" style="background:#FF9800" onclick="openSearch('work')">🔧 Раб.</button>
+    </div>
+
+    <!-- Поиск товаров — С ДЕРЕВОМ КАТЕГОРИЙ -->
+    <div class="modal" id="searchModal">
+        <div class="modal-sheet wide">
+            <div class="modal-header">
+                <h2 id="modalTitle">Добавить</h2>
+                <!-- Вкладки -->
+                <div style="display:flex;gap:5px;margin-bottom:8px;">
+                    <button class="sort-btn active" id="tabCatalog" onclick="switchSearchTab('catalog')">📦 Каталог</button>
+                    <button class="sort-btn" id="tabRecent" onclick="switchSearchTab('recent')">🕐 Недавние</button>
+                    <button class="sort-btn" id="tabFav" onclick="switchSearchTab('fav')">⭐ Избранное</button>
+                    <button class="sort-btn" id="tabImport" onclick="openPdfImport()" style="margin-left:auto;background:#4CAF50;color:white;">📄 Импорт PDF</button>
+                </div>
+                <!-- Поисковая строка -->
+                <input type="text" id="searchInput" placeholder="Поиск по названию, артикулу, бренду..." style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:14px;margin-bottom:8px;">
+
+                <!-- Управление категориями и сортировкой -->
+                <div class="modal-controls" id="catalogControls">
+                    <button class="sort-btn" id="catTreeBtn" onclick="toggleCatTree()" title="Фильтр по категориям">📂 Категории</button>
+                    <button class="sort-btn" onclick="openCatManager()" title="Управление категориями">⚙️</button>
+                    <button class="sort-btn" id="sortBtn" onclick="toggleSort()" title="Сортировка">По имени А-Я</button>
+                </div>
+
+                <!-- Дерево категорий -->
+                <div id="catTree" style="display:none;max-height:200px;overflow-y:auto;border:1px solid #ddd;border-radius:6px;padding:8px 12px;margin-top:6px;background:#fafafa;">
+                    <div style="display:flex;gap:8px;margin-bottom:6px;">
+                        <button class="sort-btn" onclick="selectAllCats(true)" style="flex:1;">☑ Выбрать все</button>
+                        <button class="sort-btn" onclick="selectAllCats(false)" style="flex:1;">☐ Снять все</button>
+                    </div>
+                    <div id="catTreeContent"></div>
+                    <div style="font-size:11px;color:#888;margin-top:4px;" id="catTreeCount"></div>
+                </div>
+
+                <div class="item-count" id="itemCount"></div>
+            </div>
+            <div style="display:flex;max-height:55vh;">
+                <!-- Боковая панель категорий (дерево) -->
+                <div id="catSidebar" style="width:200px;min-width:160px;max-height:55vh;overflow-y:auto;border-right:1px solid #eee;padding:8px 12px;display:none;">
+                    <div style="font-size:12px;font-weight:600;color:#666;margin-bottom:6px;">Фильтр</div>
+                    <div id="catSidebarTree"></div>
+                </div>
+                <!-- Результаты -->
+                <div style="flex:1;overflow-y:auto;max-height:55vh;padding:0 20px;" id="searchResults"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-close" style="background:#4CAF50;margin-bottom:6px;" id="createNewBtn" onclick="openCreateNew()">+ Создать</button>
+                <button class="btn-close" onclick="closeSearch()">✕ Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка создания нового элемента -->
+    <div class="modal" id="createModal">
+        <div class="modal-sheet" style="width: min(95vw, 700px);">
+            <div class="modal-header">
+                <h2 id="createTitle">Создать</h2>
+            </div>
+            <div style="padding:0 20px;">
+                <div class="fg"><label>Название</label><input type="text" id="c-name"></div>
+                <div class="frow">
+                    <div class="fg" style="flex:0.5"><label>Ед</label>
+                        <select id="c-unit"><option>шт</option><option>м</option><option>м²</option><option>м³</option><option>кг</option><option>т</option><option>л</option><option>компл</option><option>усл</option><option>ч</option></select>
+                    </div>
+                    <div class="fg"><label>Цена</label><input type="number" step="0.01" id="c-price"></div>
+                </div>
+                <div class="fg" id="c-cat-row" style="display:none;"><label>Категория</label>
+                    <select id="c-category">
+                        <option value="">Без категории</option>
+                        <option value="промышленный монтаж">Промышленный монтаж</option>
+                        <option value="бытовой монтаж">Бытовой монтаж</option>
+                        <option value="земляные работы">Земляные работы</option>
+                        <option value="отопление">Отопление</option>
+                        <option value="канализация">Канализация</option>
+                        <option value="сантех работы">Сантех работы</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-close" style="background:#4CAF50;" onclick="saveNewItem()">💾 Сохранить и добавить</button>
+                <button class="btn-close" onclick="closeCreate()">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка управления категориями -->
+    <div class="modal" id="catModal">
+        <div class="modal-sheet" style="width: min(95vw, 700px);">
+            <div class="modal-header">
+                <h2>Управление категориями</h2>
+            </div>
+            <div style="padding:0 20px;">
+                <div class="fg"><label>Новая категория</label><input type="text" id="newCatName" placeholder="Название..."></div>
+                <div class="fg"><label>Родительская (необязательно)</label>
+                    <select id="newCatParent"><option value="">Нет (Корневая)</option></select>
+                </div>
+                <button class="btn-close" style="background:#4CAF50; margin-bottom:10px;" onclick="addCatCategory()">+ Добавить</button>
+                <div id="catList" style="max-height:200px; overflow-y:auto; border:1px solid #eee; border-radius:6px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-close" onclick="closeCatManager()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/offline.js?v=4"></script>
+    <script>
+        let estimateId = {{ estimate_id | tojson }};
+        let prefilledObjectId = null;
+        let items = [];
+        let catalog = { material: [], work: [] };
+        let currentType = 'material';
+        let sortMode = 'name';
+        let allCategories = { material: [], work: [] };
+        let selectedCats = []; // Выбранные категории (чекбоксы)
+        let catTreeOpen = {};  // Состояние раскрытия категорий
+
+        // Переключение дерева категорий
+        function toggleCatTree() {
+            var tree = document.getElementById('catTree');
+            var btn = document.getElementById('catTreeBtn');
+            if (tree.style.display === 'none') {
+                tree.style.display = 'block';
+                btn.className = 'sort-btn active';
+                if (catalog[currentType].length > 0) {
+                    buildCatTree();
+                }
+            } else {
+                tree.style.display = 'none';
+                btn.className = 'sort-btn';
+            }
+        }
+
+        // Обновление дерева категорий для работ
+        function updateWorkDropdown() {
+            if (currentType === 'work' && catalog.works.length > 0) {
+                buildCatTree();
+            }
+        }
+
+        // Построение дерева категорий: Категория → Тип → Бренд
+        function buildCatTree() {
+            var list = catalog[currentType];
+            if (!list.length) return;
+
+            // Строим: Категория → Тип(item_type) → Бренд
+            var tree = {};
+            list.forEach(function(item) {
+                var catName = item.category || 'Без категории';
+                var itype = item.item_type || 'Другое';
+                var brand = item.brand || 'Без бренда';
+
+                if (!tree[catName]) tree[catName] = {};
+                if (!tree[catName][itype]) tree[catName][itype] = {};
+                if (!tree[catName][itype][brand]) tree[catName][itype][brand] = 0;
+                tree[catName][itype][brand]++;
+            });
+
+            var html = '';
+            var catKeys = Object.keys(tree).sort();
+            catKeys.forEach(function(cat) {
+                var catId = 'cat_' + cat.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+                var cIsOpen = catTreeOpen[catId] === true;
+                var cTotal = 0;
+                var types = tree[cat];
+                Object.keys(types).forEach(function(t) {
+                    Object.keys(types[t]).forEach(function(br) {
+                        cTotal += types[t][br];
+                    });
+                });
+
+                html += '<div style="margin-bottom:2px;">';
+                html += '<div style="cursor:pointer;padding:6px 6px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:4px;background:#e8f5e9;border-radius:4px;" onclick="toggleCatNode(\'' + catId + '\')">';
+                html += (cIsOpen ? '▼' : '▶') + ' 📁 ' + esc(cat);
+                html += ' <span style="color:#666;font-weight:normal;font-size:11px;">(' + cTotal + ')</span>';
+                html += '</div>';
+
+                if (cIsOpen) {
+                    html += '<div style="padding-left:16px;">';
+                    var typeKeys = Object.keys(types).sort();
+                    typeKeys.forEach(function(itype) {
+                        var typeId = catId + '_type_' + itype.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+                        var tIsOpen = catTreeOpen[typeId] === true;
+                        var tTotal = 0;
+                        Object.keys(types[itype]).forEach(function(br) { tTotal += types[itype][br]; });
+
+                        html += '<div style="margin-bottom:1px;">';
+                        html += '<div style="cursor:pointer;padding:4px 6px;font-weight:600;font-size:12px;display:flex;align-items:center;gap:4px;" onclick="toggleCatNode(\'' + typeId + '\')">';
+                        html += '&nbsp;&nbsp;' + (tIsOpen ? '▼' : '▶') + ' 📂 ' + esc(itype);
+                        html += ' <span style="color:#999;font-weight:normal;font-size:11px;">(' + tTotal + ')</span>';
+                        html += '</div>';
+
+                        if (tIsOpen) {
+                            html += '<div style="padding-left:16px;">';
+                            var brandKeys = Object.keys(types[itype]).sort();
+                            brandKeys.forEach(function(brand) {
+                                var brandId = typeId + '_br_' + brand.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+                                var checked = selectedCats.indexOf(brandId) !== -1;
+                                html += '<label style="display:flex;align-items:center;gap:4px;padding:3px 6px;cursor:pointer;font-size:12px;">';
+                                html += '<input type="checkbox" ' + (checked?'checked':'') + ' onchange="toggleCatCheck(\'' + brandId + '\', this.checked)" style="margin:0;"> ';
+                                html += '🏷️ ' + esc(brand) + ' <span style="color:#999;">(' + types[itype][brand] + ')</span>';
+                                html += '</label>';
+                            });
+                            html += '</div>';
+                        }
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                }
+                html += '</div>';
+            });
+
+            document.getElementById('catTreeContent').innerHTML = html;
+            updateCatTreeCount();
+        }
+
+        // Извлечение бренда из названия
+        function extractBrand(name) {
+            if (!name) return 'Без бренда';
+            var n = name.toUpperCase();
+
+            // ПЕРВЫЙ ШАГ: берём первые 2 слова названия — это обычно бренд
+            var parts = name.split(/\s+/);
+            var first2 = parts.slice(0, 2).join(' ').toUpperCase();
+            var first1 = parts[0].toUpperCase();
+
+            // === БРЕНДЫ НАСОСОВ (длинные сначала!) ===
+            var pumpBrands = [
+                // IBO — все варианты
+                'IBO OHI', 'IBO MH', 'IBO 4SD', 'IBO 2,5STM', 'IBO 3SDM', 'IBO 3SKM',
+                'IBO 3STM', 'IBO 3JNR', 'IBO 2TF', 'IBO TF', 'IBO SP', 'IBO 4STM',
+                'IBO 4SKM', 'IBO 6SDM', 'IBO 6STM', 'IBO 8SDM', 'IBO 10SDM',
+                'IBO 15STM', 'IBO 20STM', 'IBO PW', 'IBO OH',
+                // MAXPUMP
+                'MAXPUMP UPDF', 'MAXPUMP SP', 'MAXPUMP GP',
+                // BELAMOS
+                'BELAMOS TF', 'BELAMOS 3JNR', 'BELAMOS 3SP', 'BELAMOS 2TF',
+                'BELAMOS 3TF', 'BELAMOS SP', 'BELAMOS TF3', 'BELAMOS 3JNR',
+                'BELAMOS JNR',
+                // ДЖИЛЕКС
+                'ДЖИЛЕКС ВОДОМЕТ', 'ДЖИЛЕКС ДЖАМБО', 'ДЖИЛЕКС В',
+                // JEMIX
+                'JEMIX BST', 'JEMIX B',
+                // ESPA
+                'ESPA',
+                // DAB
+                'DAB',
+                // ВОДОЛЕЙ
+                'ВОДОЛЕЙ',
+                // ЭЦВ
+                'ЭЦВ',
+                // АКВАБРАЙТ
+                'АКВАБРАЙТ',
+                // Другие российские
+                'ВИХРЬ',
+                'КАЛИБР',
+                'ЗУБР',
+                'ИНТЕРСКОЛ',
+                'СТАВР',
+                'УРАЛЭКО',
+                'ЛИВГИДРОМАШ',
+                'КАПЕЛЬКА',
+                'РОДНИЧОК',
+                'РУЧЕЕК', 'РУЧЕЁК',
+                'СТРУЙКА',
+                'МАЛЫШ',
+                'ГРАНДПОЛИМЕРСЕРВИС',
+                'РОССМАШ',
+                // Западные
+                'WESTER',
+                'PEDROLLO',
+                'LOWARA',
+                'SPERONI',
+                'QUATTRO',
+                'WATERSTRY',
+                'HAILEA',
+                'SUNTECH',
+                'WILO',
+                'GRUNDFOS',
+                'VORTEX',
+                'KORSH',
+            ];
+
+            for (var i = 0; i < pumpBrands.length; i++) {
+                if (n.indexOf(pumpBrands[i].toUpperCase()) !== -1) return pumpBrands[i];
+            }
+
+            // === БРЕНД ИЗ ПЕРВЫХ СЛОВ ===
+            // Проверяем первые 2 слова и 1 слово как потенциальные бренды
+            var firstWordBrands = [
+                'IBO', 'MAXPUMP', 'BELAMOS', 'ДЖИЛЕКС', 'JEMIX',
+                'ESPA', 'DAB', 'ВОДОЛЕЙ', 'ЭЦВ', 'АКВАБРАЙТ',
+                'ВИХРЬ', 'КАЛИБР', 'ЗУБР', 'ИНТЕРСКОЛ', 'СТАВР',
+                'УРАЛЭКО', 'ЛИВГИДРОМАШ', 'КАПЕЛЬКА', 'РОДНИЧОК',
+                'РУЧЕЕК', 'РУЧЕЁК', 'СТРУЙКА', 'МАЛЫШ',
+                'ГРАНДПОЛИМЕРСЕРВИС', 'РОССМАШ',
+                'WESTER', 'PEDROLLO', 'LOWARA', 'SPERONI',
+                'QUATTRO', 'WATERSTRY', 'HAILEA', 'SUNTECH',
+                'WILO', 'GRUNDFOS', 'VORTEX', 'KORSH',
+                'POELSAN', 'UNIDELTA', 'AQUALINK', 'MEERPLAST', 'STI',
+                'VALTEC', 'VALFEX', 'ITAP', 'OVENTROP', 'DANFOSS',
+                'HERZ', 'GROHE', 'HANSA', 'REHAU', 'KERMI', 'PURMO',
+                'РИФАР', 'КОРАДО', 'BAXI', 'VIESSMANN', 'VAILLANT',
+                'BOSCH', 'ЭВАН', 'РУСНИТ',
+                'POELSAN', 'Poelsan', 'STI', 'Itap', 'Danfoss',
+            ];
+
+            // Сначала проверяем первые 2 слова
+            for (var i = 0; i < firstWordBrands.length; i++) {
+                if (first2.indexOf(firstWordBrands[i].toUpperCase()) === 0) return firstWordBrands[i];
+            }
+            // Потом первое слово
+            for (var i = 0; i < firstWordBrands.length; i++) {
+                if (first1.indexOf(firstWordBrands[i].toUpperCase()) === 0) return firstWordBrands[i];
+            }
+
+            // === АРМАТУРА И ФИТИНГИ ===
+            var fittingBrands = [
+                'POELSAN', 'Poelsan',
+                'UNIDELTA',
+                'AQUALINK',
+                'MEERPLAST',
+                'STI',
+                'VALTEC', 'Valtec',
+                'VALFEX',
+                'Itap',
+                'Oventrop',
+                'Danfoss',
+                'Herz',
+                'Grohe',
+                'Hansa',
+                'Rehau',
+            ];
+
+            for (var i = 0; i < fittingBrands.length; i++) {
+                if (n.indexOf(fittingBrands[i].toUpperCase()) !== -1) return fittingBrands[i];
+            }
+
+            // === ОТОПЛЕНИЕ ===
+            var heatingBrands = [
+                'Kermi',
+                'Purmo',
+                'РИФАР',
+                'КОРАДО',
+                'BAXI',
+                'VIESSMANN',
+                'VAILLANT',
+                'BOSCH',
+            ];
+
+            for (var i = 0; i < heatingBrands.length; i++) {
+                if (n.indexOf(heatingBrands[i].toUpperCase()) !== -1) return heatingBrands[i];
+            }
+
+            // === КОТЛЫ ===
+            var boilerBrands = [
+                'ЭВАН',
+                'РУСНИТ',
+            ];
+
+            for (var i = 0; i < boilerBrands.length; i++) {
+                if (n.indexOf(boilerBrands[i].toUpperCase()) !== -1) return boilerBrands[i];
+            }
+
+            return 'Без бренда';
+        }
+
+        function toggleCatNode(catId) {
+            catTreeOpen[catId] = !catTreeOpen[catId];
+            buildCatTree();
+        }
+
+        function toggleCatCheck(brandId, checked) {
+            var idx = selectedCats.indexOf(brandId);
+            if (checked) { if (idx === -1) selectedCats.push(brandId); }
+            else { if (idx !== -1) selectedCats.splice(idx, 1); }
+            filterCatalog();
+        }
+
+        function selectAllCats(val) {
+            if (val) {
+                selectedCats = [];
+                var list = catalog[currentType];
+                var seen = {};
+                list.forEach(function(item) {
+                    var brand = extractBrand(item.name);
+                    var brandId = '_br_' + brand.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+                    if (!seen[brandId]) { seen[brandId] = 1; }
+                });
+            } else {
+                selectedCats = [];
+            }
+            buildCatTree();
+            filterCatalog();
+        }
+
+        function updateCatTreeCount() {
+            var countLabel = document.getElementById('catTreeCount');
+            if (selectedCats.length > 0) {
+                countLabel.textContent = 'Выбрано категорий: ' + selectedCats.length;
+            } else {
+                countLabel.textContent = 'Все категории';
+            }
+        }
+        let searchTab = 'catalog'; // 'catalog', 'recent', 'fav'
+        let recentItems = []; // Последние добавленные
+        let favoriteItems = []; // Избранное из localStorage
+
+        function getCsrf() {
+            var m = document.querySelector('meta[name="csrf-token"]');
+            return m ? m.getAttribute('content') : '';
+        }
+
+        // Универсальный fetch с автоматическим обновлением CSRF токена
+        async function fetchCsrf(url, options) {
+            var token = getCsrf();
+            if (!options.headers) options.headers = {};
+            if (!options.headers['Content-Type']) options.headers['Content-Type'] = 'application/json';
+            if (token) options.headers['X-CSRF-Token'] = token;
+            
+            var res = await fetch(url, options);
+            
+            // Если CSRF истёк (403) — пробуем обновить
+            if (res.status === 403) {
+                try {
+                    var csrfRes = await fetch('/api/csrf-token');
+                    if (csrfRes.ok) {
+                        var csrfData = await csrfRes.json();
+                        token = csrfData.csrf_token;
+                        // Обновляем meta тег
+                        var meta = document.querySelector('meta[name="csrf-token"]');
+                        if (meta) meta.setAttribute('content', token);
+                        // Пробуем снова с новым токеном
+                        options.headers['X-CSRF-Token'] = token;
+                        res = await fetch(url, options);
+                    }
+                } catch(e) {
+                    console.error('CSRF refresh failed:', e);
+                }
+            }
+            
+            return res;
+        }
+
+        // Загрузка избранного из localStorage
+        function loadFavorites() {
+            try {
+                var key = 'estimate_favorites_' + (currentType === 'material' ? 'mat' : 'work');
+                var data = localStorage.getItem(key);
+                favoriteItems = data ? JSON.parse(data) : [];
+            } catch(e) { favoriteItems = []; }
+        }
+
+        function saveFavorites() {
+            try {
+                var key = 'estimate_favorites_' + (currentType === 'material' ? 'mat' : 'work');
+                localStorage.setItem(key, JSON.stringify(favoriteItems));
+            } catch(e) {}
+        }
+
+        function toggleFavorite(item) {
+            var idx = favoriteItems.indexOf(item.name);
+            if (idx === -1) { favoriteItems.push(item.name); }
+            else { favoriteItems.splice(idx, 1); }
+            saveFavorites();
+            filterCatalog();
+        }
+
+        function isFavorite(name) {
+            return favoriteItems.indexOf(name) !== -1;
+        }
+
+        // Переключение вкладок поиска
+        function switchSearchTab(tab) {
+            searchTab = tab;
+            document.getElementById('tabCatalog').className = 'sort-btn' + (tab==='catalog'?' active':'');
+            document.getElementById('tabRecent').className = 'sort-btn' + (tab==='recent'?' active':'');
+            document.getElementById('tabFav').className = 'sort-btn' + (tab==='fav'?' active':'');
+            document.getElementById('catalogControls').style.display = tab === 'catalog' ? 'flex' : 'none';
+            document.getElementById('createNewBtn').style.display = tab === 'catalog' ? '' : 'none';
+            filterCatalog();
+        }
+
+        // Добавление в недавние
+        function addRecent(item) {
+            // Удаляем если уже есть
+            recentItems = recentItems.filter(function(r){ return r.name !== item.name; });
+            // Добавляем в начало
+            var rec = { name: item.name, unit: item.unit, price: item.retail_price || item.price, retail_price: item.retail_price || item.price, purchase_price: item.purchase_price || 0, section: currentType };
+            recentItems.unshift(rec);
+            // Ограничиваем 20
+            if (recentItems.length > 20) recentItems = recentItems.slice(0, 20);
+        }
+
+        // Загрузка категорий по типу
+        function loadCategories(type) {
+            return fetch('/estimate/api/catalog/categories?type=' + type)
+                .then(function(r) { return r.json(); })
+                .then(function(cats) {
+                    allCategories[type] = cats || [];
+                })
+                .catch(function() {
+                    allCategories[type] = [];
+                });
+        }
+
+        // Построение фильтра категорий в поиске
+        function buildCategoryFilter() {
+            var sel = document.getElementById('catFilter');
+            sel.innerHTML = '<option value="">Все категории</option>';
+            var type = currentType === 'material' ? 'material' : 'work';
+            var cats = allCategories[type] || [];
+            cats.forEach(function(c) {
+                var o = document.createElement('option');
+                o.value = c.name;
+                o.textContent = (c.parent_id ? '— ' : '') + c.name;
+                sel.appendChild(o);
+            });
+        }
+
+        async function init() {
+            // Ждём инициализации OfflineDB
+            try { await OfflineDB.init(); } catch(e) { console.error('OfflineDB init failed:', e); }
+
+            // Загружаем категории и каталоги параллельно
+            await Promise.all([loadCategories('material'), loadCategories('work')]);
+
+            const [mRes, wRes] = await Promise.all([
+                fetch('/estimate/api/catalog/materials').then(r=>r.json()),
+                fetch('/estimate/api/catalog/works').then(r=>r.json())
+            ]);
+            catalog.material = mRes;
+            catalog.work = wRes;
+            catalogLoaded = true;
+
+            console.log('Catalog loaded: ' + catalog.material.length + ' materials, ' + catalog.work.length + ' works');
+
+            // Если модалка поиска уже открыта — обновить список
+            if (document.getElementById('searchModal').classList.contains('active')) {
+                console.log('Search modal is open, refreshing...');
+                selectedCats = [];
+                catTreeOpen = {};
+                if (catalog[currentType].length > 0) {
+                    buildCatTree();
+                }
+                filterCatalog();
+            }
+
+            if (estimateId) {
+                try {
+                    const res = await fetch(`/estimate/api/estimates/${estimateId}`);
+                    if (!res.ok) throw new Error('HTTP '+res.status);
+                    const data = await res.json();
+                    items = (data.items || []).map(function(it) { it._new = false; return it; });
+                    document.getElementById('estimate-number').textContent = data.number;
+                    document.getElementById('date').value = data.date;
+                    document.getElementById('object-name').value = data.object_name || '';
+                    document.getElementById('client').value = data.client || '';
+                    document.getElementById('status').value = data.status || 'Черновик';
+                    if (data.object_id) { prefilledObjectId = parseInt(data.object_id, 10) || null; }
+                    try { await OfflineDB.put('estimates', data); } catch(e) {}
+                    // Сохраняем ID в localStorage
+                    localStorage.setItem('estimate_last_id', estimateId);
+                    console.log('Estimate loaded: ' + estimateId + ', items: ' + items.length);
+                } catch(e) {
+                    console.log('Loading estimate from cache...');
+                    const cached = await OfflineDB.getById('estimates', estimateId);
+                    if (cached && cached.items) {
+                        items = cached.items.map(function(it) { it._new = false; return it; });
+                        document.getElementById('estimate-number').textContent = cached.number || '';
+                        document.getElementById('date').value = cached.date || '';
+                        document.getElementById('object-name').value = cached.object_name || '';
+                        document.getElementById('client').value = cached.client || '';
+                        document.getElementById('status').value = cached.status || 'Черновик';
+                        if (cached.object_id) { prefilledObjectId = parseInt(cached.object_id, 10) || null; }
+                    }
+                }
+            } else {
+                // Новая смета — очищаем позиции
+                items = [];
+                document.getElementById('estimate-number').textContent = '—';
+                document.getElementById('date').value = new Date().toISOString().split('T')[0];
+                // Автозаполнение из URL параметров (object_id, object_name, client)
+                var urlP = new URLSearchParams(window.location.search);
+                var pObjId = urlP.get('object_id');
+                var pObj = urlP.get('object_name');
+                var pClient = urlP.get('client');
+                if (pObjId) { prefilledObjectId = parseInt(pObjId); }
+                if (pObj) document.getElementById('object-name').value = pObj;
+                if (pClient) document.getElementById('client').value = pClient;
+
+                // НЕ восстанавливаем последнюю смету — пользователь создал новую
+                console.log('Creating new estimate, not restoring last one');
+            }
+            render();
+        }
+
+        function render() {
+            var mats = items.filter(i => i.section === 'material');
+            mats.forEach(function(it) {
+                var q = parseFloat(it.quantity) || 0, p = parseFloat(it.price) || 0;
+                if (q > 0 && p > 0 && (q > 5000 || q * p > 400000)) {
+                    it.quantity = 1;
+                    it.total = it.quantity * p;
+                    it.material_profit = (p - (parseFloat(it.purchase_price) || 0)) * it.quantity;
+                }
+            });
+            renderList('mat-body', 'mat-cards', mats, 'material');
+            var works = items.filter(i => i.section === 'work');
+            renderList('work-body', 'work-cards', works, 'work');
+
+            var sMat = mats.reduce((s, i) => s + (i.total || 0), 0);
+            var sWork = works.reduce((s, i) => s + (i.total || 0), 0);
+            // Прибыль считаем только для новых позиций (добавленных из каталога в этой сессии)
+            var sProfit = mats.filter(i => i.material_profit > 0).reduce((s, i) => s + (i.material_profit || 0), 0);
+
+            document.getElementById('sum-mat').textContent = sMat.toFixed(2) + ' BYN';
+            document.getElementById('sum-work').textContent = sWork.toFixed(2) + ' BYN';
+            document.getElementById('sum-profit').textContent = '+' + sProfit.toFixed(2) + ' BYN';
+            document.getElementById('sum-total').textContent = (sMat + sWork).toFixed(2) + ' BYN';
+        }
+
+        function esc(str) {
+            if (!str) return '';
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
+        }
+
+        function renderList(tableId, cardId, list, sectionKind) {
+            var isMat = sectionKind === 'material';
+            var tBody = document.getElementById(tableId);
+            tBody.innerHTML = list.map((item, idx) => {
+                var purch = (item.purchase_price != null && item.purchase_price !== '') ? item.purchase_price : 0;
+                var priceCells = isMat
+                    ? ('<td><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></td>'+
+                       '<td><input type="number" value="'+purch+'" step="0.01" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></td>')
+                    : ('<td><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></td>');
+                return '<tr>'+
+                    '<td style="text-align:center;vertical-align:middle;"><input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'" aria-label="Выбрать строку"></td>'+
+                    '<td><input type="text" value="'+esc(item.name)+'" onchange="updateItem('+item.id+', \'name\', this.value)"></td>'+
+                    '<td><select onchange="updateItem('+item.id+', \'unit\', this.value)">'+
+                        ['шт','м','м²','м³','кг','т','л','компл'].map(u => '<option'+(item.unit===u?' selected':'')+'>'+esc(u)+'</option>').join('')+
+                    '</select></td>'+
+                    '<td><input type="number" value="'+item.quantity+'" step="0.1" onchange="updateItem('+item.id+', \'quantity\', this.value)"></td>'+
+                    priceCells +
+                    '<td style="font-weight:bold; text-align:right">'+item.total.toFixed(2)+'</td>'+
+                '</tr>';
+            }).join('');
+
+            var cDiv = document.getElementById(cardId);
+            cDiv.innerHTML = list.map(item => {
+                var purch = (item.purchase_price != null && item.purchase_price !== '') ? item.purchase_price : 0;
+                var priceFields = isMat
+                    ? ('<div style="display:flex; gap:10px; flex-wrap:wrap;">'+
+                        '<div class="field" style="flex:1;min-width:110px"><label>Розница</label><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></div>'+
+                        '<div class="field" style="flex:1;min-width:110px"><label>Закуп</label><input type="number" value="'+purch+'" step="0.01" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></div>'+
+                      '</div>')
+                    : ('<div class="field"><label>Расценка</label><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></div>');
+                return '<div class="item-card">'+
+                    '<label class="est-card-cb-wrap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:#555;cursor:pointer;">'+
+                    '<input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'"><span>Выбрать для удаления</span></label>'+
+                    '<div class="field"><label>Наименование</label><input type="text" value="'+esc(item.name)+'" onchange="updateItem('+item.id+', \'name\', this.value)"></div>'+
+                    '<div style="display:flex; gap:10px;">'+
+                        '<div class="field" style="flex:1"><label>Ед.</label><select onchange="updateItem('+item.id+', \'unit\', this.value)">'+
+                            ['шт','м','м²','м³','кг','т','л','компл'].map(u => '<option'+(item.unit===u?' selected':'')+'>'+esc(u)+'</option>').join('')+
+                        '</select></div>'+
+                        '<div class="field" style="flex:1"><label>Кол-во</label><input type="number" value="'+item.quantity+'" step="0.1" onchange="updateItem('+item.id+', \'quantity\', this.value)"></div>'+
+                    '</div>'+
+                    priceFields +
+                    '<div style="font-size:16px; font-weight:bold; text-align:right; margin-top:5px;">'+item.total.toFixed(2)+' BYN</div>'+
+                '</div>';
+            }).join('');
+        }
+
+        function toggleSectionSelectAll(section, checked) {
+            var bodyId = section === 'material' ? 'mat-body' : 'work-body';
+            var cardId = section === 'material' ? 'mat-cards' : 'work-cards';
+            document.querySelectorAll('#' + bodyId + ' .est-row-cb, #' + cardId + ' .est-row-cb').forEach(function(cb) {
+                cb.checked = !!checked;
+            });
+        }
+
+        function getSelectedItemIdsInSection(section) {
+            var bodyId = section === 'material' ? 'mat-body' : 'work-body';
+            var cardId = section === 'material' ? 'mat-cards' : 'work-cards';
+            var seen = {};
+            var ids = [];
+            document.querySelectorAll('#' + bodyId + ' .est-row-cb:checked, #' + cardId + ' .est-row-cb:checked').forEach(function(cb) {
+                var id = parseInt(cb.getAttribute('data-item-id'), 10);
+                if (!isNaN(id) && !seen[id]) {
+                    seen[id] = true;
+                    ids.push(id);
+                }
+            });
+            return ids;
+        }
+
+        async function ensureEstimateExistsForAddingItems() {
+            if (estimateId) return true;
+            try {
+                var data = {
+                    date: document.getElementById('date').value || new Date().toISOString().split('T')[0],
+                    object_name: document.getElementById('object-name').value,
+                    client: document.getElementById('client').value,
+                    status: document.getElementById('status').value || 'Черновик'
+                };
+                if (prefilledObjectId) data.object_id = prefilledObjectId;
+
+                var res = await fetch('/estimate/api/estimates', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) {
+                    var err = await res.json().catch(function() { return { error: 'Ошибка создания сметы' }; });
+                    throw new Error(err.error || 'HTTP ' + res.status);
+                }
+                var saved = await res.json();
+                estimateId = saved.id;
+                document.getElementById('estimate-number').textContent = saved.number;
+                localStorage.setItem('estimate_last_id', estimateId);
+                console.log('Смета автосохранена: id=' + estimateId);
+                return true;
+            } catch (e) {
+                alert('Не удалось создать смету: ' + e.message);
+                return false;
+            }
+        }
+
+        async function deleteItemsByIds(ids) {
+            if (!ids.length) return;
+            for (var i = 0; i < ids.length; i++) {
+                var id = ids[i];
+                items = items.filter(function(x) { return x.id !== id; });
+            }
+            render();
+            await saveEstimateToDB();
+            if (navigator.onLine) {
+                for (var j = 0; j < ids.length; j++) {
+                    var idDel = ids[j];
+                    if (idDel && !isNaN(idDel)) {
+                        try {
+                            var res = await fetchCsrf('/estimate/api/items/' + idDel, { method: 'DELETE' });
+                            if (!res.ok) throw new Error('HTTP ' + res.status);
+                        } catch (e) {
+                            console.error('deleteItemsByIds server error:', e);
+                            await OfflineDB.addToQueue({ method: 'DELETE', url: '/estimate/api/items/' + idDel });
+                        }
+                    }
+                }
+            }
+        }
+
+        async function deleteSelectedInSection(section) {
+            var ids = getSelectedItemIdsInSection(section);
+            if (!ids.length) {
+                alert('Отметьте позиции галочками');
+                return;
+            }
+            if (!confirm('Удалить выбранные позиции (' + ids.length + ')?')) return;
+            await deleteItemsByIds(ids);
+        }
+
+        async function updateItem(id, field, val) {
+            var item = items.find(i => i.id === id);
+            if (!item) return;
+            if (field === 'quantity' || field === 'price' || field === 'purchase_price') val = parseFloat(val) || 0;
+            item[field] = val;
+            if (field === 'quantity' || field === 'price' || field === 'purchase_price') {
+                item.total = item.quantity * item.price;
+                if (item.section === 'material') {
+                    item.material_profit = (item.price - (item.purchase_price || 0)) * item.quantity;
+                }
+            }
+            render();
+            
+            // Сохраняем в IndexedDB всегда
+            await saveEstimateToDB();
+            
+            // Если онлайн - обновляем на сервере
+            if (navigator.onLine && id && !isNaN(id)) {
+                try {
+                    var resUp = await fetchCsrf('/estimate/api/items/'+id, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: item.name, unit: item.unit, quantity: item.quantity, price: item.price,
+                            purchase_price: item.purchase_price || 0, section: item.section || 'material',
+                            wholesale_price: (item.section === 'material') ? (parseFloat(item.wholesale_price) || 0) : 0
+                        })
+                    });
+                    if (!resUp.ok) {
+                        var errJ = await resUp.json().catch(function(){ return {}; });
+                        alert('Не удалось сохранить строку: ' + (errJ.error || resUp.status));
+                    }
+                } catch(e) {
+                    console.error('updateItem server error:', e);
+                    alert('Ошибка сети при сохранении строки');
+                    await OfflineDB.addToQueue({
+                        method: 'PUT',
+                        url: '/estimate/api/items/'+id,
+                        body: item
+                    });
+                }
+            }
+        }
+
+        // === ПОИСК И ДОБАВЛЕНИЕ ===
+        var catalogLoaded = false;
+
+        function openSearch(type) {
+            currentType = type;
+            document.getElementById('modalTitle').innerText = type === 'material' ? 'Добавить материал' : 'Добавить работу';
+            document.getElementById('createNewBtn').textContent = type === 'material' ? '+ Создать материал' : '+ Создать услугу';
+            document.getElementById('searchInput').value = '';
+            sortMode = 'name';
+            updateSortBtn();
+            loadFavorites();
+            searchTab = 'catalog';
+            switchSearchTab('catalog');
+            document.getElementById('catTree').style.display = 'none';
+            document.getElementById('catTreeBtn').className = 'sort-btn';
+            document.getElementById('searchModal').classList.add('active');
+
+            // Проверяем загружен ли каталог
+            if (!catalogLoaded) {
+                document.getElementById('searchResults').innerHTML = '<div style="padding:30px;text-align:center;color:#999;">⏳ Загрузка каталога... Подождите несколько секунд и попробуйте снова.</div>';
+                document.getElementById('itemCount').textContent = '';
+            } else if (catalog[currentType].length > 0) {
+                selectedCats = [];
+                catTreeOpen = {};
+                buildCatTree();
+                filterCatalog();
+            } else {
+                document.getElementById('searchResults').innerHTML = '<div style="padding:30px;text-align:center;color:#999;">📦 Каталог пуст. Добавьте материалы через ⚙️</div>';
+                document.getElementById('itemCount').textContent = '';
+            }
+            setTimeout(function() { document.getElementById('searchInput').focus(); }, 100);
+        }
+        function closeSearch() { document.getElementById('searchModal').classList.remove('active'); }
+
+        function openCreateNew() {
+            closeSearch();
+            var isWork = currentType === 'work';
+            document.getElementById('createTitle').textContent = isWork ? 'Создать услугу' : 'Создать материал';
+            document.getElementById('c-name').value = '';
+            document.getElementById('c-unit').value = isWork ? 'усл' : 'шт';
+            document.getElementById('c-price').value = '';
+            document.getElementById('c-cat-row').style.display = 'block';
+
+            // Заполняем категории только для текущего типа
+            var catSelect = document.getElementById('c-category');
+            catSelect.innerHTML = '<option value="">Без категории</option>';
+            var cats = isWork ? (allCategories.work || []) : (allCategories.material || []);
+            cats.forEach(function(c) {
+                var o = document.createElement('option');
+                o.value = c.name;
+                o.textContent = (c.parent_id ? '— ' : '') + c.name;
+                catSelect.appendChild(o);
+            });
+
+            document.getElementById('createModal').classList.add('active');
+            document.getElementById('c-name').focus();
+        }
+
+        function closeCreate() {
+            document.getElementById('createModal').classList.remove('active');
+            document.getElementById('c-cat-row').style.display = 'none';
+        }
+
+        async function saveNewItem() {
+            var name = document.getElementById('c-name').value.trim();
+            var unit = document.getElementById('c-unit').value;
+            var price = parseFloat(document.getElementById('c-price').value) || 0;
+            if (!name) { alert('Введите название'); return; }
+
+            var url = currentType === 'material'
+                ? '/estimate/api/catalog/materials'
+                : '/estimate/api/catalog/works';
+            var body = { name: name, unit: unit, price: price };
+            if (currentType === 'material') {
+                body.retail_price = price;
+                body.purchase_price = price * 0.7;
+            } else {
+                body.category = document.getElementById('c-category').value || '';
+            }
+
+            try {
+                var res = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': getCsrf()
+                    },
+                    body: JSON.stringify(body)
+                });
+                if (!res.ok) { var e = await res.json(); alert('Ошибка: ' + (e.error||'')); return; }
+
+                // Перезагружаем каталог
+                var catUrl = currentType === 'material' ? '/estimate/api/catalog/materials' : '/estimate/api/catalog/works';
+                var catRes = await fetch(catUrl);
+                catalog[currentType] = await catRes.json();
+                if (currentType === 'work') updateWorkDropdown();
+
+                closeCreate();
+                // Снова открываем поиск и выбираем новый элемент
+                openSearch(currentType);
+                // Автопоиск по имени
+                document.getElementById('searchInput').value = name;
+                filterCatalog();
+            } catch(e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        function toggleSort() {
+            if (sortMode === 'name') sortMode = 'price-asc';
+            else if (sortMode === 'price-asc') sortMode = 'price-desc';
+            else if (sortMode === 'price-desc') sortMode = 'brand';
+            else if (sortMode === 'brand') sortMode = 'margin-desc';
+            else if (sortMode === 'margin-desc') sortMode = 'margin-asc';
+            else sortMode = 'name';
+            updateSortBtn();
+            filterCatalog();
+        }
+        function updateSortBtn() {
+            var btn = document.getElementById('sortBtn');
+            if (sortMode === 'name') { btn.textContent = 'По имени А-Я'; btn.className = 'sort-btn active'; }
+            else if (sortMode === 'price-asc') { btn.textContent = 'Цена ↑'; btn.className = 'sort-btn active'; }
+            else if (sortMode === 'price-desc') { btn.textContent = 'Цена ↓'; btn.className = 'sort-btn active'; }
+            else if (sortMode === 'brand') { btn.textContent = 'Бренд А-Я'; btn.className = 'sort-btn active'; }
+            else if (sortMode === 'margin-desc') { btn.textContent = 'Маржа ↓'; btn.className = 'sort-btn active'; }
+            else if (sortMode === 'margin-asc') { btn.textContent = 'Маржа ↑'; btn.className = 'sort-btn active'; }
+        }
+
+        function esc(s) { if(!s) return ''; var d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
+
+        // Debounce для поиска — не дёргать на каждый символ
+        var searchTimeout = null;
+        document.getElementById('searchInput').addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            var self = this;
+            searchTimeout = setTimeout(function() { filterCatalog(); }, 150);
+        });
+
+        function filterCatalog() {
+            var txt = document.getElementById('searchInput').value.toLowerCase().trim();
+            var list;
+
+            console.log('filterCatalog: txt="' + txt + '", currentType=' + currentType + ', searchTab=' + searchTab);
+
+            if (searchTab === 'catalog') {
+                var pool = catalog[currentType];
+                console.log('filterCatalog: pool length=' + pool.length + ', selectedCats=' + JSON.stringify(selectedCats));
+
+                // Фильтр по выбранным категориям (чекбоксы на брендах)
+                if (selectedCats.length > 0 && txt === '') {
+                    pool = pool.filter(function(item) {
+                        var cat = item.category || 'Без категории';
+                        var itype = item.item_type || 'Другое';
+                        var brand = item.brand || 'Без бренда';
+                        var brandId = 'cat_' + cat.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_') + '_type_' + itype.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_') + '_br_' + brand.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+                        return selectedCats.indexOf(brandId) !== -1;
+                    });
+                    console.log('filterCatalog: после фильтра категорий=' + pool.length);
+                } else if (selectedCats.length > 0 && txt !== '') {
+                    // При поиске тоже фильтруем по категориям
+                    var origPool = pool;
+                    pool = pool.filter(function(item) {
+                        var cat = item.category || 'Без категории';
+                        var itype = item.item_type || 'Другое';
+                        var brand = item.brand || 'Без бренда';
+                        var brandId = 'cat_' + cat.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_') + '_type_' + itype.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_') + '_br_' + brand.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+                        return selectedCats.indexOf(brandId) !== -1;
+                    });
+                    console.log('filterCatalog: после фильтра категорий при поиске=' + pool.length);
+                }
+
+                if (!txt) {
+                    list = pool.slice();
+                    console.log('filterCatalog: txt пустой, list.length=' + list.length);
+                } else {
+                    // Очищаем запрос от спецсимволов: скобки, кавычки и т.д.
+                    var cleanTxt = txt.replace(/[()"'«»\[\]{}\/\\]/g, ' ').replace(/\s+/g, ' ').trim();
+                    // Слова запроса: ≥2 буквы или число (артикул); иначе шум («а», «я» давали ложные совпадения)
+                    var words = cleanTxt.split(/\s+/).filter(function(w) {
+                        if (/^\d+$/.test(w)) return w.length >= 1;
+                        return w.length >= 2;
+                    });
+
+                    if (words.length === 0) {
+                        list = pool.slice();
+                    } else {
+                    var results = [];
+                    for (var i = 0; i < pool.length; i++) {
+                        var item = pool[i];
+                        var nameLow = (item.name || '').toLowerCase();
+                        var nameClean = nameLow.replace(/[()"'«»\[\]{}\/\\]/g, ' ').replace(/\s+/g, ' ').trim();
+                        var articleLow = (item.article || '').toLowerCase();
+                        var brandLow = (item.brand || '').toLowerCase();
+                        var catLow = (item.category || '').toLowerCase();
+                        var typeLow = (item.item_type || '').toLowerCase();
+                        var descLow = (item.description || '').toLowerCase();
+
+                        // Релевантность по полному запросу (та же нормализация, что и у названия)
+                        var tier = 3;
+                        if (cleanTxt.length >= 2 && nameClean === cleanTxt) {
+                            tier = 0;
+                        } else if (cleanTxt.length >= 2 && nameClean.indexOf(cleanTxt) === 0) {
+                            tier = 1;
+                        } else if (cleanTxt.length >= 3 && nameClean.indexOf(cleanTxt) !== -1) {
+                            tier = 2;
+                        }
+
+                        var score = 0;
+                        var matchedWords = 0;
+                        var strongHits = 0;
+
+                        for (var wi = 0; wi < words.length; wi++) {
+                            var w = words[wi];
+                            var hit = false;
+                            var inStrong = false;
+                            if (nameLow.indexOf(w) === 0 || nameClean.indexOf(w) === 0) { score += 100; hit = true; inStrong = true; }
+                            else if (nameLow.indexOf(w) !== -1 || nameClean.indexOf(w) !== -1) { score += 50; hit = true; inStrong = true; }
+                            if (articleLow.indexOf(w) !== -1) { score += 40; hit = true; inStrong = true; }
+                            if (brandLow.indexOf(w) !== -1) { score += 30; hit = true; inStrong = true; }
+                            if (typeLow.indexOf(w) !== -1) { score += 25; hit = true; }
+                            if (catLow.indexOf(w) !== -1) { score += 20; hit = true; }
+                            if (descLow.indexOf(w) !== -1) { score += 5; hit = true; }
+                            if (hit) matchedWords++;
+                            if (inStrong) strongHits++;
+                        }
+
+                        if (matchedWords > 0) {
+                            results.push({
+                                item: item,
+                                score: score,
+                                found: matchedWords,
+                                total: words.length,
+                                tier: tier,
+                                strongHits: strongHits,
+                                nameLen: nameClean.length
+                            });
+                        }
+                    }
+
+                    results.sort(function(a, b) {
+                        if (a.tier !== b.tier) return a.tier - b.tier;
+                        var aAllStrong = a.strongHits === a.total;
+                        var bAllStrong = b.strongHits === b.total;
+                        if (aAllStrong && !bAllStrong) return -1;
+                        if (bAllStrong && !aAllStrong) return 1;
+                        if (b.strongHits !== a.strongHits) return b.strongHits - a.strongHits;
+                        var aAll = a.found === a.total;
+                        var bAll = b.found === b.total;
+                        if (aAll && !bAll) return -1;
+                        if (bAll && !aAll) return 1;
+                        if (b.score !== a.score) return b.score - a.score;
+                        if (b.found !== a.found) return b.found - a.found;
+                        if (a.nameLen !== b.nameLen) return a.nameLen - b.nameLen;
+                        return a.item.name.localeCompare(b.item.name);
+                    });
+
+                    list = results.map(function(r) { return r.item; });
+                    }
+                }
+
+                // Убрать дубли: одна позиция в двух «категориях» в БД — в поиске показываем один раз (лучший по сортировке выше)
+                if (list.length > 1) {
+                    var seenSig = {};
+                    list = list.filter(function(item) {
+                        var pr = item.retail_price != null && item.retail_price !== '' ? Number(item.retail_price) : Number(item.price || 0);
+                        var sig = ((item.name || '') + '|' + (item.brand || '') + '|' + pr.toFixed(2) + '|' + (item.article || '')).toLowerCase();
+                        if (seenSig[sig]) return false;
+                        seenSig[sig] = true;
+                        return true;
+                    });
+                }
+
+                // Применяем сортировку после всех фильтров
+                // ВАЖНО: При поиске НЕ пересортировываем — оставляем по релевантности!
+                var searchInput = document.getElementById('searchInput');
+                var hasSearchQuery = searchInput && searchInput.value && searchInput.value.trim().length >= 2;
+                if (!hasSearchQuery) {
+                    if (sortMode === 'name') list.sort(function(a,b){ return a.name.localeCompare(b.name); });
+                    else if (sortMode === 'price-asc') list.sort(function(a,b){ return (a.retail_price||a.price)-(b.retail_price||b.price); });
+                    else if (sortMode === 'price-desc') list.sort(function(a,b){ return (b.retail_price||b.price)-(a.retail_price||a.price); });
+                    else if (sortMode === 'brand') list.sort(function(a,b){ var cmp=(a.brand||'').localeCompare(b.brand||''); return cmp||a.name.localeCompare(b.name); });
+                    else if (sortMode === 'margin-asc') list.sort(function(a,b){
+                        var ma = ((a.retail_price||a.price) - (a.purchase_price||0)) / (a.retail_price||a.price||1);
+                        var mb = ((b.retail_price||b.price) - (b.purchase_price||0)) / (b.retail_price||b.price||1);
+                        return ma - mb;
+                    });
+                    else if (sortMode === 'margin-desc') list.sort(function(a,b){
+                        var ma = ((a.retail_price||a.price) - (a.purchase_price||0)) / (a.retail_price||a.price||1);
+                        var mb = ((b.retail_price||b.price) - (b.purchase_price||0)) / (b.retail_price||b.price||1);
+                        return mb - ma;
+                    });
+                } // конец if (!hasSearchQuery)
+
+            } else if (searchTab === 'recent') {
+                list = recentItems.filter(function(i) {
+                    if (!txt) return true;
+                    var cleanR = txt.replace(/[()"'«»\[\]{}\/\\]/g, ' ').replace(/\s+/g, ' ').trim();
+                    var words = cleanR.split(/\s+/).filter(function(w) {
+                        if (/^\d+$/.test(w)) return w.length >= 1;
+                        return w.length >= 2;
+                    });
+                    if (words.length === 0) return true;
+                    var s = (i.name || '').toLowerCase();
+                    var art = (i.article || '').toLowerCase();
+                    for (var wi = 0; wi < words.length; wi++) {
+                        if (s.indexOf(words[wi]) !== -1 || art.indexOf(words[wi]) !== -1) return true;
+                    }
+                    return false;
+                });
+
+            } else {
+                loadFavorites();
+                list = catalog[currentType].filter(function(i) {
+                    if (favoriteItems.indexOf(i.name) === -1) return false;
+                    if (txt) {
+                        var cleanF = txt.replace(/[()"'«»\[\]{}\/\\]/g, ' ').replace(/\s+/g, ' ').trim();
+                        var words = cleanF.split(/\s+/).filter(function(w) {
+                            if (/^\d+$/.test(w)) return w.length >= 1;
+                            return w.length >= 2;
+                        });
+                        if (words.length === 0) return true;
+                        var s = (i.name || '').toLowerCase();
+                        var art = (i.article || '').toLowerCase();
+                        var br = (i.brand || '').toLowerCase();
+                        for (var wi = 0; wi < words.length; wi++) {
+                            if (s.indexOf(words[wi]) !== -1 || art.indexOf(words[wi]) !== -1 || br.indexOf(words[wi]) !== -1) return true;
+                        }
+                        return false;
+                    }
+                    return true;
+                });
+            }
+
+            var div = document.getElementById('searchResults');
+            var countLabel = document.getElementById('itemCount');
+
+            if (list.length === 0) {
+                var msg = searchTab === 'catalog' ? 'Ничего не найдено' : searchTab === 'recent' ? 'Нет недавних материалов' : 'Нет избранных — нажмите ⭐ у материала';
+                div.innerHTML = '<div style="padding:30px;text-align:center;color:#999;">' + msg + '</div>';
+                countLabel.textContent = '';
+                return;
+            }
+
+            countLabel.textContent = 'Найдено: ' + list.length;
+            div.innerHTML = '';
+
+            list.forEach(function(i) {
+                var price = i.retail_price != null && i.retail_price !== '' ? Number(i.retail_price) : Number(i.price || 0);
+                var purchCat = (currentType === 'material' && i.purchase_price != null && i.purchase_price !== '')
+                    ? Number(i.purchase_price) : NaN;
+                var el = document.createElement('div');
+                el.className = 'modal-item';
+                el.onclick = function() {
+                    var itemObj = { name: i.name, unit: i.unit, retail_price: price, purchase_price: Number(i.purchase_price) || 0, price: price };
+                    if (currentType === 'material') {
+                        itemObj.wholesale_price = 0;
+                    }
+                    addRecent(itemObj);
+                    askQtyAndAdd(itemObj);
+                };
+
+                var leftDiv = document.createElement('div');
+                leftDiv.style.flex = '1';
+
+                // Подсветка: один проход по экранированному имени (несколько .replace ломали HTML — «3» попадала в #fff3cd)
+                var nameHTML = esc(i.name);
+                if (txt) {
+                    var cleanHi = txt.replace(/[()"'«»\[\]{}\/\\]/g, ' ').replace(/\s+/g, ' ').trim();
+                    var hiWords = cleanHi.split(/\s+/).filter(function(w) {
+                        if (/^\d+$/.test(w)) return w.length >= 1;
+                        return w.length >= 2;
+                    });
+                    var hiForMark = hiWords.filter(function(w) {
+                        if (/^\d+$/.test(w) && w.length === 1) return false;
+                        return w.length > 0;
+                    });
+                    if (hiForMark.length > 0) {
+                        hiForMark.sort(function(a, b) { return b.length - a.length; });
+                        var hiPat = hiForMark.map(function(w) {
+                            return w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        }).join('|');
+                        if (hiPat) {
+                            var hiRegex = new RegExp('(' + hiPat + ')', 'gi');
+                            nameHTML = nameHTML.replace(hiRegex, '<mark style="background:#fff3cd;padding:0 2px;border-radius:2px;">$1</mark>');
+                        }
+                    }
+                }
+
+                var nb = document.createElement('div');
+                nb.className = 'mi-name';
+                nb.innerHTML = nameHTML;
+                leftDiv.appendChild(nb);
+
+                if (i.brand) {
+                    var bb = document.createElement('div');
+                    bb.className = 'mi-cat';
+                    bb.textContent = i.brand;
+                    leftDiv.appendChild(bb);
+                }
+                if (i.category) {
+                    var cb = document.createElement('div');
+                    cb.className = 'mi-cat';
+                    cb.textContent = i.category;
+                    leftDiv.appendChild(cb);
+                }
+
+                var priceSpan = document.createElement('span');
+                priceSpan.className = 'mi-price';
+                if (currentType === 'material' && !isNaN(purchCat)) {
+                    priceSpan.textContent = 'Розн. ' + price.toLocaleString('ru-RU', { minimumFractionDigits: 2 })
+                        + ' · Закуп ' + purchCat.toLocaleString('ru-RU', { minimumFractionDigits: 2 })
+                        + ' / ' + (i.unit || '');
+                } else {
+                    priceSpan.textContent = price.toLocaleString('ru-RU', { minimumFractionDigits: 2 }) + ' / ' + (i.unit || '');
+                }
+
+                // Маржа
+                var purchase = i.purchase_price || 0;
+                var margin = price > 0 ? ((price - purchase) / price * 100) : 0;
+                var marginSpan = document.createElement('span');
+                marginSpan.className = 'mi-margin';
+                marginSpan.textContent = margin.toFixed(0) + '%';
+                if (margin >= 30) marginSpan.style.cssText = 'background:#e8f5e9;color:#2e7d32;';
+                else if (margin >= 15) marginSpan.style.cssText = 'background:#fff8e1;color:#f57f17;';
+                else marginSpan.style.cssText = 'background:#ffebee;color:#c62828;';
+
+                // Кнопка избранного
+                var favBtn = document.createElement('span');
+                favBtn.style.cssText = 'cursor:pointer;font-size:18px;margin-right:8px;';
+                favBtn.textContent = isFavorite(i.name) ? '★' : '☆';
+                favBtn.style.color = isFavorite(i.name) ? '#FF9800' : '#ccc';
+                favBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    toggleFavorite(i);
+                };
+
+                var rightDiv = document.createElement('div');
+                rightDiv.style.cssText = 'display:flex;align-items:center;';
+                rightDiv.appendChild(favBtn);
+                rightDiv.appendChild(priceSpan);
+                rightDiv.appendChild(marginSpan);
+
+                el.appendChild(leftDiv);
+                el.appendChild(rightDiv);
+                div.appendChild(el);
+            });
+        } // конец filterCatalog
+
+        function askQtyAndAdd(item) {
+            var price = item.retail_price != null && item.retail_price !== '' ? Number(item.retail_price) : Number(item.price || 0);
+            var label = item.name + '\nРозница: ' + price.toLocaleString('ru-RU',{minimumFractionDigits:2}) + ' BYN / ' + item.unit;
+            if (currentType === 'material') {
+                var pu = parseFloat(item.purchase_price);
+                if (!isNaN(pu)) {
+                    label += '\nЗакуп: ' + pu.toLocaleString('ru-RU',{minimumFractionDigits:2}) + ' BYN / ' + item.unit;
+                }
+            }
+            label += '\n\nВведите количество:';
+            var qty = prompt(label, '1');
+            if (qty === null) return;
+            qty = parseFloat(qty) || 1;
+            if (qty <= 0) qty = 1;
+
+            addRecent(item);
+            doAddFromCatalog(item, qty);
+        }
+
+        async function doAddFromCatalog(item, qty) {
+            var price = item.retail_price || item.price;
+            var purchase = item.purchase_price || 0;
+            var wholesale = 0;
+            var total = price * qty;
+            var profit = (price - purchase) * qty;
+
+            if (!await ensureEstimateExistsForAddingItems()) return;
+
+            console.log('doAddFromCatalog: estimateId=' + estimateId + ', item=' + item.name + ', qty=' + qty);
+
+            try {
+                var res = await fetch('/estimate/api/estimates/'+estimateId+'/items', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type':'application/json',
+                        'X-CSRF-Token': getCsrf()
+                    },
+                    body: JSON.stringify({ section: currentType, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale })
+                });
+                if (!res.ok) {
+                    var errText = await res.text();
+                    console.error('API error:', res.status, errText);
+                    throw new Error('HTTP ' + res.status);
+                }
+                var data = await res.json();
+                console.log('Item added successfully, id=' + data.id);
+                var newItem = { id: data.id, section: currentType, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale, total: total, material_profit: profit, _new: true };
+                items.push(newItem);
+                // Сохраняем в IndexedDB
+                await saveEstimateToDB();
+                closeSearch();
+                render();
+            } catch(e) {
+                console.error('doAddFromCatalog error:', e);
+                // Офлайн - сохраняем локально
+                var tempId = Date.now() + Math.random();
+                var newItem = { id: tempId, section: currentType, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale, total: total, material_profit: profit, _new: true, _offline: true };
+                items.push(newItem);
+
+                // Добавляем в очередь синхронизации
+                await OfflineDB.addToQueue({
+                    method: 'POST',
+                    url: '/estimate/api/estimates/'+estimateId+'/items',
+                    body: { section: currentType, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale }
+                });
+
+                // Сохраняем смету в IndexedDB
+                await saveEstimateToDB();
+                closeSearch();
+                render();
+            }
+        }
+
+        async function addFromCatalog(name, unit, price, purchase, qty) {
+            // Для обратной совместимости
+            doAddFromCatalog({name: name, unit: unit, retail_price: price, purchase_price: purchase}, qty || 1);
+        }
+
+        // Сохранение текущей сметы с позициями в IndexedDB
+        async function saveEstimateToDB() {
+            if (!estimateId) return;
+            try {
+                const estimateData = {
+                    id: estimateId,
+                    number: document.getElementById('estimate-number')?.textContent || '',
+                    date: document.getElementById('date')?.value || '',
+                    object_id: prefilledObjectId || null,
+                    object_name: document.getElementById('object-name')?.value || '',
+                    client: document.getElementById('client')?.value || '',
+                    status: document.getElementById('status')?.value || 'Черновик',
+                    items: items.map(it => {
+                        const copy = {...it};
+                        delete copy._new;
+                        delete copy._offline;
+                        return copy;
+                    })
+                };
+                await OfflineDB.put('estimates', estimateData);
+                localStorage.setItem('estimate_last_id', estimateId);
+                console.log('Estimate saved to IndexedDB:', estimateId);
+            } catch(e) {
+                console.error('saveEstimateToDB error:', e);
+            }
+        }
+
+        // Callback при завершении синхронизации
+        window.onSyncComplete = function() {
+            console.log('Sync complete');
+            var last = localStorage.getItem('estimate_last_id');
+            var targetId = (typeof estimateId !== 'undefined' && estimateId) ? estimateId : (last ? parseInt(last, 10) : null);
+            if (targetId && !isNaN(targetId)) {
+                if (confirm('Синхронизация завершена. Обновить страницу сметы?')) {
+                    window.location.href = '/estimate/' + targetId;
+                }
+            } else if (last && confirm('Синхронизация завершена. Открыть последнюю смету (' + last + ')?')) {
+                window.location.href = '/estimate/' + last;
+            }
+        };
+
+        async function saveEstimate() {
+            var data = {
+                date: document.getElementById('date').value,
+                object_name: document.getElementById('object-name').value,
+                client: document.getElementById('client').value,
+                status: document.getElementById('status').value
+            };
+            // Привязка к объекту: при создании и при сохранении существующей сметы
+            if (prefilledObjectId) {
+                data.object_id = prefilledObjectId;
+            }
+            console.log('saveEstimate: estimateId=' + estimateId + ', items count=' + items.length);
+            try {
+                if (!estimateId) {
+                    var res = await fetch('/estimate/api/estimates', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type':'application/json',
+                            'X-CSRF-Token': getCsrf()
+                        },
+                        body: JSON.stringify(data)
+                    });
+                    if (!res.ok) {
+                        var errText = await res.text();
+                        throw new Error('HTTP ' + res.status + ': ' + errText);
+                    }
+                    var d = await res.json();
+                    estimateId = d.id;
+                    document.getElementById('estimate-number').textContent = d.number;
+                    console.log('Смета создана: id=' + estimateId + ', number=' + d.number);
+                    // Кэшируем новую смету
+                    await OfflineDB.put('estimates', { id: d.id, number: d.number, items: items, object_id: prefilledObjectId || data.object_id, ...data });
+                    // Остаёмся в редакторе, чтобы добавлять позиции после первого сохранения шапки
+                    window.location.replace('/estimate/' + estimateId);
+                } else {
+                    var res2 = await fetch('/estimate/api/estimates/'+estimateId, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type':'application/json',
+                            'X-CSRF-Token': getCsrf()
+                        },
+                        body: JSON.stringify(data)
+                    });
+                    if (!res2.ok) {
+                        var errText2 = await res2.text();
+                        throw new Error('HTTP ' + res2.status + ': ' + errText2);
+                    }
+                    // Обновляем кэш
+                    var cached = await OfflineDB.getById('estimates', estimateId).catch(()=>null);
+                    if (cached) { Object.assign(cached, data); if (prefilledObjectId) cached.object_id = prefilledObjectId; await OfflineDB.put('estimates', cached); }
+                    console.log('Смета обновлена: id=' + estimateId);
+                    await saveEstimateToDB();
+                }
+            } catch(e) {
+                console.error('saveEstimate error:', e);
+                // Офлайн
+                var tempId = estimateId || (Date.now() + Math.random());
+                await OfflineDB.put('estimates', { id: tempId, number: estimateId ? document.getElementById('estimate-number').textContent : 'Новая', items: items, ...data });
+                if (!estimateId) {
+                    estimateId = tempId;
+                    document.getElementById('estimate-number').textContent = 'Черновик (офлайн)';
+                }
+                try {
+                    await OfflineDB.addToQueue({
+                        method: estimateId === tempId ? 'POST' : 'PUT',
+                        url: estimateId === tempId ? '/estimate/api/estimates' : '/estimate/api/estimates/'+estimateId,
+                        body: data
+                    });
+                } catch(e2) {}
+                // Офлайн: не открываем /estimate/временный-id — возврат в приложение
+                window.location.replace('/');
+            }
+        }
+
+        // === Управление категориями ===
+        var catData = [];
+        function openCatManager() {
+            // Загружаем категории для текущего типа
+            var type = currentType === 'material' ? 'material' : 'work';
+            fetch('/estimate/api/catalog/categories?type=' + type)
+                .then(function(r){ return r.json(); })
+                .then(function(cats) {
+                    catData = cats;
+                    renderCatModal();
+                    document.getElementById('catModal').classList.add('active');
+                });
+        }
+        function closeCatManager() { document.getElementById('catModal').classList.remove('active'); }
+
+        function renderCatModal() {
+            var sel = document.getElementById('newCatParent');
+            sel.innerHTML = '<option value="">Нет (Корневая)</option>';
+            catData.forEach(function(c) {
+                var o = document.createElement('option');
+                o.value = c.id;
+                o.textContent = (c.parent_id ? '— ' : '') + c.name;
+                sel.appendChild(o);
+            });
+
+            var list = document.getElementById('catList');
+            list.innerHTML = '';
+            if (catData.length === 0) {
+                list.innerHTML = '<div style="padding:15px;text-align:center;color:#999;">Нет категорий</div>';
+                return;
+            }
+            var roots = catData.filter(function(c){ return !c.parent_id; });
+            function renderTree(parentId, level) {
+                var children = catData.filter(function(c){ return c.parent_id == parentId; });
+                children.forEach(function(ch) {
+                    var d = document.createElement('div');
+                    d.style.cssText = 'display:flex;justify-content:space-between;padding:' + (6 + level*15) + 'px 10px;border-bottom:1px solid #eee;font-size:13px;';
+                    var sp = document.createElement('span');
+                    sp.textContent = (level > 0 ? '— ' : '') + ch.name;
+                    d.appendChild(sp);
+                    var btn = document.createElement('button');
+                    btn.textContent = '✕'; btn.style.cssText = 'background:none;border:none;color:#f44336;cursor:pointer;font-size:14px;';
+                    btn.onclick = function(){ deleteCatCategory(ch.id); };
+                    d.appendChild(btn);
+                    list.appendChild(d);
+                    renderTree(ch.id, level + 1);
+                });
+            }
+            roots.forEach(function(r) {
+                var d = document.createElement('div');
+                d.style.cssText = 'display:flex;justify-content:space-between;padding:8px 10px;border-bottom:1px solid #eee;font-size:13px;font-weight:bold;';
+                var sp = document.createElement('span');
+                sp.textContent = r.name; d.appendChild(sp);
+                var btn = document.createElement('button');
+                btn.textContent = '✕'; btn.style.cssText = 'background:none;border:none;color:#f44336;cursor:pointer;font-size:14px;';
+                btn.onclick = function(){ deleteCatCategory(r.id); };
+                d.appendChild(btn);
+                list.appendChild(d);
+                renderTree(r.id, 1);
+            });
+        }
+
+        function addCatCategory() {
+            var name = document.getElementById('newCatName').value.trim();
+            var parentId = document.getElementById('newCatParent').value || null;
+            var type = currentType === 'material' ? 'material' : 'work';
+            if (!name) return;
+            fetch('/estimate/api/catalog/categories', {
+                method: 'POST',
+                headers: { 'Content-Type':'application/json', 'X-CSRF-Token': getCsrf() },
+                body: JSON.stringify({ name: name, parent_id: parentId, type: type })
+            }).then(function(){
+                document.getElementById('newCatName').value = '';
+                loadCategories(type).then(function() {
+                    openCatManager();
+                    buildCategoryFilter();
+                });
+            });
+        }
+
+        function deleteCatCategory(id) {
+            if (!confirm('Удалить категорию?')) return;
+            var type = currentType === 'material' ? 'material' : 'work';
+            fetch('/estimate/api/catalog/categories/' + id, {
+                method: 'DELETE',
+                headers: { 'X-CSRF-Token': getCsrf() }
+            }).then(function(){
+                loadCategories(type).then(function() {
+                    openCatManager();
+                    buildCategoryFilter();
+                });
+            });
+        }
+
+        // === Импорт из PDF ===
+        function openPdfImport() {
+            document.getElementById('pdfImportModal').classList.add('active');
+        }
+
+        function closePdfImport() {
+            document.getElementById('pdfImportModal').classList.remove('active');
+        }
+
+        function handlePdfDrop(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const dropZone = document.getElementById('pdfDropZone');
+            dropZone.classList.remove('dragover');
+
+            const file = e.dataTransfer ? e.dataTransfer.files[0] : e.target.files[0];
+            if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
+                alert('Пожалуйста, выберите PDF файл');
+                return;
+            }
+
+            // Показываем загрузку
+            dropZone.innerHTML = '<div style="text-align:center;padding:30px;"><div class="spinner"></div><br>Обработка PDF...</div>';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/estimate/api/parse-pdf', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) { alert('Ошибка: ' + data.error); return; }
+                showPdfImportResults(data);
+            })
+            .catch(err => alert('Ошибка загрузки: ' + err.message));
+        }
+
+        function showPdfImportResults(data) {
+            const resultsDiv = document.getElementById('pdfResults');
+            let html = `<div style="margin-bottom:10px;font-size:13px;color:#666;">
+                Найдено строк: ${data.total_rows} | 
+                Совпало: <b style="color:#4CAF50">${data.matched_count}</b> | 
+                Не найдено: <b style="color:#f44336">${data.unmatched_count}</b>
+                ${data.catalog_count != null ? ` | В каталоге материалов: <b>${data.catalog_count}</b>` : ''}
+            </div>`;
+            if (data.catalog_empty) {
+                html += '<div style="padding:12px;background:#fff3e0;border-radius:8px;margin-bottom:10px;font-size:13px;">Каталог материалов пуст — импорт не к чему привязать. Добавьте позиции в каталог (⚙️) или выберите товары вручную.</div>';
+            }
+
+            if (data.matched.length > 0) {
+                html += '<p style="font-size:12px;color:#666;margin:6px 0;">Галочка по умолчанию только при уверенности ≥75%. Проверьте колонку «Как в PDF».</p>';
+                html += '<h4 style="margin:10px 0 5px;">✅ Совпавшие позиции:</h4>';
+                html += '<div style="max-height:300px;overflow-y:auto;border:1px solid #ddd;border-radius:6px;">';
+                html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+                html += '<tr style="background:#f5f5f5;"><th style="padding:6px;text-align:left;">✓</th><th style="padding:6px;text-align:left;">Как в PDF</th><th style="padding:6px;text-align:left;">Каталог</th><th style="padding:6px;">Кол-во</th><th style="padding:6px;">Ед.</th><th style="padding:6px;">Цена</th><th style="padding:6px;">%</th></tr>';
+
+                data.matched.forEach((m, i) => {
+                    const confColor = m.confidence >= 80 ? '#4CAF50' : (m.confidence >= 65 ? '#FF9800' : '#f44336');
+                    const preChecked = ((!m.ambiguous && m.confidence >= 75) || m.confidence >= 88) ? 'checked' : '';
+                    const rp = Number(m.item.retail_price) || 0;
+                    const pdfUnit = esc(m.unit || 'шт');
+                    const pdfSnippet = esc((m.row_text || '').length > 120 ? (m.row_text || '').slice(0, 117) + '…' : (m.row_text || ''));
+                    const ambHint = m.ambiguous ? ' <small style="color:#E65100;font-weight:600;">⚠ проверьте</small>' : '';
+                    html += `<tr style="border-bottom:1px solid #eee;" title="${esc(m.clean_name || m.row_text || '')}">
+                        <td style="padding:6px;"><input type="checkbox" id="pdf-match-${i}" ${preChecked} value="${i}"></td>
+                        <td style="padding:6px;max-width:200px;word-break:break-word;color:#444;">${pdfSnippet}</td>
+                        <td style="padding:6px;">${esc(m.item.name)}${ambHint}<br><small style="color:#999;">${esc(m.item.brand||'')} ${esc(m.item.category||'')}</small></td>
+                        <td style="padding:6px;text-align:center;"><input type="number" id="pdf-qty-${i}" value="${m.qty}" min="0.1" step="0.1" style="width:60px;padding:3px;border:1px solid #ddd;border-radius:3px;"></td>
+                        <td style="padding:6px;text-align:center;color:#555;">${pdfUnit}</td>
+                        <td style="padding:6px;text-align:right;">${rp.toFixed(2)}</td>
+                        <td style="padding:6px;text-align:center;color:${confColor};font-weight:600;">${m.confidence}%</td>
+                    </tr>`;
+                });
+                html += '</table></div>';
+
+                html += `<div style="margin-top:10px;display:flex;gap:8px;">
+                    <button class="sort-btn" onclick="selectAllMatches(true)" style="flex:1;">☑ Выбрать все</button>
+                    <button class="sort-btn" onclick="selectAllMatches(false)" style="flex:1;">☐ Снять все</button>
+                    <button class="sort-btn" style="flex:2;background:#4CAF50;color:white;font-weight:600;" onclick="importSelectedMatches()">📥 Добавить в смету</button>
+                </div>`;
+            }
+
+            if (data.unmatched.length > 0) {
+                html += '<h4 style="margin:15px 0 5px;color:#f44336;">❌ Не импортировано (нет совпадения / слишком похожи несколько позиций):</h4>';
+                html += '<div style="max-height:150px;overflow-y:auto;border:1px solid #fdd;border-radius:6px;padding:8px;font-size:12px;">';
+                data.unmatched.slice(0, 20).forEach(u => {
+                    const tag = u.reject_reason === 'ambiguous' ? ' <small style="color:#E65100;">(неоднозначно)</small>' : (u.reject_reason === 'low_score' ? ' <small style="color:#999;">(низкая уверенность)</small>' : (u.reject_reason === 'price_not_in_catalog' ? ' <small style="color:#c62828;">(нет позиции с такой розничной ценой)</small>' : (u.reject_reason === 'no_catalog' ? ' <small style="color:#c62828;">(нет каталога)</small>' : '')));
+                    html += `<div style="padding:3px 0;border-bottom:1px solid #fee;">${esc(u.row_text)}${tag}</div>`;
+                });
+                if (data.unmatched.length > 20) {
+                    html += `<div style="color:#999;padding:5px;">... и ещё ${data.unmatched.length - 20}</div>`;
+                }
+                html += '</div>';
+            }
+
+            // Сохраняем данные для импорта
+            window._pdfMatchedData = data.matched;
+            resultsDiv.innerHTML = html;
+        }
+
+        function selectAllMatches(checked) {
+            document.querySelectorAll('[id^="pdf-match-"]').forEach(cb => cb.checked = checked);
+        }
+
+        async function importSelectedMatches() {
+            if (!window._pdfMatchedData) return;
+
+            // Сначала гарантируем что смета создана
+            if (!estimateId) {
+                try {
+                    var data = {
+                        date: document.getElementById('date').value || new Date().toISOString().split('T')[0],
+                        object_name: document.getElementById('object-name').value,
+                        client: document.getElementById('client').value,
+                        status: document.getElementById('status').value || 'Черновик'
+                    };
+                    if (prefilledObjectId) data.object_id = prefilledObjectId;
+
+                    var res = await fetch('/estimate/api/estimates', {
+                        method: 'POST',
+                        headers: { 'Content-Type':'application/json', 'X-CSRF-Token': getCsrf() },
+                        body: JSON.stringify(data)
+                    });
+                    if (!res.ok) {
+                        var err = await res.json().catch(()=>({error:'Ошибка'}));
+                        alert('Не удалось создать смету: ' + (err.error || 'HTTP ' + res.status));
+                        return;
+                    }
+                    var saved = await res.json();
+                    estimateId = saved.id;
+                    document.getElementById('estimate-number').textContent = saved.number;
+                    localStorage.setItem('estimate_last_id', estimateId);
+                    console.log('Смета создана для импорта: id=' + estimateId);
+                } catch(e) {
+                    alert('Ошибка: ' + e.message);
+                    return;
+                }
+            }
+
+            // Теперь добавляем все выбранные позиции ПОСЛЕДОВАТЕЛЬНО
+            let added = 0;
+            for (var i = 0; i < window._pdfMatchedData.length; i++) {
+                const m = window._pdfMatchedData[i];
+                const cb = document.getElementById('pdf-match-' + i);
+                const qtyInput = document.getElementById('pdf-qty-' + i);
+                if (cb && cb.checked && qtyInput) {
+                    const qty = parseFloat(qtyInput.value) || 1;
+                    if (qty > 0) {
+                        try {
+                            await doAddFromCatalog({
+                                name: m.item.name,
+                                unit: m.unit || 'шт',
+                                retail_price: m.item.retail_price,
+                                purchase_price: m.item.purchase_price
+                            }, qty);
+                            added++;
+                        } catch(e) {
+                            console.error('Ошибка добавления позиции ' + m.item.name + ':', e);
+                        }
+                    }
+                }
+            }
+
+            if (added > 0) {
+                alert(`Добавлено ${added} позиций в смету №${document.getElementById('estimate-number').textContent}`);
+                closePdfImport();
+                document.getElementById('pdfDropZone').innerHTML = '<div style="font-size:48px;margin-bottom:10px;">📄</div><div style="font-size:14px;font-weight:600;">Перетащите PDF сюда</div><div style="font-size:12px;color:#999;margin-top:5px;">или нажмите для выбора файла</div><input type="file" id="pdfFileInput" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event)">';
+            } else {
+                alert('Не выбрано ни одной позиции для добавления');
+            }
+        }
+
+        // Drag-and-drop обработчики
+        function initPdfDragAndDrop() {
+            const dropZone = document.getElementById('pdfDropZone');
+            if (!dropZone) return;
+
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, e => { e.preventDefault(); e.stopPropagation(); });
+            });
+
+            dropZone.addEventListener('dragenter', () => dropZone.classList.add('dragover'));
+            dropZone.addEventListener('dragover', () => dropZone.classList.add('dragover'));
+            dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+            dropZone.addEventListener('drop', handlePdfDrop);
+            dropZone.addEventListener('click', () => document.getElementById('pdfFileInput')?.click());
+        }
+
+        // Инициализация при загрузке
+        setTimeout(initPdfDragAndDrop, 500);
+
+        init();
+    </script>
+
+    <!-- Модальное окно импорта из PDF -->
+    <div class="modal" id="pdfImportModal">
+        <div class="modal-content" style="max-width:800px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                <h2 style="margin:0;">📄 Импорт из PDF</h2>
+                <button class="btn-close" onclick="closePdfImport()">✕</button>
+            </div>
+
+            <div id="pdfDropZone" style="border:2px dashed #ddd;border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all 0.2s;" ondragover="this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')">
+                <div style="font-size:48px;margin-bottom:10px;">📄</div>
+                <div style="font-size:14px;font-weight:600;">Перетащите PDF сюда</div>
+                <div style="font-size:12px;color:#999;margin-top:5px;">или нажмите для выбора файла</div>
+                <input type="file" id="pdfFileInput" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event)">
+            </div>
+
+            <div id="pdfResults" style="margin-top:15px;"></div>
+        </div>
+    </div>
+</body>
+</html>

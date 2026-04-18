@@ -1,0 +1,18 @@
+{
+  "name": "object-accounting",
+  "version": "1.0.0",
+  "description": "Система учёта объектов и смет",
+  "private": true,
+  "scripts": {
+    "deploy:railway": "npx --yes @railway/cli up --ci --detach -p cfc00660-22af-44b7-9d44-7e95b270d139 -e production -s 340b71fe-5712-4b1b-a269-1cd715f97492",
+    "lint": "eslint static/js/",
+    "lint:fix": "eslint static/js/ --fix",
+    "format": "prettier --write \"static/js/**/*.js\" \"static/css/**/*.css\"",
+    "format:check": "prettier --check \"static/js/**/*.js\" \"static/css/**/*.css\"",
+    "check": "npm run format:check && npm run lint"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0"
+  }
+}

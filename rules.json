@@ -1,0 +1,86 @@
+{
+  "errors": [
+    {
+      "name": "hardcoded-secret",
+      "pattern": "(?i)(password|passwd|pwd|api[_-]?key|apikey|secret[_-]?key|connection[_-]?string|database[_-]?url)\\s*=\\s*[\"'][^\"']{8,}[\"']",
+      "severity": "error",
+      "message": "Хардкод секрета. Используй IConfiguration / User Secrets / переменные окружения."
+    },
+    {
+      "name": "eval-exec-py",
+      "pattern": "\\b(eval|exec)\\s*\\(",
+      "severity": "error",
+      "message": "eval()/exec() — потенциальная уязвимость безопасности. Избегай."
+    },
+    {
+      "name": "model-routes-cs",
+      "pattern": "@(page|controller|function)\\s*\\(",
+      "severity": "error",
+      "message": "Модели/DTO не должны содержать атрибутов маршрутизации. Перемести в Controller."
+    }
+  ],
+  "warnings": [
+    {
+      "name": "bare-except-py",
+      "pattern": "except\\s*:\\s*$",
+      "severity": "warning",
+      "message": "Bare except перехватывает ВСЕ исключения. Укажи тип."
+    },
+    {
+      "name": "empty-catch-cs",
+      "pattern": "catch\\s*\\([^)]*\\)\\s*\\{\\s*\\}",
+      "severity": "warning",
+      "message": "Пустой catch — ошибка будет проглочена. Добавь логирование или throw."
+    },
+    {
+      "name": "sync-db-call",
+      "pattern": "\\.Result\\b|\\.Wait\\(\\)|\\.GetAwaiter\\(\\)\\.GetResult\\(\\)",
+      "severity": "warning",
+      "message": "Синхронное ожидание async-метода может вызвать deadlock. Используй await."
+    },
+    {
+      "name": "controller-dbcontext",
+      "pattern": "(DbContext|_context\\.)",
+      "severity": "warning",
+      "message": "Контроллер работает с DbContext напрямую. Вынеси в Service слой."
+    },
+    {
+      "name": "import-star-py",
+      "pattern": "from\\s+\\w+\\s+import\\s+\\*",
+      "severity": "warning",
+      "message": "`from module import *` загрязняет namespace. Импортируй явно."
+    }
+  ],
+  "info": [
+    {
+      "name": "todo-fixme-cs",
+      "pattern": "(?i)//\\s*(TODO|FIXME|HACK|XXX|BUG|WORKAROUND)\\s*:?\\s*(.*)",
+      "severity": "info",
+      "message": "Требует внимания."
+    },
+    {
+      "name": "todo-fixme-py",
+      "pattern": "(?i)#\\s*(TODO|FIXME|HACK|XXX|BUG|WORKAROUND)\\s*:?\\s*(.*)",
+      "severity": "info",
+      "message": "Требует внимания."
+    },
+    {
+      "name": "console-writeline",
+      "pattern": "Console\\.(Write|WriteLine)\\s*\\(",
+      "severity": "info",
+      "message": "Console.WriteLine в продакшен-коде. Рекомендую ILogger<>."
+    },
+    {
+      "name": "print-in-production",
+      "pattern": "print\\s*\\(",
+      "severity": "info",
+      "message": "print() в продакшен-коде. Рекомендую logging."
+    },
+    {
+      "name": "missing-nullable",
+      "pattern": "public\\s+string\\s+\\w+\\s*;",
+      "severity": "info",
+      "message": "Не-nullable reference type без инициализации. Добавь '?' или '= null!;'."
+    }
+  ]
+}

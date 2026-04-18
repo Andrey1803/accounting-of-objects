@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <!-- Отключение кэширования -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Каталог</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=2">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Чередующиеся градиенты карточек */
+        .cat-card:nth-child(2n) { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .cat-card:nth-child(3n) { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        .cat-card:nth-child(4n) { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); }
+        .cat-card:nth-child(5n) { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); }
+
+        /* Хлебные крошки — визуальное оформление */
+        .breadcrumbs { padding: 10px 15px; background: white; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 6px rgba(0,0,0,0.06); font-size: 13px; }
+        .breadcrumbs a { color: #2E75B6; text-decoration: none; }
+        .breadcrumbs a:hover { text-decoration: underline; }
+        .breadcrumbs span { color: #666; }
+        .breadcrumbs .sep { margin: 0 5px; color: #999; }
+
+        /* Заголовок в сайдбаре */
+        .sidebar h3 { font-size: 14px; color: #2E75B6; margin-bottom: 8px; padding: 5px; }
+
+        /* Поиск (утилита, используется и в sidebar, и в content) */
+        .srch { width: 100%; padding: 7px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 8px; font-size: 13px; }
+
+        /* Счётчик в активной категории */
+        .cat-item.active .cat-count { color: rgba(255,255,255,0.7); }
+
+        /* Дерево — дополнения */
+        .tree-toggle.leaf { visibility: hidden; }
+        .tree-label.active { background: #2E75B6; color: white; }
+        .tree-children.open { display: block; }
+
+        /* Заголовок контента */
+        .content-header h2 { font-size: 16px; color: #2E75B6; }
+
+        /* Таблица — дополнения */
+        th { position: sticky; top: 0; white-space: nowrap; }
+        td { vertical-align: top; }
+        table { min-width: 900px; font-size: 12px; }
+
+        /* Адаптив для layout */
+        @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Каталог</h1>
+        <a href="/" class="btn btn-back">На главную</a>
+    </div>
+
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="switchType('mat')">Материалы</button>
+            <button class="tab" onclick="switchType('work')">Работы / Услуги</button>
+        </div>
+
+        <!-- Карточки главных категорий (только для материалов) -->
+        <div id="catGrid" class="cat-grid"></div>
+
+        <!-- Хлебные крошки -->
+        <nav class="breadcrumbs hidden" id="breadcrumbs">
+            <a href="#" onclick="resetDrill(); return false;">Все категории</a>
+        </nav>
+
+        <div class="layout">
+            <div class="sidebar" id="sidebar">
+                <input type="text" class="srch" id="cat-srch" placeholder="Поиск категории...">
+                <h3 id="sb-title">Категории</h3>
+                <div id="cat-list"></div>
+                <div id="tree-view" class="tree-view"></div>
+            </div>
+
+            <div class="content">
+                <div class="content-header">
+                    <h2 id="ct-title">Все материалы</h2>
+                    <button class="btn btn-add" onclick="openAdd()">+ Добавить</button>
+                </div>
+                <input type="text" class="srch" id="item-srch" placeholder="Поиск по названию, артикулу, бренду...">
+                <div class="tbl-wrap table-pan-viewport" title="Прокрутка и перетаскивание мышью по таблице">
+                    <table>
+                        <thead><tr>
+                            <th>№</th>
+                            <th>Фото</th>
+                            <th id="th-art">Артикул</th>
+                            <th id="th-brand">Бренд</th>
+                            <th>Название</th>
+                            <th>Тип</th>
+                            <th>Ед</th>
+                            <th id="th-purch">Закупка</th>
+                            <th id="th-retail">Цена</th>
+                            <th id="th-profit">Прибыль</th>
+                            <th id="th-margin">Маржа</th>
+                            <th>Действия</th>
+                        </tr></thead>
+                        <tbody id="tbl"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="editModal">
+        <div class="modal-content">
+            <h2 id="mTitle" style="margin-bottom:12px;color:#2E75B6;">Добавить</h2>
+            <input type="hidden" id="f-id">
+            <div class="fg"><label>Артикул</label><input type="text" id="f-art"></div>
+            <div class="fg"><label>Название</label><input type="text" id="f-name"></div>
+            <div class="frow">
+                <div class="fg" style="flex:0.5"><label>Ед</label>
+                    <select id="f-unit"><option>шт</option><option>м</option><option>м²</option><option>м³</option><option>кг</option><option>т</option><option>л</option><option>компл</option><option>усл</option><option>ч</option></select>
+                </div>
+                <div class="fg"><label>Бренд</label><input type="text" id="f-brand"></div>
+                <div class="fg"><label>Категория</label><input type="text" id="f-cat"></div>
+            </div>
+            <div class="frow" id="pRowMat">
+                <div class="fg"><label>Закупка</label><input type="number" step="0.01" id="f-purch"></div>
+                <div class="fg"><label>РРЦ</label><input type="number" step="0.01" id="f-retail"></div>
+            </div>
+            <div class="fg" id="pRowWork" style="display:none;"><label>Цена</label><input type="number" step="0.01" id="f-wprice"></div>
+            <div class="fg"><label>Тип</label><input type="text" id="f-type"></div>
+            <div class="modal-actions">
+                <button class="btn" style="background:#999" onclick="closeModal()">Отмена</button>
+                <button class="btn btn-add" onclick="saveItem()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let curType='mat', curCat='', curCatDescendants=[], curFilterType='', allData=[], categoryTree=[], currentPath=[];
+
+        function csrf(){ const m=document.querySelector('meta[name="csrf-token"]'); return m?m.getAttribute('content'):''; }
+        function num(v){
+            if (v === null || v === undefined) return 0;
+            if (typeof v === 'number' && !isNaN(v)) return v;
+            var s = String(v).trim().replace(/\s/g,'').replace(',','.');
+            var x = parseFloat(s);
+            return isNaN(x) ? 0 : x;
+        }
+        function money(v){ return num(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+        function esc(s){ if(!s) return ''; const d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
+
+        // Иконки для категорий
+        function getCatIcon(name) {
+            const icons = {
+                'насос': '💧', 'труб': '🔧', 'фитинг': '🔩', 'кран': '🚰', 'вентил': '🔴',
+                'клапан': '⚙️', 'фильтр': '🔬', 'водонагреват': '🔥', 'отоплен': '🌡️',
+                'тёпл': '🏠', 'тепл': '🏠', 'канализац': '🚽', 'мембран': '🫧', 'бак': '🪣',
+                'кабел': '🔌', 'автоматик': '🤖', 'запчаст': '🔧', 'гайк': '🔩', 'хомут': '🔗',
+                'уплотн': '📦', 'муфт': '🔗', 'шланг': '🐍', 'радиатор': '🌡️', 'панел': '🖼️',
+                'полотенцесушит': '🛁', 'терм': '🌡️', 'электр': '⚡', 'полипропилен': '🔵',
+                'обратн': '↩️', 'манометр': '📊', 'люк': '🚪', 'головк': '🔲', 'обсадн': '🔲',
+                'околодец': '🕳️', 'душ': '🚿', 'гибк': '〰️', 'групп': '📋', 'демпфер': '📏',
+                'креплен': '📌', 'защитн': '🛡️', 'фольга': '✨', 'шкаф': '🗄️', 'коллектор': '🔀',
+                'гидравл': '⚙️', 'двигател': '⚡', 'диффузор': '💨', 'измельчител': '🔄',
+                'комплект': '📦', 'консол': '📐', 'корпус': '📦', 'крыльчатк': '🌀',
+                'направл': '➡️', 'рабоч': '⚙️', 'сальник': '🔘', 'ремонт': '🔧', 'статор': '⚡',
+                'ротор': '⚡', 'штуцер': '🔗', 'лист': '📄', 'запасн': '📦', 'повысит': '📈',
+                'бассейн': '🏊', 'воздушн': '💨', 'фонтан': '⛲', 'ручеек': '🌊', 'скважин': '🕳️',
+                'фекальн': '💩', 'насосн': '🔧', 'колодезн': '🕳️', 'дренажн': '💦',
+                'поверхностн': '🔧', 'шламов': '⛏️', 'циркуляцион': '🔄', 'конвектор': '🌡️'
+            };
+            const n = (name||'').toLowerCase();
+            for (const [key, icon] of Object.entries(icons)) {
+                if (n.includes(key)) return icon;
+            }
+            return '📦';
+        }
+
+        function switchType(t){
+            curType=t; curCat=''; currentPath=[];
+            document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',(t==='mat'&&i===0)||(t==='work'&&i===1)));
+            document.getElementById('item-srch').value='';
+            loadData();
+        }
+
+        async function loadData(){
+            const urlMat='/estimate/api/catalog/materials';
+            const urlWork='/estimate/api/catalog/works';
+            const urlTree='/estimate/api/catalog/categories/tree';
+            try{
+                // Загружаем данные параллельно
+                const [dataRes, treeRes] = await Promise.all([
+                    fetch(curType==='mat'?urlMat:urlWork),
+                    curType==='mat' ? fetch(urlTree+'?type=material') : Promise.resolve(null)
+                ]);
+                
+                if(!dataRes.ok) throw new Error('HTTP '+dataRes.status);
+                allData=await dataRes.json();
+                
+                // Загружаем дерево категорий
+                if(treeRes && treeRes.ok) {
+                    categoryTree = await treeRes.json();
+                }
+                
+                renderCatGrid();
+                renderTreeView();
+                renderItems();
+            }catch(e){
+                document.getElementById('cat-list').innerHTML='<div class="empty">Ошибка</div>';
+                document.getElementById('tbl').innerHTML='<tr><td colspan="12" class="empty">'+esc(e.message)+'</td></tr>';
+            }
+        }
+
+        // Отображение карточек главных категорий
+        function renderCatGrid(){
+            const grid = document.getElementById('catGrid');
+            if(curType==='work' || !categoryTree.length) {
+                grid.innerHTML = '';
+                return;
+            }
+            
+            // Считаем материалы по категориям
+            const counts = {};
+            allData.forEach(d => { counts[d.category] = (counts[d.category]||0)+1; });
+            
+            let html = '';
+            categoryTree.forEach(cat => {
+                // Суммируем количество ВСЕХ потомков (рекурсивно)
+                let total = counts[cat.name] || 0;
+                (cat.all_descendants || []).forEach(childName => { total += counts[childName] || 0; });
+
+                html += `<div class="cat-card" onclick="drillDown('${esc(cat.name)}')">
+                    <div class="cat-icon">${getCatIcon(cat.name)}</div>
+                    <div class="cat-name">${esc(cat.name)}</div>
+                    <div class="cat-count-badge">${total} товар(ов)</div>
+                </div>`;
+            });
+            grid.innerHTML = html;
+        }
+
+        // Древовидное представление в сайдбаре
+        function renderTreeView(){
+            const treeContainer = document.getElementById('tree-view');
+            const flatList = document.getElementById('cat-list');
+            
+            if(curType==='work' || !categoryTree.length) {
+                treeContainer.innerHTML = '';
+                // Для работ показываем плоский список
+                renderFlatCategories();
+                return;
+            }
+            
+            flatList.innerHTML = '';  // Скрываем плоский список
+            treeContainer.innerHTML = renderTreeNodes(categoryTree, 0);
+        }
+
+        function renderTreeNodes(nodes, depth) {
+            if(!nodes || !nodes.length) return '';
+            let html = '';
+            nodes.forEach(node => {
+                const isBrand = node.is_brand_leaf;
+                const hasChildren = node.children && node.children.length > 0;
+                const isActive = curCat === node.name;
+                const toggleClass = (hasChildren && !isBrand) ? 'tree-toggle' : 'tree-toggle leaf';
+                const labelClass = isActive ? 'tree-label active' : 'tree-label';
+
+                // Иконки по уровням и типу
+                let icon;
+                if(isBrand) {
+                    icon = '🏷️';  // Бренд
+                } else if(depth === 0) {
+                    icon = '📁';  // Категория
+                } else if(depth === 1) {
+                    icon = '📂';  // Тип
+                } else {
+                    icon = '📦';
+                }
+
+                // Определяем уровень для фильтрации
+                let filterLevel;
+                if(isBrand) filterLevel = '2';
+                else if(depth === 0) filterLevel = '0';
+                else filterLevel = '1';
+
+                const countBadge = node.count ? `<span class="tree-count">${node.count}</span>` : '';
+
+                html += `<div class="tree-node">
+                    <span class="${toggleClass}" onclick="toggleTreeNode(this)">&#9654;</span>
+                    <span class="${labelClass}" onclick="selectCategory('${esc(node.name).replace(/'/g,"\\'")}', '${filterLevel}')">${icon} ${esc(node.name)}</span>
+                    ${countBadge}
+                    ${hasChildren ? `<div class="tree-children">${renderTreeNodes(node.children, isBrand ? 2 : depth+1)}</div>` : ''}
+                </div>`;
+            });
+            return html;
+        }
+
+        function toggleTreeNode(el) {
+            if(el.classList.contains('leaf')) return;
+            el.classList.toggle('expanded');
+            const childrenDiv = el.parentElement.querySelector('.tree-children');
+            if(childrenDiv) childrenDiv.classList.toggle('open');
+        }
+
+        function renderFlatCategories(){
+            const box=document.getElementById('cat-list');
+            const counts={};
+            allData.forEach(function(d){ counts[d.category]=(counts[d.category]||0)+1; });
+            var cats=Object.keys(counts).sort();
+            var html='<div class="cat-item'+(curCat===''?' active':'')+'" onclick="selCat(\'\')"><span>Все</span><span class="cat-count">'+allData.length+'</span></div>';
+            cats.forEach(function(c){
+                html+='<div class="cat-item'+(curCat===c?' active':'')+'" onclick="selCat(\''+esc(c).replace(/'/g,"\\'")+'\')"><span>'+esc(c)+'</span><span class="cat-count">'+counts[c]+'</span></div>';
+            });
+            box.innerHTML=html;
+        }
+
+        // Drill-down навигация
+        function drillDown(catName) {
+            currentPath = [catName];
+            curCat = catName;
+            curFilterType = '0';  // Уровень категории
+            curCatDescendants = getDescendantsForCategory(catName);
+            updateBreadcrumbs();
+            renderItems();
+            
+            // Подсвечиваем в дереве
+            document.querySelectorAll('.tree-label').forEach(el => {
+                el.classList.toggle('active', el.textContent.includes(catName));
+            });
+            
+            // Скроллим к таблице
+            document.querySelector('.tbl-wrap').scrollIntoView({behavior: 'smooth'});
+        }
+
+        function updateBreadcrumbs() {
+            const bc = document.getElementById('breadcrumbs');
+            if(!currentPath.length) {
+                bc.classList.add('hidden');
+                return;
+            }
+            
+            bc.classList.remove('hidden');
+            let html = '<a href="#" onclick="resetDrill(); return false;">Все категории</a>';
+            currentPath.forEach((cat, i) => {
+                html += '<span class="sep">→</span>';
+                if(i === currentPath.length - 1) {
+                    html += '<span>'+getCatIcon(cat)+' '+esc(cat)+'</span>';
+                } else {
+                    html += '<a href="#" onclick="drillTo('+i+'); return false;">'+esc(cat)+'</a>';
+                }
+            });
+            bc.innerHTML = html;
+        }
+
+        function resetDrill() {
+            currentPath = [];
+            curCat = '';
+            curCatDescendants = [];
+            curFilterType = '';
+            document.getElementById('item-srch').value = '';
+            updateBreadcrumbs();
+            renderItems();
+            document.querySelectorAll('.tree-label').forEach(el => el.classList.remove('active'));
+        }
+
+        function drillTo(index) {
+            currentPath = currentPath.slice(0, index + 1);
+            curCat = currentPath[currentPath.length - 1];
+            updateBreadcrumbs();
+            renderItems();
+        }
+
+        function getDescendantsForCategory(c) {
+            function findDescs(nodes) {
+                for (var i = 0; i < nodes.length; i++) {
+                    if (nodes[i].name === c) return nodes[i].all_descendants || [];
+                    if (nodes[i].children) {
+                        var r = findDescs(nodes[i].children);
+                        if (r) return r;
+                    }
+                }
+                return [];
+            }
+            return findDescs(categoryTree);
+        }
+
+        function selectCategory(name, depth) { selCat(name, depth); }
+
+        function selCat(c, depth){
+            curCat = c;
+            curFilterType = depth !== undefined ? depth : '';  // '0'=категория, '1'=тип, '2'=бренд
+            curCatDescendants = [];
+            // Ищем категорию в дереве и берём всех потомков
+            function findDescs(nodes) {
+                for (var i = 0; i < nodes.length; i++) {
+                    if (nodes[i].name === c) return nodes[i].all_descendants || [];
+                    if (nodes[i].children) {
+                        var r = findDescs(nodes[i].children);
+                        if (r) return r;
+                    }
+                }
+                return [];
+            }
+            curCatDescendants = findDescs(categoryTree);
+            document.getElementById('item-srch').value='';
+            renderItems();
+        }
+
+        document.getElementById('cat-srch').addEventListener('input',function(){
+            var q=this.value.toLowerCase();
+            document.querySelectorAll('.cat-item').forEach(function(el){ el.style.display=el.textContent.toLowerCase().includes(q)?'':'none'; });
+            // Поиск по дереву
+            document.querySelectorAll('.tree-label').forEach(function(el){
+                el.style.display = el.textContent.toLowerCase().includes(q) ? '' : 'none';
+            });
+        });
+
+        // Debounce для поиска
+        var catalogSearchTimeout = null;
+        document.getElementById('item-srch').addEventListener('input', function() {
+            clearTimeout(catalogSearchTimeout);
+            catalogSearchTimeout = setTimeout(function() { renderItems(); }, 150);
+        });
+
+        function renderItems(){
+            var q=(document.getElementById('item-srch').value||'').toLowerCase().trim();
+            var items=allData;
+            if(curCat) {
+                if(curFilterType === '0' || curFilterType === '') {
+                    // Клик на категорию: показываем все материалы этой категории + всех типов и брендов
+                    var catsToInclude = [curCat].concat(curCatDescendants || []);
+                    items = items.filter(function(d){ return catsToInclude.indexOf(d.category) !== -1; });
+                } else if(curFilterType === '1') {
+                    // Клик на тип: фильтруем по item_type
+                    items = items.filter(function(d){ return (d.item_type || 'Другое') === curCat; });
+                } else if(curFilterType === '2') {
+                    // Клик на бренд: фильтруем по brand
+                    items = items.filter(function(d){ return (d.brand || 'Без бренда') === curCat; });
+                }
+            }
+            if(q){
+                var words = q.split(/\s+/).filter(function(w){ return w.length >= 1; });
+                items=items.filter(function(d){
+                    var name = (d.name||'').toLowerCase();
+                    var article = (d.article||'').toLowerCase();
+                    var brand = (d.brand||'').toLowerCase();
+                    var cat = (d.category||'').toLowerCase();
+                    var desc = (d.description||'').toLowerCase();
+                    var searchIn = name + ' ' + article + ' ' + brand + ' ' + cat + ' ' + desc;
+                    for (var i = 0; i < words.length; i++) {
+                        if (searchIn.indexOf(words[i]) === -1) return false;
+                    }
+                    return true;
+                });
+                items.sort(function(a, b) {
+                    var aName = a.name.toLowerCase();
+                    var bName = b.name.toLowerCase();
+                    var aInName = words.every(function(w){ return aName.indexOf(w) !== -1; });
+                    var bInName = words.every(function(w){ return bName.indexOf(w) !== -1; });
+                    if (aInName && !bInName) return -1;
+                    if (bInName && !aInName) return 1;
+                    return a.name.localeCompare(b.name);
+                });
+            }
+
+            document.getElementById('ct-title').textContent=curCat||'Все '+(curType==='mat'?'материалы':'услуги');
+            document.getElementById('sb-title').textContent=curType==='mat'?'Категории материалов':'Категории услуг';
+
+            var isWork = curType==='work';
+            document.getElementById('th-art').style.display=isWork?'none':'';
+            document.getElementById('th-brand').style.display=isWork?'none':'';
+            document.getElementById('th-purch').style.display=isWork?'none':'';
+            document.getElementById('th-retail').textContent=isWork?'Цена':'РРЦ';
+            document.getElementById('th-profit').style.display=isWork?'none':'';
+            document.getElementById('th-margin').style.display=isWork?'none':'';
+            document.getElementById('pRowMat').style.display=isWork?'none':'flex';
+            document.getElementById('pRowWork').style.display=isWork?'block':'none';
+
+            var tb=document.getElementById('tbl');
+            if(!items.length){ tb.innerHTML='<tr><td colspan="13" class="empty">Нет товаров</td></tr>'; return; }
+            var html='';
+            items.forEach(function(d,i){
+                var purch=num(d.purchase_price);
+                var retail=num(d.retail_price||d.price);
+                var profit=retail-purch;
+                var margin=retail>0?((retail-purch)/retail*100):0;
+                var marginColor=margin>=30?'#2e7d32':(margin>=15?'#f57f17':'#c62828');
+                var marginBg=margin>=30?'#e8f5e9':(margin>=15?'#fff8e1':'#ffebee');
+                var imgHtml = '<div class="prod-img-placeholder">📦</div>';
+                if(d.image_path) {
+                    imgHtml = '<img class="prod-img" src="/static/'+d.image_path+'" alt="">';
+                }
+                html+='<tr>'+
+                    '<td>'+(i+1)+'</td>'+
+                    '<td>'+imgHtml+'</td>'+
+                    '<td class="art-cell"'+(isWork?' style="display:none"':'')+'>'+esc(d.article)+'</td>'+
+                    '<td class="brand-cell"'+(isWork?' style="display:none"':'')+'>'+esc(d.brand)+'</td>'+
+                    '<td class="name-cell">'+esc(d.name)+'</td>'+
+                    '<td style="font-size:11px;color:#888;">'+esc(d.item_type)+'</td>'+
+                    '<td>'+esc(d.unit)+'</td>'+
+                    '<td class="price"'+(isWork?' style="display:none"':'')+'>'+money(purch)+'</td>'+
+                    '<td class="price">'+money(retail)+'</td>'+
+                    '<td class="profit"'+(isWork?' style="display:none"':'')+'>'+(isWork?'':'+')+money(profit)+'</td>'+
+                    '<td style="font-weight:600;color:'+marginColor+';background:'+marginBg+';padding:4px 8px;border-radius:4px;text-align:center;'+(isWork?'display:none':'')+'">'+margin.toFixed(0)+'%</td>'+
+                    '<td><button class="act-btn act-edit" onclick="editItem('+d.id+')">&#9998;</button> '+
+                        '<button class="act-btn act-del" onclick="delItem('+d.id+')">&#10005;</button></td></tr>';
+            });
+            tb.innerHTML=html;
+        }
+
+        function openAdd(){
+            document.getElementById('mTitle').textContent='Добавить';
+            ['f-id','f-art','f-name','f-brand','f-cat','f-type','f-purch','f-retail','f-wprice'].forEach(function(id){ document.getElementById(id).value=''; });
+            document.getElementById('f-unit').value='шт';
+            document.getElementById('f-cat').value=curCat||'';
+            document.getElementById('pRowMat').style.display=curType==='mat'?'flex':'none';
+            document.getElementById('pRowWork').style.display=curType==='work'?'block':'none';
+            document.getElementById('editModal').classList.add('active');
+        }
+
+        function editItem(id){
+            var d=allData.find(function(x){return x.id===id;});
+            if(!d) return;
+            document.getElementById('mTitle').textContent='Редактировать';
+            document.getElementById('f-id').value=id;
+            document.getElementById('f-art').value=d.article||'';
+            document.getElementById('f-name').value=d.name||'';
+            document.getElementById('f-brand').value=d.brand||'';
+            document.getElementById('f-cat').value=d.category||'';
+            document.getElementById('f-type').value=d.item_type||'';
+            document.getElementById('f-unit').value=d.unit||'шт';
+            if(curType==='mat'){
+                document.getElementById('f-purch').value=d.purchase_price||0;
+                document.getElementById('f-retail').value=d.retail_price||0;
+            } else {
+                document.getElementById('f-wprice').value=d.price||0;
+            }
+            document.getElementById('pRowMat').style.display=curType==='mat'?'flex':'none';
+            document.getElementById('pRowWork').style.display=curType==='work'?'block':'none';
+            document.getElementById('editModal').classList.add('active');
+        }
+
+        async function saveItem(){
+            var id=document.getElementById('f-id').value;
+            var isEdit=!!id;
+            var url=isEdit?'/estimate/api/catalog/'+(curType==='mat'?'materials':'works')+'/'+id:'/estimate/api/catalog/'+(curType==='mat'?'materials':'works');
+            var m=isEdit?'PUT':'POST';
+            var b={name:document.getElementById('f-name').value, unit:document.getElementById('f-unit').value, category:document.getElementById('f-cat').value, item_type:document.getElementById('f-type').value, description:''};
+            if(curType==='mat'){
+                b.article=document.getElementById('f-art').value;
+                b.brand=document.getElementById('f-brand').value;
+                b.purchase_price=parseFloat(document.getElementById('f-purch').value)||0;
+                b.retail_price=parseFloat(document.getElementById('f-retail').value)||0;
+                b.price=b.retail_price;
+            } else {
+                b.price=parseFloat(document.getElementById('f-wprice').value)||0;
+            }
+            try{
+                var r=await fetch(url,{method:m,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},body:JSON.stringify(b)});
+                if(!r.ok){var e=await r.json();alert('Ошибка: '+(e.error||''));return;}
+            }catch(e){alert('Ошибка: '+e.message);return;}
+            closeModal(); loadData();
+        }
+
+        async function delItem(id){
+            if(!confirm('Удалить?')) return;
+            await fetch('/estimate/api/catalog/'+(curType==='mat'?'materials':'works')+'/'+id,{method:'DELETE',headers:{'X-CSRF-Token':csrf()}});
+            loadData();
+        }
+
+        function closeModal(){ document.getElementById('editModal').classList.remove('active'); }
+        document.getElementById('editModal').addEventListener('click',function(e){ if(e.target.id==='editModal') closeModal(); });
+
+        loadData();
+    </script>
+    <script src="/static/js/table-pan.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Долги клиентов</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Page-specific styles */
+        .header { background: linear-gradient(135deg, #f44336, #d32f2f); }
+        .header th { background: #f44336; }
+        .total-debt .amount { font-size: 36px; font-weight: bold; color: #f44336; }
+        .debt-amount { font-weight: bold; color: #f44336; }
+        .progress-bar { width: 100%; height: 8px; background: #eee; border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #4CAF50, #81C784); border-radius: 4px; }
+        .rank { width: 30px; height: 30px; background: #f44336; color: white; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>💰 ДОЛГИ КЛИЕНТОВ</h1>
+        <div class="header-actions">
+            <a href="/" class="btn btn-secondary">Объекты</a>
+            <a href="/stats" class="btn btn-secondary">Статистика</a>
+        </div>
+    </div>
+    <div class="container">
+        <div class="total-debt">
+            <div class="label">Общая сумма долгов:</div>
+            <div class="amount" id="total-debt">0.00 BYN</div>
+        </div>
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th>№</th><th>Клиент</th><th>Объекты</th><th>Выручка</th><th>Оплачено</th><th>Долг</th><th>% оплаты</th></tr></thead>
+                <tbody id="table-body"></tbody>
+            </table>
+        </div>
+    </div>
+    <script src="/static/js/offline.js?v=3"></script>
+    <script>
+        function formatMoney(v){return Number(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' BYN';}
+        async function loadData(){
+            try{
+                const res=await fetch('/api/debts');
+                if(!res.ok) throw new Error('HTTP '+res.status);
+                const debts=await res.json();
+                try{await OfflineDB.put('settings',{key:'lastDebts',value:JSON.stringify(debts)});}catch(e){}
+                renderDebts(debts);
+            }catch(e){
+                console.error('Debts error:',e);
+                try{
+                    const cached=await OfflineDB.getSetting('lastDebts');
+                    if(cached){renderDebts(typeof cached==='string'?JSON.parse(cached):cached);return;}
+                }catch(e2){}
+                alert('Нет подключения');
+            }
+        }
+        function renderDebts(debts){
+            const total=debts.reduce((s,d)=>s+d.total_debt,0);
+            document.getElementById('total-debt').textContent=formatMoney(total);
+            const tbody=document.getElementById('table-body');tbody.innerHTML='';
+            if(debts.length===0){
+                const tr=document.createElement('tr');
+                const td=document.createElement('td');
+                td.colSpan=7;td.style.padding='30px';td.style.color='#999';
+                td.textContent='Должников нет 🎉';
+                tr.appendChild(td);tbody.appendChild(tr);
+                return;
+            }
+            debts.forEach((d,i)=>{
+                const pct=d.total_revenue>0?((d.total_paid/d.total_revenue)*100).toFixed(0):0;
+                const tr=document.createElement('tr');
+                const f0=document.createElement('td');
+                const rank=document.createElement('span');rank.className='rank';rank.textContent=i+1;
+                f0.appendChild(rank);tr.appendChild(f0);
+                const f1=document.createElement('td');f1.style.textAlign='left';f1.style.fontWeight='600';f1.textContent=d.name;tr.appendChild(f1);
+                const f2=document.createElement('td');f2.textContent=d.objects.length;tr.appendChild(f2);
+                const f3=document.createElement('td');f3.textContent=formatMoney(d.total_revenue);tr.appendChild(f3);
+                const f4=document.createElement('td');f4.textContent=formatMoney(d.total_paid);tr.appendChild(f4);
+                const f5=document.createElement('td');f5.className='debt-amount';f5.textContent=formatMoney(d.total_debt);tr.appendChild(f5);
+                const f6=document.createElement('td');
+                const bar=document.createElement('div');bar.className='progress-bar';
+                const fill=document.createElement('div');fill.className='progress-fill';fill.style.width=pct+'%';
+                bar.appendChild(fill);
+                const small=document.createElement('small');small.textContent=pct+'%';
+                f6.appendChild(bar);f6.appendChild(small);
+                tr.appendChild(f6);
+                tbody.appendChild(tr);
+            });
+        }
+        loadData();
+    </script>
+</body>
+</html>

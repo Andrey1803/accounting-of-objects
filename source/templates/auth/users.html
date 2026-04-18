@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Управление пользователями</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        /* Page-specific styles — all covered by base.css and components.css */
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>👥 Управление пользователями</h1>
+        <div class="header-actions">
+            <a href="/" class="btn btn-secondary">На главную</a>
+            <a href="/register" class="btn btn-primary">+ Новый пользователь</a>
+        </div>
+    </div>
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}{% endif %}{% endwith %}
+        
+        <div class="card">
+            <table>
+                <thead><tr><th>№</th><th>Логин</th><th>Роль</th><th>Email</th><th>Создан</th><th></th></tr></thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr>
+                        <td>{{ u.id }}</td>
+                        <td style="font-weight:600">{{ u.username }}</td>
+                        <td><span class="role-badge {{ 'role-admin' if u.role=='admin' else 'role-user' }}">{{ u.role }}</span></td>
+                        <td>{{ u.email or '-' }}</td>
+                        <td>{{ u.created_at[:10] }}</td>
+                        <td>
+                            {% if u.id != 1 %}
+                            <form action="/admin/users/{{ u.id }}/delete" method="POST" style="display:inline" onsubmit="return confirm('Удалить?')">
+                                <button type="submit" class="btn btn-danger">🗑️</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,32 @@
+# Деплой на Railway без интерактивного login.
+# 1) Railway → Account → Tokens → создать токен.
+# 2) GitHub → Settings → Secrets → Actions → add secret RAILWAY_TOKEN
+#    (value = account API token from railway.app/account/tokens, Workspace empty when creating).
+# 3) Actions → Deploy to Railway → Run workflow.
+name: Deploy to Railway
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+
+      - name: railway up
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          railway up --ci --detach \
+            -p cfc00660-22af-44b7-9d44-7e95b270d139 \
+            -e production \
+            -s 340b71fe-5712-4b1b-a269-1cd715f97492

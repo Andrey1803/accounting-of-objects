@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Сметы</title>
+    <link rel="stylesheet" href="/static/css/base.css?v=2">
+    <link rel="stylesheet" href="/static/css/components.css?v=1">
+    <style>
+        .actions { display: flex; gap: 5px; justify-content: center; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>СМЕТЫ</h1>
+        <div class="header-actions">
+            <a href="/" class="btn btn-cancel">← Объекты</a>
+            <a href="/estimate/catalog" class="btn btn-secondary">📋 Каталог</a>
+            <a href="/estimate/new" class="btn btn-primary">+ Новая смета</a>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="table-wrapper table-pan-viewport" title="Прокрутка и перетаскивание мышью по таблице">
+            <table>
+                <thead>
+                    <tr>
+                        <th>№</th>
+                        <th>Дата</th>
+                        <th>Объект</th>
+                        <th>Клиент</th>
+                        <th>Статус</th>
+                        <th>Материалы</th>
+                        <th>Работы</th>
+                        <th>Итого</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    <tr><td colspan="9" style="padding:30px; color:#999;">Загрузка...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <script>
+        function getCsrf() {
+            var m = document.querySelector('meta[name="csrf-token"]');
+            return m ? m.getAttribute('content') : '';
+        }
+
+        async function loadData() {
+            const res = await fetch('/estimate/api/estimates');
+            const estimates = await res.json();
+            
+            const tbody = document.getElementById('table-body');
+            
+            if (estimates.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" style="padding:30px; color:#999;">Нет смет. <a href="/estimate/new">Создать первую?</a></td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = '';
+            
+            for (const est of estimates) {
+                const detailRes = await fetch(`/estimate/api/estimates/${est.id}`);
+                const detail = await detailRes.json();
+                
+                const mats = (detail.items || []).filter(i => i.section === 'material').reduce((s, i) => s + i.total, 0);
+                const works = (detail.items || []).filter(i => i.section === 'work').reduce((s, i) => s + i.total, 0);
+                const subtotal = mats + works;
+                const markup = subtotal * (est.markup_percent || 0) / 100;
+                const vat = (subtotal + markup) * (est.vat_percent || 0) / 100;
+                const discount = (subtotal + markup + vat) * (est.discount_percent || 0) / 100;
+                const total = subtotal + markup + vat - discount;
+                
+                const tr = document.createElement('tr');
+                const f0 = document.createElement('td');
+                    const b = document.createElement('b'); b.textContent = est.number; f0.appendChild(b);
+                tr.appendChild(f0);
+                const f1 = document.createElement('td'); f1.textContent = formatDate(est.date); tr.appendChild(f1);
+                const f2 = document.createElement('td'); f2.style.textAlign = 'left'; f2.textContent = est.object_name || '-'; tr.appendChild(f2);
+                const f3 = document.createElement('td'); f3.textContent = est.client || '-'; tr.appendChild(f3);
+                const f4 = document.createElement('td');
+                    const span = document.createElement('span');
+                    span.className = 'status status-' + est.status.replace(/ /g, '-');
+                    span.textContent = est.status;
+                    f4.appendChild(span);
+                tr.appendChild(f4);
+                const f5 = document.createElement('td'); f5.textContent = formatMoney(mats); tr.appendChild(f5);
+                const f6 = document.createElement('td'); f6.textContent = formatMoney(works); tr.appendChild(f6);
+                const f7 = document.createElement('td');
+                    const b2 = document.createElement('b'); b2.textContent = formatMoney(total); f7.appendChild(b2);
+                tr.appendChild(f7);
+                const f8 = document.createElement('td');
+                    const actions = document.createElement('div'); actions.className = 'actions';
+                    const linkEdit = document.createElement('a');
+                    linkEdit.href = '/estimate/' + est.id;
+                    linkEdit.className = 'btn btn-edit';
+                    linkEdit.textContent = '✏️ Изменить';
+                    actions.appendChild(linkEdit);
+                    const btnExport = document.createElement('button');
+                    btnExport.className = 'btn btn-export';
+                    btnExport.textContent = '📄 Excel';
+                    btnExport.onclick = () => exportEstimate(est.id);
+                    actions.appendChild(btnExport);
+                    const btnDel = document.createElement('button');
+                    btnDel.className = 'btn btn-danger';
+                    btnDel.textContent = '🗑️';
+                    btnDel.onclick = () => deleteEstimate(est.id);
+                    actions.appendChild(btnDel);
+                    f8.appendChild(actions);
+                tr.appendChild(f8);
+                tbody.appendChild(tr);
+            }
+        }
+        
+        function formatDate(d) {
+            if (!d) return '-';
+            const parts = d.split('-');
+            return `${parts[2]}.${parts[1]}.${parts[0]}`;
+        }
+        
+        function formatMoney(v) {
+            return Number(v).toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' BYN';
+        }
+        
+        function exportEstimate(id) {
+            window.location.href = `/estimate/api/estimates/${id}/export`;
+        }
+        
+        async function deleteEstimate(id) {
+            if (!confirm('Удалить смету?')) return;
+            var res = await fetch('/estimate/api/estimates/' + id, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRF-Token': getCsrf()
+                }
+            });
+            if (res.ok) {
+                loadData();
+            } else {
+                alert('Ошибка удаления сметы');
+            }
+        }
+        
+        loadData();
+    </script>
+    <script src="/static/js/table-pan.js?v=1"></script>
+</body>
+</html>
