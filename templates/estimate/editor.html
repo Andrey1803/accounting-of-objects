@@ -1544,8 +1544,7 @@
                     console.log('Смета создана: id=' + estimateId + ', number=' + d.number);
                     // Кэшируем новую смету
                     await OfflineDB.put('estimates', { id: d.id, number: d.number, items: items, object_id: prefilledObjectId || data.object_id, ...data });
-                    // Остаёмся в редакторе, чтобы добавлять позиции после первого сохранения шапки
-                    window.location.replace('/estimate/' + estimateId);
+                    window.location.replace('/');
                 } else {
                     var res2 = await fetch('/estimate/api/estimates/'+estimateId, {
                         method: 'PUT',
@@ -1564,6 +1563,7 @@
                     if (cached) { Object.assign(cached, data); if (prefilledObjectId) cached.object_id = prefilledObjectId; await OfflineDB.put('estimates', cached); }
                     console.log('Смета обновлена: id=' + estimateId);
                     await saveEstimateToDB();
+                    window.location.replace('/');
                 }
             } catch(e) {
                 console.error('saveEstimate error:', e);
