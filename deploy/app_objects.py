@@ -101,6 +101,29 @@ def _patched_send_static_file(self, filename):
 
 Flask.send_static_file = _patched_send_static_file
 
+# БД: не вызывать init_db() при импорте (иначе сбой psycopg2 убивает воркер — Railway healthcheck = «unavailable»).
+# Первый «боевой» запрос инициализирует схему; /health обслуживается без БД.
+_db_init_state = {"ready": False}
+_db_init_lock = threading.Lock()
+
+
+@app.before_request
+def _ensure_db_before_request():
+    if _db_init_state["ready"]:
+        return
+    p = request.path or ""
+    if p.rstrip("/") == "/health" or p == "/favicon.ico" or p.startswith("/static/"):
+        return
+    with _db_init_lock:
+        if _db_init_state["ready"]:
+            return
+        init_db()
+        _db_init_state["ready"] = True
+        _start_startup_recalc_if_enabled()
+
+
+atexit.register(close_all_connections)
+
 # CSRF: генерация токена в сессии
 def _csrf_token():
     if '_csrf_token' not in session:
@@ -1014,10 +1037,6 @@ def get_report():
         }
     })
 
-# Инициализация БД при импорте (для gunicorn/WSGI)
-init_db()
-atexit.register(close_all_connections)
-
 def _recalc_all_salaries_on_startup():
     """Пересчитать зарплаты при старте — отдельно для каждого user_id (мультиарендность)."""
     try:
@@ -1093,8 +1112,6 @@ def _start_startup_recalc_if_enabled():
     )
     t.start()
 
-
-_start_startup_recalc_if_enabled()
 
 print("Запуск системы учёта...")
 
