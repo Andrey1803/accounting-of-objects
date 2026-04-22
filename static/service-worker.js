@@ -1,5 +1,19 @@
-const CACHE_NAME = 'accounting-v6';
+const CACHE_NAME = 'accounting-v7';
 const OFFLINE_URL = '/offline';
+
+/** Повтор при обрыве сети (холодный старт хостинга, мобильный интернет). */
+function sleep(ms) {
+  return new Promise(function(resolve) { setTimeout(resolve, ms); });
+}
+function fetchWithRetry(request, attemptsLeft) {
+  attemptsLeft = attemptsLeft || 3;
+  return fetch(request).catch(function() {
+    if (attemptsLeft <= 1) return Promise.reject(new Error('network'));
+    return sleep(700).then(function() {
+      return fetchWithRetry(request, attemptsLeft - 1);
+    });
+  });
+}
 
 // Файлы для кэширования при установке — ТОЛЬКО СТАТИКА
 const PRECACHE_URLS = [
@@ -82,18 +96,18 @@ self.addEventListener('fetch', function(event) {
   var accept = event.request.headers.get('Accept') || '';
   if (accept.includes('text/html')) {
     event.respondWith(
-      fetch(event.request).catch(function() {
+      fetchWithRetry(event.request).catch(function() {
         return caches.match('/offline');
       })
     );
     return;
   }
 
-  // Статика — сначала кэш, потом сеть
+  // Статика — сначала кэш, потом сеть (с повторами: иначе браузер показывал «408 Offline»)
   event.respondWith(
     caches.match(event.request).then(function(cached) {
       if (cached) return cached;
-      return fetch(event.request).then(function(response) {
+      return fetchWithRetry(event.request).then(function(response) {
         if (response.ok && event.request.method === 'GET') {
           var clone = response.clone();
           caches.open(CACHE_NAME).then(function(cache) {
@@ -103,8 +117,7 @@ self.addEventListener('fetch', function(event) {
         return response;
       });
     }).catch(function() {
-      // Если ничего нет — заглушка офлайн
-      return new Response('', { status: 408, statusText: 'Offline' });
+      return new Response('', { status: 503, statusText: 'Network Unavailable' });
     })
   );
 });
