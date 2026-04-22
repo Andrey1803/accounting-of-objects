@@ -315,13 +315,13 @@ def _pdf_retail_price_match(catalog_retail, pdf_price, abs_tol=0.02):
     return abs(round(c, 2) - round(p, 2)) <= abs_tol
 
 
-def _pdf_try_cart_row_qty_unit_price(row):
+def _pdf_try_cart_row_qty_unit_price(row, from_cart_pdf=False):
     """
-    Строка корзины ИМ: [наименование, цена_за_ед, кол-во, сумма, артикул].
-    Универсальная тройка (кол-во, цена, сумма) здесь не подходит: 3.98×1=3.98 совпадает
-    и для (цена, кол-во, сумма), и для перестановки — раньше брались перепутанные роли.
-    Возвращает (qty, unit_price) или (None, None).
+    Только для строк, собранных из PDF корзины (akvabreg и т.п.): [наименование, цена_за_ед, кол-во, сумма, артикул].
+    Для старых табличных PDF (ИТП и др.) не вызывать — там порядок колонок другой, работает тройка q×p≈s.
     """
+    if not from_cart_pdf:
+        return None, None
     if not row or len(row) != 5:
         return None, None
     name = str(row[0] or '').strip()
@@ -344,9 +344,9 @@ def _pdf_try_cart_row_qty_unit_price(row):
     return qty, unit_p
 
 
-def _pdf_extract_pdf_retail_unit_price(row):
+def _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=False):
     """Розничная цена за единицу из строки прайса (колонка «цена», не сумма)."""
-    _cq, cpu = _pdf_try_cart_row_qty_unit_price(row)
+    _cq, cpu = _pdf_try_cart_row_qty_unit_price(row, from_cart_pdf)
     if cpu is not None:
         return cpu
     whole = ' '.join(str(c or '') for c in row)
@@ -380,9 +380,9 @@ def _pdf_extract_unit(row):
     return 'шт'
 
 
-def _pdf_extract_qty(row):
+def _pdf_extract_qty(row, from_cart_pdf=False):
     """Количество: явные единицы, «N м» перед ценой, тройка qty×price≈total, иначе ячейки."""
-    cq, _cpu = _pdf_try_cart_row_qty_unit_price(row)
+    cq, _cpu = _pdf_try_cart_row_qty_unit_price(row, from_cart_pdf)
     if cq is not None:
         return cq
     whole = ' '.join(str(c or '') for c in row)
@@ -917,7 +917,8 @@ def api_parse_pdf():
 
         full_text = '\n'.join(full_text_chunks)
         cart_rows = _pdf_parse_cart_ready_format(full_text)
-        if len(cart_rows) >= 1:
+        from_cart_pdf = len(cart_rows) >= 1
+        if from_cart_pdf:
             all_rows = cart_rows
 
         # Получаем каталог пользователя
@@ -959,7 +960,7 @@ def api_parse_pdf():
             if _PDF_TOTALS_ROW.search(row_text):
                 continue
 
-            pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row)
+            pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf)
 
             article_match_item = _pdf_match_by_article(row_text, row, catalog_by_article)
             best_match = article_match_item
@@ -991,7 +992,7 @@ def api_parse_pdf():
             if best_match and reach_match:
                 pdf_unit = _pdf_extract_unit(row)
                 qty = _pdf_sanitize_qty(
-                    _pdf_extract_qty(row),
+                    _pdf_extract_qty(row, from_cart_pdf),
                     best_match.get('retail_price'),
                     best_match.get('purchase_price'),
                 )
