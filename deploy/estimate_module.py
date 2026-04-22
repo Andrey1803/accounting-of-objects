@@ -1161,7 +1161,7 @@ def price_sync_config():
 def price_sync_run():
     """Запустить синхронизацию цен"""
     try:
-        from price_sync import login, compare_prices, download_price_list
+        from price_sync import login, compare_prices, download_price_list, parse_price_list_dataframe
         import pandas as pd, os
 
         session, msg = login()
@@ -1178,15 +1178,8 @@ def price_sync_run():
             (current_user.id,)
         )
 
-        # Парсинг нового прайса
         df = pd.read_excel(filepath)
-        new_items = []
-        for _, row in df.iterrows():
-            new_items.append({
-                'name': str(row.iloc[0]) if len(row) > 0 else '',
-                'article': str(row.iloc[1]) if len(row) > 1 else '',
-                'price': float(row.iloc[2]) if len(row) > 2 and pd.notna(row.iloc[2]) else 0
-            })
+        new_items = parse_price_list_dataframe(df)
 
         results = compare_prices(local_items, new_items)
         results['filepath'] = filepath

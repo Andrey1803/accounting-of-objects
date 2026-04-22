@@ -75,10 +75,13 @@ def main():
                 col['opt2'] = ci
             elif 'опт' in h and '1' in h:
                 col['opt1'] = ci
-            elif 'ррц' in h or 'розница' in h or 'retail' in h:
+            elif 'ррц' in h or 'розница' in h or 'рознич' in h or 'retail' in h:
                 col['retail'] = ci
             elif 'закуп' in h or 'purchase' in h:
                 col['purchase'] = ci
+            elif ('цена' in h or 'стоим' in h) and 'опт' not in h and 'закуп' not in h and 'дилер' not in h:
+                if 'retail' not in col:
+                    col['retail'] = ci
             elif 'ед' in h or 'unit' in h:
                 col['unit'] = ci
             elif 'категори' in h or 'атегори' in h or 'category' in h:

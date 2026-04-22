@@ -345,6 +345,128 @@ def download_price_list(session):
     except Exception as e:
         return None, None, f"Ошибка скачивания: {e}"
 
+
+def parse_price_list_dataframe(df):
+    """
+    Прайс Excel: находим колонки по заголовкам (наименование, артикул, розничная цена).
+    Раньше брались только iloc[0:3] — при другом порядке колонок цены и артикулы оказывались перепутаны.
+    """
+    import pandas as pd
+    import re
+
+    def norm_cell(x):
+        if pd.isna(x):
+            return ''
+        return str(x).strip()
+
+    def norm_article_val(x):
+        s = norm_cell(x)
+        if re.fullmatch(r'\d+\.0', s):
+            return s[:-2]
+        return s
+
+    def to_float(x):
+        if pd.isna(x):
+            return 0.0
+        try:
+            return float(str(x).replace(',', '.').replace(' ', '').replace('\xa0', ''))
+        except ValueError:
+            return 0.0
+
+    cols = [norm_cell(c).lower() for c in df.columns]
+
+    def col_find(pred):
+        for i, h in enumerate(cols):
+            if h and pred(h):
+                return i
+        return None
+
+    def is_name_col(h):
+        return any(
+            k in h
+            for k in (
+                'наимен', 'аименование', 'именование', 'назв', 'nazwa', 'name',
+                'товар', 'продукт', 'номенклат',
+            )
+        )
+
+    def is_art_col(h):
+        return (
+            ('ртикул' in h)
+            or ('артикул' in h)
+            or h in ('арт.', 'код')
+            or ('штрих' in h)
+            or h == 'ean'
+        )
+
+    def is_price_col(h):
+        if not h:
+            return False
+        if any(k in h for k in ('ррц', 'рознич', 'retail')):
+            return True
+        if any(k in h for k in ('опт', 'закуп', 'purchase', 'дилер', 'скид')):
+            return False
+        if any(k in h for k in ('цена', 'price', 'стоим')):
+            return True
+        return False
+
+    i_name = col_find(is_name_col)
+    i_art = col_find(is_art_col)
+    i_price = col_find(is_price_col)
+
+    if i_name is None or i_price is None:
+        if len(df) > 0:
+            row0 = [norm_cell(x).lower() for x in df.iloc[0].tolist()]
+
+            def rfinder(pred):
+                for j, h in enumerate(row0):
+                    if h and pred(h):
+                        return j
+                return None
+
+            r_name = rfinder(is_name_col)
+            r_art = rfinder(is_art_col)
+            r_price = rfinder(is_price_col)
+            if r_name is not None and r_price is not None:
+                i_name, i_art, i_price = r_name, r_art, r_price
+                df = df.iloc[1:].reset_index(drop=True)
+
+    out = []
+    if i_name is not None and i_price is not None:
+        for _, row in df.iterrows():
+            vals = row.values
+            n = len(vals)
+            name = norm_cell(vals[i_name]) if i_name < n else ''
+            article = (
+                norm_article_val(vals[i_art])
+                if i_art is not None and i_art >= 0 and i_art < n
+                else ''
+            )
+            price = to_float(vals[i_price] if i_price < n else 0)
+            if not name or len(name) < 3:
+                continue
+            ln = name.lower()
+            if ln in ('наименование', 'название', 'итого', 'всего', 'nan') or ln.startswith('итого'):
+                continue
+            if price <= 0:
+                continue
+            art_u = article.upper().replace(' ', '') if article else ''
+            out.append({'name': name, 'article': art_u, 'price': price})
+        return out
+
+    for _, row in df.iterrows():
+        name = norm_cell(row.iloc[0]) if len(row) > 0 else ''
+        article = norm_article_val(row.iloc[1]) if len(row) > 1 else ''
+        price = to_float(row.iloc[2]) if len(row) > 2 else 0
+        if not name or len(name) < 3:
+            continue
+        if price <= 0:
+            continue
+        art_u = article.upper().replace(' ', '') if article else ''
+        out.append({'name': name, 'article': art_u, 'price': price})
+    return out
+
+
 def compare_prices(local_prices, new_prices):
     """Сравнить цены и вернуть разницу"""
     results = {
@@ -448,13 +570,7 @@ def main():
     try:
         import pandas as pd
         df = pd.read_excel(filepath)
-        new_items = []
-        for _, row in df.iterrows():
-            new_items.append({
-                'name': str(row.iloc[0]) if len(row) > 0 else '',
-                'article': str(row.iloc[1]) if len(row) > 1 else '',
-                'price': float(row.iloc[2]) if len(row) > 2 and pd.notna(row.iloc[2]) else 0
-            })
+        new_items = parse_price_list_dataframe(df)
         print(f"  Распознано {len(new_items)} позиций")
     except Exception as e:
         print(f"  ⚠️ Ошибка парсинга Excel: {e}")
