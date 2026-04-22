@@ -315,8 +315,40 @@ def _pdf_retail_price_match(catalog_retail, pdf_price, abs_tol=0.02):
     return abs(round(c, 2) - round(p, 2)) <= abs_tol
 
 
+def _pdf_try_cart_row_qty_unit_price(row):
+    """
+    Строка корзины ИМ: [наименование, цена_за_ед, кол-во, сумма, артикул].
+    Универсальная тройка (кол-во, цена, сумма) здесь не подходит: 3.98×1=3.98 совпадает
+    и для (цена, кол-во, сумма), и для перестановки — раньше брались перепутанные роли.
+    Возвращает (qty, unit_price) или (None, None).
+    """
+    if not row or len(row) != 5:
+        return None, None
+    name = str(row[0] or '').strip()
+    if len(name) < 5:
+        return None, None
+    try:
+        unit_p = float(str(row[1]).replace(',', '.').replace(' ', ''))
+        qty = float(str(row[2]).replace(',', '.').replace(' ', ''))
+        total = float(str(row[3]).replace(',', '.').replace(' ', ''))
+    except (ValueError, TypeError):
+        return None, None
+    if unit_p <= 0 or qty <= 0 or total <= 0:
+        return None, None
+    tol = max(0.02, 0.015 * abs(total), 0.02 * abs(unit_p * qty))
+    if abs(unit_p * qty - total) > tol:
+        return None, None
+    art = str(row[4] or '').strip().replace(' ', '')
+    if art and not re.fullmatch(r'\d{8,14}', art):
+        return None, None
+    return qty, unit_p
+
+
 def _pdf_extract_pdf_retail_unit_price(row):
     """Розничная цена за единицу из строки прайса (колонка «цена», не сумма)."""
+    _cq, cpu = _pdf_try_cart_row_qty_unit_price(row)
+    if cpu is not None:
+        return cpu
     whole = ' '.join(str(c or '') for c in row)
     vals = _pdf_row_numeric_tail_vals(row)
     t = _pdf_first_matching_triplet(vals)
@@ -350,6 +382,9 @@ def _pdf_extract_unit(row):
 
 def _pdf_extract_qty(row):
     """Количество: явные единицы, «N м» перед ценой, тройка qty×price≈total, иначе ячейки."""
+    cq, _cpu = _pdf_try_cart_row_qty_unit_price(row)
+    if cq is not None:
+        return cq
     whole = ' '.join(str(c or '') for c in row)
 
     for pat in (
