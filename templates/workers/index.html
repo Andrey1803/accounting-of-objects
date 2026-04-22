@@ -18,6 +18,13 @@
     </div>
 
     <div class="container">
+        <div class="card" style="margin-bottom:16px;background:#f0f7ff;border:1px solid #b3d9ff;">
+            <p style="margin:0;font-size:14px;color:#333;line-height:1.5;">
+                <strong>Подотчёт и выручка.</strong> Рабочие получают деньги у клиентов и тратят на обед, топливо, ремонт.
+                Внесите операции в книгу: <em>получено от клиента</em> увеличивает остаток, <em>расход</em> и <em>сдано вам</em> — уменьшают.
+                Колонка «К сдаче» — сколько ещё должны сдать (или переплата, если отрицательно).
+            </p>
+        </div>
         <!-- Статистика -->
         <div class="stats">
             <div class="stat-card">
@@ -48,6 +55,7 @@
                         <th>Телефон</th>
                         <th>Ставка/день</th>
                         <th>Дата найма</th>
+                        <th>К сдаче</th>
                         <th>Статус</th>
                         <th>Действия</th>
                     </tr>
@@ -95,9 +103,73 @@
         </div>
     </div>
 
+    <!-- Книга подотчёта -->
+    <div class="modal" id="cashbookModal">
+        <div class="modal-content" style="max-width:min(96vw,720px);max-height:90vh;overflow:auto;">
+            <h2 id="cashbookTitle">Подотчёт</h2>
+            <p style="margin:8px 0 16px;font-size:15px;">
+                Остаток (к сдаче): <strong id="cashbookBalance" style="color:#2E75B6;">0</strong>
+            </p>
+            <div class="fg">
+                <label>Тип операции</label>
+                <select id="cb-kind">
+                    <option value="client_payment">Получено от клиента</option>
+                    <option value="expense">Расход (обед, топливо…)</option>
+                    <option value="handover">Сдано вам (наличными)</option>
+                </select>
+            </div>
+            <div class="fg" id="cb-cat-row">
+                <label>Категория расхода</label>
+                <select id="cb-category">
+                    <option value="lunch">Обед</option>
+                    <option value="fuel">Топливо</option>
+                    <option value="repair">Ремонт / авто</option>
+                    <option value="other">Прочее</option>
+                </select>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <div class="fg" style="flex:1;min-width:120px;">
+                    <label>Сумма</label>
+                    <input type="number" id="cb-amount" step="0.01" min="0.01" placeholder="0.00">
+                </div>
+                <div class="fg" style="flex:1;min-width:140px;">
+                    <label>Дата</label>
+                    <input type="date" id="cb-date">
+                </div>
+            </div>
+            <div class="fg">
+                <label>Объект (необязательно)</label>
+                <select id="cb-object"><option value="">— не привязано —</option></select>
+            </div>
+            <div class="fg">
+                <label>Комментарий</label>
+                <input type="text" id="cb-note" placeholder="Напр. чек №…" maxlength="500">
+            </div>
+            <button type="button" class="btn btn-save" style="width:100%;margin-bottom:16px;" onclick="addCashbookEntry()">Добавить запись</button>
+            <h3 style="font-size:15px;color:#555;margin-bottom:8px;">Журнал</h3>
+            <div class="table-wrapper" style="max-height:240px;overflow:auto;">
+                <table style="width:100%;font-size:13px;">
+                    <thead>
+                        <tr>
+                            <th>Дата</th>
+                            <th>Операция</th>
+                            <th>Сумма</th>
+                            <th>Объект</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="cashbookTable"></tbody>
+                </table>
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+                <button type="button" class="btn" style="background:#999" onclick="closeCashbook()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/api.js?v=2"></script>
     <script src="/static/js/ui.js?v=1"></script>
-    <script src="/static/js/workers.js?v=2"></script>
+    <script src="/static/js/workers.js?v=3"></script>
     <script src="/static/js/table-pan.js?v=1"></script>
 </body>
 </html>

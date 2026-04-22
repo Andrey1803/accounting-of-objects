@@ -213,6 +213,7 @@ def delete_user_data(user_id):
         queries.append(("DELETE FROM estimate_items WHERE estimate_id = ?", (est['id'],)))
     queries.extend([
         ("DELETE FROM estimates WHERE user_id = ?", (user_id,)),
+        ("DELETE FROM worker_account_entries WHERE user_id = ?", (user_id,)),
         ("DELETE FROM worker_assignments WHERE user_id = ?", (user_id,)),
         ("DELETE FROM workers WHERE user_id = ?", (user_id,)),
         ("DELETE FROM objects WHERE user_id = ?", (user_id,)),
@@ -235,6 +236,7 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS idx_estimates_user_object ON estimates(user_id, object_id)",
         "CREATE INDEX IF NOT EXISTS idx_estimate_items_estimate ON estimate_items(estimate_id)",
         "CREATE INDEX IF NOT EXISTS idx_workers_user ON workers(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_worker_account_user_worker ON worker_account_entries(user_id, worker_id)",
     ]
     try:
         for sql in stmts:
@@ -450,6 +452,18 @@ def init_db():
                 days_worked REAL DEFAULT 1, total_pay REAL DEFAULT 0)
             """,
             """
+            CREATE TABLE IF NOT EXISTS worker_account_entries (
+                id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                worker_id INTEGER REFERENCES workers(id) ON DELETE CASCADE,
+                object_id INTEGER,
+                entry_kind TEXT NOT NULL,
+                expense_category TEXT DEFAULT '',
+                amount REAL NOT NULL,
+                entry_date TEXT NOT NULL,
+                note TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW())
+            """,
+            """
             CREATE TABLE IF NOT EXISTS invitations (
                 id SERIAL PRIMARY KEY,
                 token TEXT UNIQUE NOT NULL,
@@ -543,6 +557,13 @@ def init_db():
                 worker_id INTEGER, object_id INTEGER, work_date TEXT,
                 days_worked REAL DEFAULT 1, total_pay REAL DEFAULT 0);
 
+            CREATE TABLE IF NOT EXISTS worker_account_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+                worker_id INTEGER NOT NULL, object_id INTEGER,
+                entry_kind TEXT NOT NULL, expense_category TEXT DEFAULT '',
+                amount REAL NOT NULL, entry_date TEXT NOT NULL,
+                note TEXT DEFAULT '', created_at TEXT DEFAULT '');
+
             CREATE TABLE IF NOT EXISTS invitations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 token TEXT UNIQUE NOT NULL,
@@ -626,6 +647,21 @@ def init_db():
     try:
         if not IS_POSTGRES:
             conn.execute("ALTER TABLE objects ADD COLUMN client_id INTEGER")
+            conn.commit()
+    except Exception:
+        pass
+
+    # Миграция: подотчёт / выручка у рабочих
+    try:
+        if not IS_POSTGRES:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS worker_account_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+                    worker_id INTEGER NOT NULL, object_id INTEGER,
+                    entry_kind TEXT NOT NULL, expense_category TEXT DEFAULT '',
+                    amount REAL NOT NULL, entry_date TEXT NOT NULL,
+                    note TEXT DEFAULT '', created_at TEXT DEFAULT '')
+            """)
             conn.commit()
     except Exception:
         pass
