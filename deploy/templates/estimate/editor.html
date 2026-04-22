@@ -1732,16 +1732,18 @@
             }
 
             if (data.matched.length > 0) {
-                html += '<p style="font-size:12px;color:#666;margin:6px 0;">Галочка по умолчанию только при уверенности ≥75%. Проверьте колонку «Как в PDF».</p>';
+                html += '<p style="font-size:12px;color:#666;margin:6px 0;">Галочка по умолчанию только при уверенности ≥75%. В смету подставляется <b>цена из PDF</b> (закупка — пропорционально каталогу). Каталог — только для привязки позиции.</p>';
                 html += '<h4 style="margin:10px 0 5px;">✅ Совпавшие позиции:</h4>';
                 html += '<div style="max-height:300px;overflow-y:auto;border:1px solid #ddd;border-radius:6px;">';
                 html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-                html += '<tr style="background:#f5f5f5;"><th style="padding:6px;text-align:left;">✓</th><th style="padding:6px;text-align:left;">Как в PDF</th><th style="padding:6px;text-align:left;">Каталог</th><th style="padding:6px;">Кол-во</th><th style="padding:6px;">Ед.</th><th style="padding:6px;">Цена</th><th style="padding:6px;">%</th></tr>';
+                html += '<tr style="background:#f5f5f5;"><th style="padding:6px;text-align:left;">✓</th><th style="padding:6px;text-align:left;">Как в PDF</th><th style="padding:6px;text-align:left;">Каталог</th><th style="padding:6px;">Кол-во</th><th style="padding:6px;">Ед.</th><th style="padding:6px;">Цена в смете</th><th style="padding:6px;">%</th></tr>';
 
                 data.matched.forEach((m, i) => {
                     const confColor = m.confidence >= 80 ? '#4CAF50' : (m.confidence >= 65 ? '#FF9800' : '#f44336');
                     const preChecked = ((!m.ambiguous && m.confidence >= 75) || m.confidence >= 88) ? 'checked' : '';
-                    const rp = Number(m.item.retail_price) || 0;
+                    const rp = (m.file_retail_unit != null && m.file_retail_unit > 0)
+                        ? Number(m.file_retail_unit)
+                        : (Number(m.item.retail_price) || 0);
                     const pdfUnit = esc(m.unit || 'шт');
                     const pdfSnippet = esc((m.row_text || '').length > 120 ? (m.row_text || '').slice(0, 117) + '…' : (m.row_text || ''));
                     const ambHint = m.ambiguous ? ' <small style="color:#E65100;font-weight:600;">⚠ проверьте</small>' : '';
@@ -1831,11 +1833,17 @@
                     const qty = parseFloat(qtyInput.value) || 1;
                     if (qty > 0) {
                         try {
+                            var useRetail = (m.file_retail_unit != null && m.file_retail_unit > 0)
+                                ? Number(m.file_retail_unit)
+                                : (Number(m.item.retail_price) || 0);
+                            var usePurchase = (m.file_purchase_unit != null && m.file_purchase_unit >= 0)
+                                ? Number(m.file_purchase_unit)
+                                : (Number(m.item.purchase_price) || 0);
                             await doAddFromCatalog({
                                 name: m.item.name,
                                 unit: m.unit || 'шт',
-                                retail_price: m.item.retail_price,
-                                purchase_price: m.item.purchase_price
+                                retail_price: useRetail,
+                                purchase_price: usePurchase
                             }, qty);
                             added++;
                         } catch(e) {

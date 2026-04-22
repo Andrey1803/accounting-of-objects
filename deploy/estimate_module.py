@@ -315,6 +315,21 @@ def _pdf_retail_price_match(catalog_retail, pdf_price, abs_tol=0.02):
     return abs(round(c, 2) - round(p, 2)) <= abs_tol
 
 
+def _pdf_purchase_for_file_retail(file_retail, cat_item):
+    """Закупка для строки сметы при рознице из PDF: сохраняем отношение закуп/розница из каталога."""
+    try:
+        fr = float(file_retail)
+        cr = float(cat_item.get('retail_price') or 0)
+        cp = float(cat_item.get('purchase_price') or 0)
+    except (TypeError, ValueError):
+        return None
+    if fr <= 0:
+        return None
+    if cr > 0 and cp >= 0:
+        return round(fr * (cp / cr), 4)
+    return round(fr * 0.7, 2)
+
+
 def _pdf_try_cart_row_qty_unit_price(row, from_cart_pdf=False):
     """
     Только для строк, собранных из PDF корзины (akvabreg и т.п.): [наименование, цена_за_ед, кол-во, сумма, артикул].
@@ -1007,6 +1022,11 @@ def api_parse_pdf():
                 )
                 if ambiguous:
                     conf_pct = round(min(conf_pct * 0.88, 100), 1)
+                file_purchase = (
+                    _pdf_purchase_for_file_retail(pdf_retail_unit, best_match)
+                    if pdf_retail_unit is not None
+                    else None
+                )
                 matched.append({
                     'row': row,
                     'row_text': row_text,
@@ -1025,6 +1045,10 @@ def api_parse_pdf():
                     'unit': pdf_unit,
                     'confidence': conf_pct,
                     'ambiguous': ambiguous,
+                    'file_retail_unit': round(float(pdf_retail_unit), 4)
+                    if pdf_retail_unit is not None
+                    else None,
+                    'file_purchase_unit': file_purchase,
                 })
             else:
                 if (
