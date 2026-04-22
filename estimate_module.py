@@ -431,29 +431,76 @@ def _pdf_sanitize_qty(qty, retail_price, purchase_price=0):
 
 
 def _pdf_catalog_article_map(catalog_items):
+    """Индекс артикулов: как в каталоге, без пробелов, только цифры, без ведущих нулей, хвост EAN-8."""
     m = {}
     for item in catalog_items:
-        a = (item.get('article') or '').strip().upper()
-        if a:
-            m[a] = item
+        raw = (item.get('article') or '').strip()
+        if not raw:
+            continue
+        variants = set()
+        for base in (raw, raw.upper(), raw.replace(' ', ''), raw.upper().replace(' ', '')):
+            if base:
+                variants.add(base)
+        digits = re.sub(r'\D', '', raw)
+        if digits:
+            variants.add(digits)
+            stripped = digits.lstrip('0')
+            if stripped and stripped != digits:
+                variants.add(stripped)
+            if len(digits) >= 8:
+                variants.add(digits[-8:])
+        for v in variants:
+            if v and 2 <= len(str(v)) <= 40:
+                m[str(v)] = item
     return m
 
 
+def _pdf_lookup_article_in_map(code, catalog_by_article):
+    """Поиск позиции по коду с теми же вариантами, что и при индексации."""
+    if not code:
+        return None
+    c0 = str(code).strip()
+    candidates = [c0, c0.upper(), c0.replace(' ', ''), c0.upper().replace(' ', '')]
+    digits = re.sub(r'\D', '', c0)
+    if digits:
+        candidates.append(digits)
+        stripped = digits.lstrip('0')
+        if stripped and stripped != digits:
+            candidates.append(stripped)
+        if len(digits) >= 8:
+            candidates.append(digits[-8:])
+    for c in candidates:
+        if c and c in catalog_by_article:
+            return catalog_by_article[c]
+    return None
+
+
 def _pdf_match_by_article(row_text, row, catalog_by_article):
-    """Точное совпадение артикула; в скобках или отдельной ячейкой."""
+    """Совпадение по артикулу: скобки, ячейка 8–14 цифр (EAN), «Артикул» в тексте."""
+    seen = []
     m = re.search(r'\(([\dA-Za-zА-Яа-яЁё\-/.]{2,})\)', row_text)
     if m:
-        code = m.group(1).strip().upper().strip('.')
-        if code in catalog_by_article:
-            return catalog_by_article[code]
-        for k, item in catalog_by_article.items():
-            if code == k or (len(code) >= 4 and (code in k or k in code)):
-                return item
+        seen.append(m.group(1).strip().upper().strip('.'))
     for cell in row:
-        t = str(cell).strip().upper().replace(' ', '')
-        if 2 <= len(t) <= 36 and re.fullmatch(r'[\dA-ZА-ЯЁ\-/.]+', t) and not re.fullmatch(r'\d{1,3}', t):
-            if t in catalog_by_article:
-                return catalog_by_article[t]
+        t = str(cell).strip()
+        td = re.sub(r'\s', '', t)
+        if re.fullmatch(r'\d{8,14}', td):
+            seen.append(td)
+        t_up = td.upper() if td else ''
+        if 2 <= len(t_up) <= 36 and re.fullmatch(r'[\dA-ZА-ЯЁ\-/.]+', t_up) and not re.fullmatch(r'\d{1,7}', t_up):
+            if t_up not in seen:
+                seen.append(t_up)
+    for m2 in re.finditer(r'Артикул[:\s]*(\d{8,14})\b', row_text, re.I):
+        seen.append(m2.group(1))
+    for m2 in re.finditer(r'\b(\d{12,14})\b', row_text):
+        g = m2.group(1)
+        if g not in seen:
+            seen.append(g)
+
+    for code in seen:
+        hit = _pdf_lookup_article_in_map(code, catalog_by_article)
+        if hit:
+            return hit
     return None
 
 
@@ -879,16 +926,12 @@ def api_parse_pdf():
 
             pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row)
 
-            best_match = _pdf_match_by_article(row_text, row, catalog_by_article)
-            if (
-                best_match
-                and pdf_retail_unit is not None
-                and not _pdf_retail_price_match(best_match.get('retail_price'), pdf_retail_unit)
-            ):
-                best_match = None
+            article_match_item = _pdf_match_by_article(row_text, row, catalog_by_article)
+            best_match = article_match_item
+            # Совпадение по артикулу не отменяем из‑за расхождения цены PDF и каталога.
             best_score = 1.0 if best_match else 0.0
             second_score = 0.0
-            from_article = bool(best_match)
+            from_article = bool(article_match_item)
             lex_ratio = 1.0
             word_cov = 1.0
 
