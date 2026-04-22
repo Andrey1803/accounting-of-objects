@@ -29,6 +29,122 @@ _PDF_STOPWORDS = frozenset({
     'размер', 'цвет', 'белым', 'белый', 'черным', 'черный', 'серый', 'коричн',
     'штук', 'упак', 'короб', 'масса', 'вес', 'год', 'мес',
 })
+# Корзина ИМ (akvabreg.by и аналоги): «цена руб. N шт сумма руб.» + «Артикул …»
+_PDF_CART_PRICE_LINE = re.compile(
+    r'^(\d+(?:[.,]\d+)?)\s*руб\.\s+(\d+(?:[.,]\d+)?)\s*шт\s+(\d+(?:[.,]\d+)?)\s*руб\.?\s*$',
+    re.I,
+)
+_PDF_CART_ARTICLE_LINE = re.compile(r'^Артикул\s+(\d+)\s*$', re.I)
+
+
+def _pdf_parse_cart_ready_format(full_text):
+    """
+    PDF «Готовые к заказу»: наименование (в т.ч. несколько строк), строка с ценой/кол-вом/суммой,
+    затем «Артикул». Возвращает строки [name, unit_price, qty, total, article] для api_parse_pdf.
+    """
+    if not full_text or 'руб.' not in full_text.lower():
+        return []
+
+    raw_lines = []
+    for raw in full_text.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+        s = ' '.join(raw.split()).strip()
+        if not s:
+            continue
+        low = s.lower()
+        if 'image not found' in low or low == 'type unknown':
+            continue
+        if re.match(r'^--\s*\d+\s+of\s+\d+\s*--$', s, re.I):
+            continue
+        if low.startswith('готовые к заказу'):
+            continue
+        raw_lines.append(s)
+
+    def _footer(line):
+        lo = line.lower()
+        if re.match(r'^итого\s*:', lo):
+            return True
+        if lo.startswith('интернет-магазин') and len(line) < 90:
+            return True
+        if line.startswith('http://') or line.startswith('https://'):
+            return True
+        if re.search(r'^\+\d', line) and re.search(r'\(\d', line):
+            return True
+        if 'info@' in lo:
+            return True
+        if re.search(r'ул\.|минская область|щомыслицк', lo) and len(line) > 35:
+            return True
+        return False
+
+    lines = raw_lines
+    n = len(lines)
+    out = []
+    i = 0
+    while i < n:
+        line = lines[i]
+        if _footer(line):
+            break
+        if _PDF_CART_PRICE_LINE.match(line):
+            i += 1
+            continue
+        if _PDF_CART_ARTICLE_LINE.match(line):
+            i += 1
+            continue
+        lo = line.lower()
+        if lo.startswith('тип цены') or lo.startswith('наличие'):
+            i += 1
+            continue
+
+        name_parts = []
+        start_i = i
+        while i < n:
+            s = lines[i]
+            if _footer(s):
+                return out
+            if _PDF_CART_PRICE_LINE.match(s):
+                break
+            if _PDF_CART_ARTICLE_LINE.match(s):
+                i += 1
+                continue
+            lo2 = s.lower()
+            if lo2.startswith('тип цены') or lo2.startswith('наличие'):
+                i += 1
+                continue
+            name_parts.append(s)
+            i += 1
+
+        if i >= n:
+            break
+        m = _PDF_CART_PRICE_LINE.match(lines[i])
+        if not m or not name_parts:
+            i = start_i + 1
+            continue
+
+        unit_p, qty, tot = m.group(1), m.group(2), m.group(3)
+        i += 1
+        while i < n:
+            lo3 = lines[i].lower()
+            if lo3.startswith('тип цены') or lo3.startswith('наличие'):
+                i += 1
+                continue
+            break
+
+        art = ''
+        if i < n and _PDF_CART_ARTICLE_LINE.match(lines[i]):
+            art = _PDF_CART_ARTICLE_LINE.match(lines[i]).group(1)
+            i += 1
+
+        name = ' '.join(name_parts).strip()
+        if name:
+            out.append(
+                [
+                    name,
+                    unit_p.replace(',', '.'),
+                    qty.replace(',', '.'),
+                    tot.replace(',', '.'),
+                    art,
+                ]
+            )
+    return out
 
 
 def _pdf_row_product_title(raw):
@@ -692,8 +808,12 @@ def api_parse_pdf():
         # Извлекаем текст и таблицы из PDF
         pdf_file = pdfplumber.open(io.BytesIO(file.read()))
 
+        full_text_chunks = []
         all_rows = []
         for page in pdf_file.pages:
+            text = page.extract_text()
+            if text:
+                full_text_chunks.append(text)
             # Пробуем извлечь таблицы
             tables = page.extract_tables()
             if tables:
@@ -703,7 +823,6 @@ def api_parse_pdf():
                             all_rows.append([str(c).strip() if c else '' for c in row])
             else:
                 # Если таблиц нет — извлекаем текст построчно
-                text = page.extract_text()
                 if text:
                     for line in text.split('\n'):
                         line = line.strip()
@@ -713,6 +832,11 @@ def api_parse_pdf():
                             all_rows.append([p.strip() for p in parts if p.strip()])
 
         pdf_file.close()
+
+        full_text = '\n'.join(full_text_chunks)
+        cart_rows = _pdf_parse_cart_ready_format(full_text)
+        if len(cart_rows) >= 1:
+            all_rows = cart_rows
 
         # Получаем каталог пользователя
         catalog_items = fetch_all(
