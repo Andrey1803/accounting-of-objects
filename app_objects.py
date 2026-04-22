@@ -6,6 +6,7 @@ import atexit
 import os
 import logging
 import secrets
+import threading
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_file
 from flask_login import LoginManager, login_required, current_user, logout_user
@@ -1079,7 +1080,21 @@ def _recalc_all_salaries_on_startup():
     except Exception as e:
         print(f"[WARN] Ошибка пересчёта зарплат: {e}")
 
-_recalc_all_salaries_on_startup()
+
+def _start_startup_recalc_if_enabled():
+    """
+    Не блокирует загрузку gunicorn: иначе тяжёлый пересчёт мешал бы healthcheck'у (Railway и др.)
+    и при нескольких workers дублировал бы одну и ту же работу. Отключение: SKIP_STARTUP_RECALC=1.
+    """
+    if os.environ.get("SKIP_STARTUP_RECALC", "").lower() in ("1", "true", "yes"):
+        return
+    t = threading.Thread(
+        target=_recalc_all_salaries_on_startup, name="recalc_salaries", daemon=True
+    )
+    t.start()
+
+
+_start_startup_recalc_if_enabled()
 
 print("Запуск системы учёта...")
 
