@@ -4,6 +4,23 @@
 """
 import atexit
 import os
+import re
+from pathlib import Path
+
+
+def _load_local_dotenv() -> None:
+    """Подхватить `ObjectAccounting/.env` до импорта database (там читается DATABASE_URL)."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    p = Path(__file__).resolve().parent / ".env"
+    if p.is_file():
+        load_dotenv(p)
+
+
+_load_local_dotenv()
+
 import logging
 import secrets
 import threading
@@ -151,6 +168,21 @@ def require_csrf(f):
     return decorated_function
 
 
+def _integration_api_key_matches() -> bool:
+    """Сервис-сервис: Authorization: Bearer … или X-Integration-Key; значение из INTEGRATION_API_KEY."""
+    expected = (os.environ.get('INTEGRATION_API_KEY') or '').strip()
+    if not expected:
+        return False
+    auth = request.headers.get('Authorization', '') or ''
+    if auth.lower().startswith('bearer '):
+        got = auth[7:].strip()
+    else:
+        got = (request.headers.get('X-Integration-Key') or '').strip()
+    if not got:
+        return False
+    return secrets.compare_digest(got, expected)
+
+
 # Статусы объекта: этап работ (не путать «работы сданы» с «оплачено / закрыто»).
 OBJECT_STATUS_WAITING = 'Ожидает старта'
 OBJECT_STATUS_ACTIVE = 'В работе'
@@ -260,6 +292,102 @@ def _object_client_fields_from_payload(user_id, data, existing=None):
         return (name, ex_cli)
 
     return (str(ex_name).strip(), ex_cli)
+
+
+def _normalize_phone_digits(phone):
+    if not phone:
+        return ''
+    return ''.join(c for c in str(phone) if c.isdigit())
+
+
+def _integration_parse_money(value):
+    """Мягкий разбор суммы из строки/числа: '1 234,56' -> 1234.56."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    s = str(value).strip()
+    if not s:
+        return None
+    s = s.replace(' ', '').replace(',', '.')
+    m = re.search(r'-?\d+(?:\.\d+)?', s)
+    if not m:
+        return None
+    try:
+        return float(m.group(0))
+    except (TypeError, ValueError):
+        return None
+
+
+def _integration_client_card_name(contact: str, company: str) -> str:
+    """
+    Имя карточки клиента для интеграции.
+    Приоритет: контакт (ФИО) -> компания -> заглушка.
+    Не склеиваем "ФИО — Компания", чтобы поле `clients.name` оставалось именно именем контакта.
+    """
+    c = (contact or '').strip()
+    co = (company or '').strip()
+    if c:
+        return c
+    if co:
+        return co
+    return '—'
+
+
+def _integration_find_or_create_client(target_user_id, card_name: str, phone: str, address: str):
+    """
+    Карточка в таблице clients: создать или найти по телефону (7+ цифр) / по точному имени карточки.
+    При совпадении дополняем пустые телефон, адрес и имя (если было «—» или пусто).
+    """
+    phone = str(phone or '').strip()
+    address = str(address or '').strip()
+    norm = _normalize_phone_digits(phone)
+    rows = fetch_all('SELECT * FROM clients WHERE user_id = ?', (target_user_id,))
+    if norm and len(norm) >= 7:
+        for r in rows:
+            if _normalize_phone_digits(r.get('phone')) == norm:
+                cid = r['id']
+                ex_name = (r.get('name') or '').strip()
+                ex_phone = (r.get('phone') or '').strip()
+                ex_addr = (r.get('address') or '').strip()
+                # Миграция "на лету": раньше имя могло записываться как "ФИО — Компания".
+                # Если пришёл нормальный контакт и видим старую склейку, заменяем на контакт.
+                should_replace_name = (
+                    not ex_name
+                    or ex_name == '—'
+                    or ('—' in ex_name and card_name and card_name != '—')
+                )
+                new_name = card_name if should_replace_name else ex_name
+                new_phone = phone or ex_phone
+                new_addr = address or ex_addr
+                execute(
+                    'UPDATE clients SET name=?, phone=?, address=? WHERE id=? AND user_id=?',
+                    (new_name, new_phone, new_addr, cid, target_user_id),
+                )
+                return cid, new_name
+    if card_name and card_name != '—':
+        for r in rows:
+            if (r.get('name') or '').strip() == card_name:
+                cid = r['id']
+                ex_phone = (r.get('phone') or '').strip()
+                ex_addr = (r.get('address') or '').strip()
+                new_phone = phone or ex_phone
+                new_addr = address or ex_addr
+                if (phone and phone != ex_phone) or (address and address != ex_addr):
+                    execute(
+                        'UPDATE clients SET phone=?, address=? WHERE id=? AND user_id=?',
+                        (new_phone, new_addr, cid, target_user_id),
+                    )
+                return cid, card_name
+    cid = execute(
+        "INSERT INTO clients (user_id, name, phone, email, address) VALUES (?, ?, ?, '', ?)",
+        (target_user_id, card_name, phone, address),
+        return_id=True,
+    )
+    return cid, card_name
 
 
 # Глобальный обработчик ошибок для API
@@ -450,6 +578,115 @@ def add_object():
          data.get('advance', 0), data.get('salary', 0), data.get('notes'), now, now), return_id=True)
     obj = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (oid, current_user.id))
     return jsonify(obj), 201
+
+
+@app.route('/api/integration/from-taskmgr/object', methods=['POST'])
+def integration_create_object_from_taskmgr():
+    """
+    Создать объект по событию из диспетчера задач (без браузерной сессии).
+    Окружение: INTEGRATION_API_KEY, INTEGRATION_USER_ID — id пользователя в этой БД (владелец данных).
+    Повтор с тем же task_id не создаёт дубликат (поле integration_source).
+    """
+    if not _integration_api_key_matches():
+        return jsonify({'error': 'Unauthorized'}), 401
+    uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
+    if not uid_raw:
+        return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
+    try:
+        target_user_id = int(uid_raw)
+    except ValueError:
+        return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
+    user_row = fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,))
+    if not user_row:
+        return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
+
+    data = request.json or {}
+    task_id = (data.get('task_id') or '').strip()
+    if not task_id:
+        return jsonify({'error': 'task_id is required'}), 400
+    advance_payload = _integration_parse_money(data.get('advance'))
+    source_key = f'taskmgr:{task_id}'
+    existing = fetch_one(
+        'SELECT * FROM objects WHERE user_id = ? AND integration_source = ?',
+        (target_user_id, source_key),
+    )
+    if existing:
+        # Повторный вызов: дополняем клиента и привязку, если в диспетчере уже появились контакты
+        # (первый синк часто без body — объект создался только с названием).
+        contact_in = (data.get('contact_name') or data.get('client') or '').strip()
+        if contact_in in ('—', '-', '–'):
+            contact_in = ''
+        company_in = (data.get('company_name') or '').strip()
+        phone = str(data.get('customer_phone') or '').strip()
+        address = str(data.get('object_address') or '').strip()
+        has_payload = bool(contact_in or company_in or phone or address or advance_payload is not None)
+        if not has_payload:
+            return jsonify({'ok': True, 'idempotent': True, 'object': existing}), 200
+        card_name = _integration_client_card_name(contact_in, company_in)
+        client_id, client_name = _integration_find_or_create_client(
+            target_user_id, card_name, phone, address
+        )
+        name_new = (data.get('name') or '').strip() or (existing.get('name') or '')
+        advance_new = existing.get('advance', 0) if advance_payload is None else advance_payload
+        execute(
+            'UPDATE objects SET name=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
+            (name_new, client_name, client_id, advance_new, existing['id'], target_user_id),
+        )
+        obj = fetch_one('SELECT * FROM objects WHERE id=? AND user_id=?', (existing['id'], target_user_id))
+        return jsonify({'ok': True, 'idempotent': True, 'object': obj, 'synced': True}), 200
+
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'name is required'}), 400
+
+    contact_in = (data.get('contact_name') or data.get('client') or '').strip()
+    if contact_in in ('—', '-', '–'):
+        contact_in = ''
+    company_in = (data.get('company_name') or '').strip()
+    card_name = _integration_client_card_name(contact_in, company_in)
+    phone = str(data.get('customer_phone') or '').strip()
+    address = str(data.get('object_address') or '').strip()
+    client_id, client_name = _integration_find_or_create_client(
+        target_user_id, card_name, phone, address
+    )
+    status_val = data.get('status')
+    if status_val is not None and str(status_val).strip():
+        obj_status = str(status_val).strip()
+    else:
+        obj_status = OBJECT_STATUS_WAITING
+    advance_new = 0 if advance_payload is None else advance_payload
+
+    extra_notes = (data.get('notes') or '').strip()
+    line = f'Задача диспетчера: {task_id}'
+    notes = f'{extra_notes}\n{line}'.strip() if extra_notes else line
+
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    oid = execute(
+        """INSERT INTO objects
+        (user_id, date_start, date_end, name, client, client_id, sum_work, expenses, status, advance, salary, notes, created_at, updated_at, integration_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            target_user_id,
+            data.get('date_start'),
+            data.get('date_end'),
+            name,
+            client_name,
+            client_id,
+            data.get('sum_work', 0),
+            data.get('expenses', 0),
+            obj_status,
+            advance_new,
+            data.get('salary', 0),
+            notes,
+            now,
+            now,
+            source_key,
+        ),
+        return_id=True,
+    )
+    obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
+    return jsonify({'ok': True, 'idempotent': False, 'object': obj}), 201
+
 
 @app.route('/api/objects/<int:obj_id>', methods=['PUT'])
 @login_required
