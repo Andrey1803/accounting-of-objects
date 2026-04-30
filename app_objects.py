@@ -666,12 +666,15 @@ def integration_create_object_from_taskmgr():
             phone = str(data.get('customer_phone') or '').strip()
             address = str(data.get('object_address') or '').strip()
             has_payload = bool(contact_in or company_in or phone or address or advance_payload is not None)
-            if not has_payload:
-                return jsonify({'ok': True, 'idempotent': True, 'object': existing}), 200
             card_name = _integration_client_card_name(contact_in, company_in)
             client_id, client_name = _integration_find_or_create_client(
                 target_user_id, card_name, phone, address
             )
+            ex_client = (existing.get('client') or '').strip()
+            ex_client_id = existing.get('client_id')
+            mismatch = (ex_client_id != client_id) or (ex_client != (client_name or '').strip())
+            if not has_payload and not mismatch:
+                return jsonify({'ok': True, 'idempotent': True, 'object': existing}), 200
             name_new = (data.get('name') or '').strip() or (existing.get('name') or '')
             advance_new = existing.get('advance', 0) if advance_payload is None else advance_payload
             execute(
