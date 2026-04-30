@@ -137,6 +137,7 @@ def _ensure_db_before_request():
         init_db()
         _db_init_state["ready"] = True
         _start_startup_recalc_if_enabled()
+        _log_integration_env_once()
 
 
 atexit.register(close_all_connections)
@@ -181,6 +182,35 @@ def _integration_api_key_matches() -> bool:
     if not got:
         return False
     return secrets.compare_digest(got, expected)
+
+
+def _log_integration_env_once():
+    """
+    Подсказка в логах Railway без «скриншотов»: частая причина 503 — не задан INTEGRATION_USER_ID.
+    Вызывается один раз после инициализации БД.
+    """
+    if getattr(app, "_integration_env_logged", False):
+        return
+    app._integration_env_logged = True
+    key_set = bool((os.environ.get("INTEGRATION_API_KEY") or "").strip())
+    uid_raw = (os.environ.get("INTEGRATION_USER_ID") or "").strip()
+    if not key_set:
+        logging.warning("integration: INTEGRATION_API_KEY is not set — POST /api/integration/from-taskmgr/object will return 401")
+        return
+    if not uid_raw:
+        logging.warning(
+            "integration: INTEGRATION_USER_ID is not set — POST /api/integration/from-taskmgr/object will return 503 "
+            "(укажите числовой id пользователя из таблицы users этой БД, владельца создаваемых объектов)"
+        )
+        return
+    try:
+        uid = int(uid_raw)
+    except ValueError:
+        logging.warning("integration: INTEGRATION_USER_ID must be an integer — got %r", uid_raw)
+        return
+    row = fetch_one("SELECT id FROM users WHERE id = ?", (uid,))
+    if not row:
+        logging.warning("integration: user id=%s from INTEGRATION_USER_ID not found in users table", uid)
 
 
 # Статусы объекта: этап работ (не путать «работы сданы» с «оплачено / закрыто»).
@@ -587,105 +617,114 @@ def integration_create_object_from_taskmgr():
     Окружение: INTEGRATION_API_KEY, INTEGRATION_USER_ID — id пользователя в этой БД (владелец данных).
     Повтор с тем же task_id не создаёт дубликат (поле integration_source).
     """
-    if not _integration_api_key_matches():
-        return jsonify({'error': 'Unauthorized'}), 401
-    uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
-    if not uid_raw:
-        return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
     try:
-        target_user_id = int(uid_raw)
-    except ValueError:
-        return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
-    user_row = fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,))
-    if not user_row:
-        return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
+        if not _integration_api_key_matches():
+            return jsonify({'error': 'Unauthorized'}), 401
+        uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
+        if not uid_raw:
+            logging.warning("integration: rejected request — INTEGRATION_USER_ID is not configured")
+            return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
+        try:
+            target_user_id = int(uid_raw)
+        except ValueError:
+            logging.warning("integration: rejected request — INTEGRATION_USER_ID must be an integer (got %r)", uid_raw)
+            return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
+        user_row = fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,))
+        if not user_row:
+            logging.warning(
+                "integration: rejected request — user id=%s from INTEGRATION_USER_ID not found", target_user_id
+            )
+            return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
 
-    data = request.json or {}
-    task_id = (data.get('task_id') or '').strip()
-    if not task_id:
-        return jsonify({'error': 'task_id is required'}), 400
-    advance_payload = _integration_parse_money(data.get('advance'))
-    source_key = f'taskmgr:{task_id}'
-    existing = fetch_one(
-        'SELECT * FROM objects WHERE user_id = ? AND integration_source = ?',
-        (target_user_id, source_key),
-    )
-    if existing:
-        # Повторный вызов: дополняем клиента и привязку, если в диспетчере уже появились контакты
-        # (первый синк часто без body — объект создался только с названием).
+        data = request.json or {}
+        task_id = (data.get('task_id') or '').strip()
+        if not task_id:
+            return jsonify({'error': 'task_id is required'}), 400
+        advance_payload = _integration_parse_money(data.get('advance'))
+        source_key = f'taskmgr:{task_id}'
+        existing = fetch_one(
+            'SELECT * FROM objects WHERE user_id = ? AND integration_source = ?',
+            (target_user_id, source_key),
+        )
+        if existing:
+            # Повторный вызов: дополняем клиента и привязку, если в диспетчере уже появились контакты
+            # (первый синк часто без body — объект создался только с названием).
+            contact_in = (data.get('contact_name') or data.get('client') or '').strip()
+            if contact_in in ('—', '-', '–'):
+                contact_in = ''
+            company_in = (data.get('company_name') or '').strip()
+            phone = str(data.get('customer_phone') or '').strip()
+            address = str(data.get('object_address') or '').strip()
+            has_payload = bool(contact_in or company_in or phone or address or advance_payload is not None)
+            if not has_payload:
+                return jsonify({'ok': True, 'idempotent': True, 'object': existing}), 200
+            card_name = _integration_client_card_name(contact_in, company_in)
+            client_id, client_name = _integration_find_or_create_client(
+                target_user_id, card_name, phone, address
+            )
+            name_new = (data.get('name') or '').strip() or (existing.get('name') or '')
+            advance_new = existing.get('advance', 0) if advance_payload is None else advance_payload
+            execute(
+                'UPDATE objects SET name=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
+                (name_new, client_name, client_id, advance_new, existing['id'], target_user_id),
+            )
+            obj = fetch_one('SELECT * FROM objects WHERE id=? AND user_id=?', (existing['id'], target_user_id))
+            return jsonify({'ok': True, 'idempotent': True, 'object': obj, 'synced': True}), 200
+
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'name is required'}), 400
+
         contact_in = (data.get('contact_name') or data.get('client') or '').strip()
         if contact_in in ('—', '-', '–'):
             contact_in = ''
         company_in = (data.get('company_name') or '').strip()
+        card_name = _integration_client_card_name(contact_in, company_in)
         phone = str(data.get('customer_phone') or '').strip()
         address = str(data.get('object_address') or '').strip()
-        has_payload = bool(contact_in or company_in or phone or address or advance_payload is not None)
-        if not has_payload:
-            return jsonify({'ok': True, 'idempotent': True, 'object': existing}), 200
-        card_name = _integration_client_card_name(contact_in, company_in)
         client_id, client_name = _integration_find_or_create_client(
             target_user_id, card_name, phone, address
         )
-        name_new = (data.get('name') or '').strip() or (existing.get('name') or '')
-        advance_new = existing.get('advance', 0) if advance_payload is None else advance_payload
-        execute(
-            'UPDATE objects SET name=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
-            (name_new, client_name, client_id, advance_new, existing['id'], target_user_id),
+        status_val = data.get('status')
+        if status_val is not None and str(status_val).strip():
+            obj_status = str(status_val).strip()
+        else:
+            obj_status = OBJECT_STATUS_WAITING
+        advance_new = 0 if advance_payload is None else advance_payload
+
+        extra_notes = (data.get('notes') or '').strip()
+        line = f'Задача диспетчера: {task_id}'
+        notes = f'{extra_notes}\n{line}'.strip() if extra_notes else line
+
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        oid = execute(
+            """INSERT INTO objects
+            (user_id, date_start, date_end, name, client, client_id, sum_work, expenses, status, advance, salary, notes, created_at, updated_at, integration_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                target_user_id,
+                data.get('date_start'),
+                data.get('date_end'),
+                name,
+                client_name,
+                client_id,
+                data.get('sum_work', 0),
+                data.get('expenses', 0),
+                obj_status,
+                advance_new,
+                data.get('salary', 0),
+                notes,
+                now,
+                now,
+                source_key,
+            ),
+            return_id=True,
         )
-        obj = fetch_one('SELECT * FROM objects WHERE id=? AND user_id=?', (existing['id'], target_user_id))
-        return jsonify({'ok': True, 'idempotent': True, 'object': obj, 'synced': True}), 200
-
-    name = (data.get('name') or '').strip()
-    if not name:
-        return jsonify({'error': 'name is required'}), 400
-
-    contact_in = (data.get('contact_name') or data.get('client') or '').strip()
-    if contact_in in ('—', '-', '–'):
-        contact_in = ''
-    company_in = (data.get('company_name') or '').strip()
-    card_name = _integration_client_card_name(contact_in, company_in)
-    phone = str(data.get('customer_phone') or '').strip()
-    address = str(data.get('object_address') or '').strip()
-    client_id, client_name = _integration_find_or_create_client(
-        target_user_id, card_name, phone, address
-    )
-    status_val = data.get('status')
-    if status_val is not None and str(status_val).strip():
-        obj_status = str(status_val).strip()
-    else:
-        obj_status = OBJECT_STATUS_WAITING
-    advance_new = 0 if advance_payload is None else advance_payload
-
-    extra_notes = (data.get('notes') or '').strip()
-    line = f'Задача диспетчера: {task_id}'
-    notes = f'{extra_notes}\n{line}'.strip() if extra_notes else line
-
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    oid = execute(
-        """INSERT INTO objects
-        (user_id, date_start, date_end, name, client, client_id, sum_work, expenses, status, advance, salary, notes, created_at, updated_at, integration_source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            target_user_id,
-            data.get('date_start'),
-            data.get('date_end'),
-            name,
-            client_name,
-            client_id,
-            data.get('sum_work', 0),
-            data.get('expenses', 0),
-            obj_status,
-            advance_new,
-            data.get('salary', 0),
-            notes,
-            now,
-            now,
-            source_key,
-        ),
-        return_id=True,
-    )
-    obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
-    return jsonify({'ok': True, 'idempotent': False, 'object': obj}), 201
+        obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
+        return jsonify({'ok': True, 'idempotent': False, 'object': obj}), 201
+    except Exception as exc:
+        logging.exception("integration: unhandled error in /api/integration/from-taskmgr/object")
+        return jsonify({'error': 'Internal error', 'detail': str(exc)}), 500
 
 
 @app.route('/api/objects/<int:obj_id>', methods=['PUT'])
