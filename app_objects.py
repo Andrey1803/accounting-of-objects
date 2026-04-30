@@ -383,6 +383,16 @@ def _integration_find_or_create_client(target_user_id, card_name: str, phone: st
                 ex_name = (r.get('name') or '').strip()
                 ex_phone = (r.get('phone') or '').strip()
                 ex_addr = (r.get('address') or '').strip()
+                # Телефон совпал, но имя другое: не переиспользуем чужую карточку автоматически.
+                # Иначе объект из новой задачи «прилипает» к старому клиенту с тем же номером.
+                if card_name and card_name != '—' and ex_name and ex_name != card_name:
+                    logging.warning(
+                        "integration: phone match but name differs — skip reuse (client_id=%s, db_name=%r, incoming=%r)",
+                        cid,
+                        ex_name,
+                        card_name,
+                    )
+                    continue
                 # Миграция "на лету": раньше имя могло записываться как "ФИО — Компания".
                 # Если пришёл нормальный контакт и видим старую склейку, заменяем на контакт.
                 should_replace_name = (
