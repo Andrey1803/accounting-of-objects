@@ -1,4 +1,4 @@
-const CACHE_NAME = 'accounting-v7';
+const CACHE_NAME = 'accounting-v8';
 const OFFLINE_URL = '/offline';
 
 /** Повтор при обрыве сети (холодный старт хостинга, мобильный интернет). */
@@ -53,7 +53,7 @@ self.addEventListener('fetch', function(event) {
   if (!event.request.url.startsWith('http://') && !event.request.url.startsWith('https://')) {
     return;
   }
-  // API запросы — только сеть (POST/PUT/DELETE не кэшируются)
+  // API — только сеть, без Cache Storage: иначе при обрыве отдавались устаревшие JSON (неверные суммы / списки).
   if (event.request.url.includes('/api/')) {
     // Каталог материалов/работ — без кэша, чтобы цены (розница/опт) всегда с сервера
     if (/\/estimate\/api\/catalog\//.test(event.request.url) && event.request.method === 'GET') {
@@ -61,28 +61,13 @@ self.addEventListener('fetch', function(event) {
       return;
     }
     event.respondWith(
-      fetch(event.request).then(function(response) {
-        // Кэшируем только успешные GET ответы
-        if (event.request.method === 'GET' && response.ok) {
-          var clone = response.clone();
-          caches.open(CACHE_NAME).then(function(cache) {
-            cache.put(event.request, clone);
-          });
-        }
-        return response;
-      }).catch(function() {
-        // При ошибке сети — пробуем кэш (только GET)
+      fetch(event.request).catch(function() {
         if (event.request.method === 'GET') {
-          return caches.match(event.request).then(function(cached) {
-            if (cached) return cached;
-            // Кэша нет — возвращаем Response с ошибкой
-            return new Response(JSON.stringify({ error: 'Нет соединения с сервером' }), {
-              status: 503,
-              headers: { 'Content-Type': 'application/json' }
-            });
+          return new Response(JSON.stringify({ error: 'Нет соединения с сервером' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
           });
         }
-        // POST/PUT/DELETE — всегда ошибка сети, кэша нет
         return new Response(JSON.stringify({ error: 'Нет соединения с сервером' }), {
           status: 503,
           headers: { 'Content-Type': 'application/json' }
@@ -92,12 +77,18 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  // HTML — ВСЕГДА сеть (не кэшируем страницы!)
+  // HTML / навигация — сеть (страницы не кэшируем). mode=navigate — на случай нестандартного Accept.
   var accept = event.request.headers.get('Accept') || '';
-  if (accept.includes('text/html')) {
+  if (event.request.mode === 'navigate' || accept.includes('text/html')) {
     event.respondWith(
       fetchWithRetry(event.request).catch(function() {
-        return caches.match('/offline');
+        return caches.match(OFFLINE_URL).then(function(cached) {
+          if (cached) return cached;
+          return new Response(
+            '<!DOCTYPE html><meta charset="utf-8"><title>Нет сети</title><p>Нет соединения с сервером.</p>',
+            { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+          );
+        });
       })
     );
     return;
@@ -117,7 +108,11 @@ self.addEventListener('fetch', function(event) {
         return response;
       });
     }).catch(function() {
-      return new Response('', { status: 503, statusText: 'Network Unavailable' });
+      return new Response('/* offline */', {
+        status: 503,
+        statusText: 'Network Unavailable',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      });
     })
   );
 });
