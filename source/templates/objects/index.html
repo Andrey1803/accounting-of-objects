@@ -12,7 +12,7 @@
     <link rel="manifest" href="/static/manifest.json">
     <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
     <title>Учёт объектов</title>
-    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/base.css?v=2">
     <link rel="stylesheet" href="/static/css/components.css?v=1">
     <style>
         /* Page-specific styles */
@@ -89,7 +89,7 @@
             white-space: nowrap;
             position: sticky;
             top: 0;
-            z-index: 10;
+            z-index: 6;
         }
         td {
             padding: var(--pad-sm);
@@ -177,6 +177,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; width:100%; margin-bottom:8px;">
             <h1 style="margin:0;">Учёт объектов</h1>
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                {% include 'partials/dispatcher_switch.html' %}
                 <div class="user-menu-container" style="position:relative;">
                     <span style="font-size:13px; font-weight:600; color:white; white-space:nowrap;">👤 {{ current_user.username }}</span>
                     <button class="user-menu-btn" onclick="toggleUserMenu()" title="Меню">☰</button>
@@ -240,7 +241,7 @@
             </select>
             <select id="filter-client" autocomplete="off"><option value="">Все клиенты</option></select>
         </div>
-        <div class="table-wrapper">
+        <div class="table-wrapper table-pan-viewport" title="Прокрутка колёсиком / тачем; мышью — зажмите и тяните по таблице">
             <table>
                 <thead>
                     <tr>
@@ -430,6 +431,7 @@
 
     <script src="/static/js/utils.js?v=5"></script>
     <script src="/static/js/offline.js?v=3"></script>
+    <script src="/static/js/table-pan.js?v=1"></script>
     <script>
         let objects = [], clients = [], editingId = null, currentObjectId = null;
         let currentPage = 1;

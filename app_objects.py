@@ -82,6 +82,27 @@ def inject_service_worker_flag():
         in ('1', 'true', 'yes')
     }
 
+
+def _normalize_public_app_url(raw: str) -> str:
+    """Базовый URL внешнего веб-приложения: допускаем ввод без схемы (подставляем https)."""
+    v = (raw or '').strip().rstrip('/')
+    if not v:
+        return ''
+    if not re.match(r'^[a-zA-Z][a-zA-Z\d+\-.]*://', v):
+        v = 'https://' + v
+    return v
+
+
+@app.context_processor
+def inject_dispatcher_tasks_url():
+    """Ссылка в шапке на веб «Диспетчер задач» (переключение между программами)."""
+    raw = (
+        os.environ.get('DISPATCHER_TASKS_URL')
+        or os.environ.get('DISPATCHER_APP_URL')
+        or ''
+    )
+    return {'dispatcher_tasks_url': _normalize_public_app_url(raw)}
+
 # Отключаем кэширование статических файлов Flask
 try:
     app.send_file_max_age_default = 0

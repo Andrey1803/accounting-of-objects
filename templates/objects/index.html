@@ -177,6 +177,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; width:100%; margin-bottom:8px;">
             <h1 style="margin:0;">Учёт объектов</h1>
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                {% include 'partials/dispatcher_switch.html' %}
                 <div class="user-menu-container" style="position:relative;">
                     <span style="font-size:13px; font-weight:600; color:white; white-space:nowrap;">👤 {{ current_user.username }}</span>
                     <button class="user-menu-btn" onclick="toggleUserMenu()" title="Меню">☰</button>

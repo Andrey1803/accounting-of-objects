@@ -23,7 +23,10 @@
 <body>
     <div class="header">
         <h1>📊 Статистика</h1>
-        <a href="/" class="btn btn-back">← На главную</a>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+            {% include 'partials/dispatcher_switch.html' %}
+            <a href="/" class="btn btn-back">← На главную</a>
+        </div>
     </div>
     <div id="loading" class="loading">Загрузка...</div>
     <div id="content" style="display:none;">

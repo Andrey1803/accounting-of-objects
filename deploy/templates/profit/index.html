@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <title>Прибыль по клиентам</title>
-    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/base.css?v=2">
     <link rel="stylesheet" href="/static/css/components.css?v=1">
     <style>
         /* Page-specific styles */
@@ -22,6 +22,7 @@
         <h1>📈 Прибыль по клиентам</h1>
         <p class="subtitle" style="margin:0.35rem 0 0;font-size:0.9rem;opacity:0.9;">Выручка: max(работы в карточке, по смете) + материалы по смете (розница). Затраты: закуп материалов по смете + прочие (поле «Затраты» минус дубль розницы сметы, если оно совпадает). Прибыль = выручка − эти затраты − зарплата.</p>
         <div class="header-actions">
+            {% include 'partials/dispatcher_switch.html' %}
             <a href="/" class="btn btn-secondary">← Объекты</a>
             <a href="/stats" class="btn btn-secondary">📊 Статистика</a>
         </div>
@@ -33,7 +34,7 @@
             <div class="card"><div class="val" id="s-profit">0</div><div class="lbl">Общая прибыль</div></div>
             <div class="card"><div class="val" id="s-margin">0%</div><div class="lbl">Средняя маржа</div></div>
         </div>
-        <div class="table-wrapper">
+        <div class="table-wrapper table-pan-viewport" title="Прокрутка и перетаскивание мышью по таблице">
             <table>
                 <thead><tr><th>№</th><th>Клиент</th><th>Объектов</th><th>Выручка</th><th>Затраты</th><th>Зарплата</th><th>Прибыль</th><th>Маржа</th><th>Долг</th></tr></thead>
                 <tbody id="tbl"></tbody>
@@ -106,5 +107,6 @@
         }
         load();
     </script>
+    <script src="/static/js/table-pan.js?v=1"></script>
 </body>
 </html>

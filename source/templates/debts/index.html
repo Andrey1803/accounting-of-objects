@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <title>Долги клиентов</title>
-    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/base.css?v=2">
     <link rel="stylesheet" href="/static/css/components.css?v=1">
     <style>
         /* Page-specific styles */
@@ -22,6 +22,7 @@
     <div class="header">
         <h1>💰 ДОЛГИ КЛИЕНТОВ</h1>
         <div class="header-actions">
+            {% include 'partials/dispatcher_switch.html' %}
             <a href="/" class="btn btn-secondary">Объекты</a>
             <a href="/stats" class="btn btn-secondary">Статистика</a>
         </div>
@@ -31,7 +32,7 @@
             <div class="label">Общая сумма долгов:</div>
             <div class="amount" id="total-debt">0.00 BYN</div>
         </div>
-        <div class="table-wrapper">
+        <div class="table-wrapper table-pan-viewport" title="Прокрутка и перетаскивание мышью по таблице">
             <table>
                 <thead><tr><th>№</th><th>Клиент</th><th>Объекты</th><th>Выручка</th><th>Оплачено</th><th>Долг</th><th>% оплаты</th></tr></thead>
                 <tbody id="table-body"></tbody>
@@ -92,5 +93,6 @@
         }
         loadData();
     </script>
+    <script src="/static/js/table-pan.js?v=1"></script>
 </body>
 </html>

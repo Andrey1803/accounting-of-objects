@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Управление пользователями</title>
-    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/base.css?v=2">
     <link rel="stylesheet" href="/static/css/components.css?v=1">
     <style>
         /* Page-specific styles — all covered by base.css and components.css */
@@ -14,8 +14,10 @@
     <div class="header">
         <h1>👥 Управление пользователями</h1>
         <div class="header-actions">
+            {% include 'partials/dispatcher_switch.html' %}
             <a href="/" class="btn btn-secondary">На главную</a>
-            <a href="/register" class="btn btn-primary">+ Новый пользователь</a>
+            <a href="/admin/invites" class="btn btn-primary">Приглашения</a>
+            <a href="/register" class="btn btn-secondary" title="Публичная страница регистрации">Страница /register</a>
         </div>
     </div>
     <div class="container">
@@ -24,7 +26,11 @@
         <div class="flash {{ category }}">{{ message }}</div>
         {% endfor %}{% endif %}{% endwith %}
         
+        <p style="color:#666;font-size:14px;margin-bottom:12px">
+            Новых пользователей добавляйте через раздел <strong>Приглашения</strong>: сгенерируйте ключ или ссылку и отправьте приглашённому. Пока в базе нет пользователей, первый может зарегистрироваться без ключа и станет администратором.
+        </p>
         <div class="card">
+            <div class="table-wrapper table-pan-viewport" title="Прокрутка и перетаскивание мышью по таблице">
             <table>
                 <thead><tr><th>№</th><th>Логин</th><th>Роль</th><th>Email</th><th>Создан</th><th></th></tr></thead>
                 <tbody>
@@ -46,7 +52,9 @@
                     {% endfor %}
                 </tbody>
             </table>
+            </div>
         </div>
     </div>
+    <script src="/static/js/table-pan.js?v=1"></script>
 </body>
 </html>

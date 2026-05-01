@@ -74,7 +74,8 @@
 <body>
     <div class="header">
         <h1>Смета <span id="estimate-number"></span></h1>
-        <div style="display:flex; gap:10px;">
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            {% include 'partials/dispatcher_switch.html' %}
             <button class="btn btn-secondary" onclick="window.location.href='/'" title="На главную">🏠</button>
             <button class="btn btn-secondary" onclick="window.location.href='/estimate/'">← Назад</button>
             <button class="btn btn-primary" onclick="saveEstimate()">💾 Сохранить</button>

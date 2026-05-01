@@ -1,0 +1,4 @@
+{# Публичный URL веб-диспетчера; задаётся в окружении DISPATCHER_TASKS_URL (см. .env.example). #}
+{% if dispatcher_tasks_url %}
+<a href="{{ dispatcher_tasks_url }}" class="btn btn-secondary" rel="noopener noreferrer">📋 Диспетчер задач</a>
+{% endif %}

@@ -9,7 +9,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Каталог</title>
-    <link rel="stylesheet" href="/static/css/base.css?v=1">
+    <link rel="stylesheet" href="/static/css/base.css?v=2">
     <link rel="stylesheet" href="/static/css/components.css?v=1">
     <style>
         /* Чередующиеся градиенты карточек */
@@ -54,7 +54,10 @@
 <body>
     <div class="header">
         <h1>Каталог</h1>
-        <a href="/" class="btn btn-back">На главную</a>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+            {% include 'partials/dispatcher_switch.html' %}
+            <a href="/" class="btn btn-back">На главную</a>
+        </div>
     </div>
 
     <div class="container">
@@ -85,7 +88,7 @@
                     <button class="btn btn-add" onclick="openAdd()">+ Добавить</button>
                 </div>
                 <input type="text" class="srch" id="item-srch" placeholder="Поиск по названию, артикулу, бренду...">
-                <div class="tbl-wrap">
+                <div class="tbl-wrap table-pan-viewport" title="Прокрутка и перетаскивание мышью по таблице">
                     <table>
                         <thead><tr>
                             <th>№</th>
@@ -571,5 +574,6 @@
 
         loadData();
     </script>
+    <script src="/static/js/table-pan.js?v=1"></script>
 </body>
 </html>
