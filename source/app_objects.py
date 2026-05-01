@@ -251,9 +251,9 @@ def _compute_object_financials(
 
     Сейчас:
     - Выручка = max(sum_work, работы_по_смете) + розница_материалов_по_смете (em)
-    - Закуп материалов = em - material_profit (суммарная наценка на материалы = material_profit)
-    - Прочие затраты: если expenses >= em и em > 0 — считаем, что expenses включает дубль сметы,
-      прочие = max(0, expenses - em); иначе весь expenses — прочие затраты
+    - Закуп материалов: сумма по смете (purchase_price*qty), иначе em - material_profit
+    - Прочие затраты из objects.expenses: сначала снимаем дубль розницы сметы (если expenses >= em),
+      иначе при известном закупе — дубль закупа (если expenses >= emc); иначе expenses целиком
     - Прибыль = Выручка - закуп_мат - прочие - зарплата
     """
     try:
@@ -270,8 +270,12 @@ def _compute_object_financials(
     total_revenue = work_rev + em
     # Для старых смет material_profit часто пустой; тогда считаем себестоимость из purchase_price*qty.
     mat_cogs = max(0.0, emc) if emc > 0 else max(0.0, em - emp)
+    # Поле objects.expenses часто дублирует смету: либо розницу (em), либо закуп (emc), либо «прочее».
     if em > 0 and raw_exp + 1e-9 >= em:
         other_exp = max(0.0, raw_exp - em)
+    elif emc > 0 and raw_exp + 1e-9 >= emc:
+        # raw_exp < em, но покрывает закуп: иначе mat_cogs уже включает emc, а в other_exp оставался бы полный raw → двойной учёт.
+        other_exp = max(0.0, raw_exp - emc)
     else:
         other_exp = raw_exp
 
