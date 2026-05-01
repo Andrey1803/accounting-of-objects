@@ -184,6 +184,29 @@ def _integration_api_key_matches() -> bool:
     return secrets.compare_digest(got, expected)
 
 
+def _integration_should_reuse_client_card(data: dict | None) -> bool:
+    """
+    Искать существующую карточку clients по телефону/имени или всегда создавать новую для новой задачи.
+
+    По умолчанию переиспользование включено (как раньше). Чтобы две разные задачи с одним телефоном
+    не делили одну карточку клиента: INTEGRATION_REUSE_CLIENT_BY_PHONE=0 или в теле POST
+    передать \"dedupe_client\": false (только при первом создании объекта; повторные вызовы
+    с тем же task_id по-прежнему обновляют уже привязанного клиента).
+    """
+    data = data or {}
+    if 'dedupe_client' in data:
+        v = data.get('dedupe_client')
+        if isinstance(v, bool):
+            return v
+        s = str(v).strip().lower()
+        if s in ('0', 'false', 'no', 'off', ''):
+            return False
+        if s in ('1', 'true', 'yes', 'on'):
+            return True
+    raw = (os.environ.get('INTEGRATION_REUSE_CLIENT_BY_PHONE') or '1').strip().lower()
+    return raw not in ('0', 'false', 'no', 'off')
+
+
 def _log_integration_env_once():
     """
     Подсказка в логах Railway без «скриншотов»: частая причина 503 — не задан INTEGRATION_USER_ID.
@@ -380,13 +403,25 @@ def _integration_client_card_name(contact: str, company: str) -> str:
     return '—'
 
 
-def _integration_find_or_create_client(target_user_id, card_name: str, phone: str, address: str):
+def _integration_find_or_create_client(
+    target_user_id, card_name: str, phone: str, address: str, *, reuse_existing: bool = True
+):
     """
     Карточка в таблице clients: создать или найти по телефону (7+ цифр) / по точному имени карточки.
     При совпадении дополняем пустые телефон, адрес и имя (если было «—» или пусто).
+
+    Если reuse_existing=False — сразу новая строка clients (отдельная карточка на каждую задачу
+    диспетчера при том же заказчике).
     """
     phone = str(phone or '').strip()
     address = str(address or '').strip()
+    if not reuse_existing:
+        cid = execute(
+            "INSERT INTO clients (user_id, name, phone, email, address) VALUES (?, ?, ?, '', ?)",
+            (target_user_id, card_name, phone, address),
+            return_id=True,
+        )
+        return cid, card_name
     norm = _normalize_phone_digits(phone)
     rows = fetch_all('SELECT * FROM clients WHERE user_id = ?', (target_user_id,))
     if norm and len(norm) >= 7:
@@ -639,6 +674,9 @@ def integration_create_object_from_taskmgr():
     Создать объект по событию из диспетчера задач (без браузерной сессии).
     Окружение: INTEGRATION_API_KEY, INTEGRATION_USER_ID — id пользователя в этой БД (владелец данных).
     Повтор с тем же task_id не создаёт дубликат (поле integration_source).
+
+    Разные задачи — разные объекты учёта (ключ task_id). Один заказчик может иметь общую карточку
+    clients или отдельные: см. INTEGRATION_REUSE_CLIENT_BY_PHONE и поле dedupe_client в JSON.
     """
     try:
         if not _integration_api_key_matches():
@@ -663,6 +701,7 @@ def integration_create_object_from_taskmgr():
         task_id = (data.get('task_id') or '').strip()
         if not task_id:
             return jsonify({'error': 'task_id is required'}), 400
+        reuse_client_card = _integration_should_reuse_client_card(data)
         advance_payload = _integration_parse_money(data.get('advance'))
         source_key = f'taskmgr:{task_id}'
         existing = fetch_one(
@@ -681,7 +720,7 @@ def integration_create_object_from_taskmgr():
             has_payload = bool(contact_in or company_in or phone or address or advance_payload is not None)
             card_name = _integration_client_card_name(contact_in, company_in)
             client_id, client_name = _integration_find_or_create_client(
-                target_user_id, card_name, phone, address
+                target_user_id, card_name, phone, address, reuse_existing=True
             )
             ex_client = (existing.get('client') or '').strip()
             ex_client_id = existing.get('client_id')
@@ -709,7 +748,7 @@ def integration_create_object_from_taskmgr():
         phone = str(data.get('customer_phone') or '').strip()
         address = str(data.get('object_address') or '').strip()
         client_id, client_name = _integration_find_or_create_client(
-            target_user_id, card_name, phone, address
+            target_user_id, card_name, phone, address, reuse_existing=reuse_client_card
         )
         status_val = data.get('status')
         if status_val is not None and str(status_val).strip():
