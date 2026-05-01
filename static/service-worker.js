@@ -1,4 +1,4 @@
-const CACHE_NAME = 'accounting-v8';
+const CACHE_NAME = 'accounting-v9';
 const OFFLINE_URL = '/offline';
 
 /** Повтор при обрыве сети (холодный старт хостинга, мобильный интернет). */
@@ -6,10 +6,10 @@ function sleep(ms) {
   return new Promise(function(resolve) { setTimeout(resolve, ms); });
 }
 function fetchWithRetry(request, attemptsLeft) {
-  attemptsLeft = attemptsLeft || 3;
+  attemptsLeft = attemptsLeft || 5;
   return fetch(request).catch(function() {
     if (attemptsLeft <= 1) return Promise.reject(new Error('network'));
-    return sleep(700).then(function() {
+    return sleep(900).then(function() {
       return fetchWithRetry(request, attemptsLeft - 1);
     });
   });
@@ -47,7 +47,7 @@ self.addEventListener('activate', function(event) {
   self.clients.claim();
 });
 
-// Запрос — сначала кэш, потом сеть
+// Запросы: API без кэша; навигация — сеть; статика — сеть с запасным кэшем.
 self.addEventListener('fetch', function(event) {
   // Пропускаем запросы расширений браузера и внутренние
   if (!event.request.url.startsWith('http://') && !event.request.url.startsWith('https://')) {
@@ -57,36 +57,37 @@ self.addEventListener('fetch', function(event) {
   if (event.request.url.includes('/api/')) {
     // Каталог материалов/работ — без кэша, чтобы цены (розница/опт) всегда с сервера
     if (/\/estimate\/api\/catalog\//.test(event.request.url) && event.request.method === 'GET') {
-      event.respondWith(fetch(event.request));
+      event.respondWith(fetchWithRetry(event.request));
       return;
     }
     event.respondWith(
-      fetch(event.request).catch(function() {
-        if (event.request.method === 'GET') {
+      (event.request.method === 'GET' ? fetchWithRetry(event.request) : fetch(event.request)).catch(
+        function() {
+          if (event.request.method === 'GET') {
+            return new Response(JSON.stringify({ error: 'Нет соединения с сервером' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
           return new Response(JSON.stringify({ error: 'Нет соединения с сервером' }), {
             status: 503,
             headers: { 'Content-Type': 'application/json' }
           });
         }
-        return new Response(JSON.stringify({ error: 'Нет соединения с сервером' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      })
+      )
     );
     return;
   }
 
-  // HTML / навигация — сеть (страницы не кэшируем). mode=navigate — на случай нестандартного Accept.
-  var accept = event.request.headers.get('Accept') || '';
-  if (event.request.mode === 'navigate' || accept.includes('text/html')) {
+  // Только реальная навигация вкладки (не XHR с Accept: text/html — иначе уходило в «статику» и 503).
+  if (event.request.mode === 'navigate') {
     event.respondWith(
       fetchWithRetry(event.request).catch(function() {
         return caches.match(OFFLINE_URL).then(function(cached) {
           if (cached) return cached;
           return new Response(
-            '<!DOCTYPE html><meta charset="utf-8"><title>Нет сети</title><p>Нет соединения с сервером.</p>',
-            { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+            '<!DOCTYPE html><meta charset="utf-8"><title>Нет сети</title><p>Нет соединения с сервером. Обновите страницу.</p>',
+            { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
           );
         });
       })
@@ -94,24 +95,23 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  // Статика — сначала кэш, потом сеть (с повторами: иначе браузер показывал «408 Offline»)
+  // Статика — сначала сеть, потом кэш (холодный старт Railway: кэш-first давал пустой кэш и 503).
   event.respondWith(
-    caches.match(event.request).then(function(cached) {
-      if (cached) return cached;
-      return fetchWithRetry(event.request).then(function(response) {
-        if (response.ok && event.request.method === 'GET') {
-          var clone = response.clone();
-          caches.open(CACHE_NAME).then(function(cache) {
-            cache.put(event.request, clone);
-          });
-        }
-        return response;
-      });
+    fetchWithRetry(event.request).then(function(response) {
+      if (response.ok && event.request.method === 'GET') {
+        var clone = response.clone();
+        caches.open(CACHE_NAME).then(function(cache) {
+          cache.put(event.request, clone);
+        });
+      }
+      return response;
     }).catch(function() {
-      return new Response('/* offline */', {
-        status: 503,
-        statusText: 'Network Unavailable',
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      return caches.match(event.request).then(function(cached) {
+        if (cached) return cached;
+        return new Response('/* offline */', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        });
       });
     })
   );
