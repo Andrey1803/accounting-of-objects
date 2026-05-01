@@ -128,7 +128,7 @@ def _patched_send_static_file(self, filename):
 Flask.send_static_file = _patched_send_static_file
 
 # БД: не вызывать init_db() при импорте (иначе сбой psycopg2 убивает воркер — Railway healthcheck = «unavailable»).
-# В проде gunicorn вызывает ensure_db_initialized() в post_worker_init до приёма соединений; иначе — первый запрос (кроме /health).
+# Первый запрос (кроме /health и статики) вызывает ensure_db_initialized(). Опционально в gunicorn: EAGER_DB_INIT=1.
 _db_init_state = {"ready": False}
 _db_init_lock = threading.Lock()
 
