@@ -73,6 +73,15 @@ def inject_register_enabled():
     off = os.environ.get('DISABLE_REGISTER', '').lower() in ('1', 'true', 'yes')
     return {'register_enabled': not off}
 
+
+@app.context_processor
+def inject_service_worker_flag():
+    """DISABLE_SERVICE_WORKER=1 — без регистрации SW (диагностика «503 (index)»)."""
+    return {
+        'service_worker_disabled': os.environ.get('DISABLE_SERVICE_WORKER', '').lower()
+        in ('1', 'true', 'yes')
+    }
+
 # Отключаем кэширование статических файлов Flask
 try:
     app.send_file_max_age_default = 0
@@ -124,13 +133,12 @@ _db_init_state = {"ready": False}
 _db_init_lock = threading.Lock()
 
 
-@app.before_request
-def _ensure_db_before_request():
-    if _db_init_state["ready"]:
-        return
-    p = request.path or ""
-    if p.rstrip("/") == "/health" or p == "/favicon.ico" or p.startswith("/static/"):
-        return
+def ensure_db_initialized():
+    """
+    Идемпотентно поднять схему БД.
+    Вызывается с первого «боевого» запроса (before_request) или из gunicorn post_worker_init
+    до приёма соединений — иначе первый GET / на холодном воркере часто упирался в таймаут прокси (503).
+    """
     with _db_init_lock:
         if _db_init_state["ready"]:
             return
@@ -138,6 +146,16 @@ def _ensure_db_before_request():
         _db_init_state["ready"] = True
         _start_startup_recalc_if_enabled()
         _log_integration_env_once()
+
+
+@app.before_request
+def _ensure_db_before_request():
+    if _db_init_state["ready"]:
+        return
+    p = request.path or ""
+    if p.rstrip("/") == "/health" or p == "/favicon.ico" or p.startswith("/static/"):
+        return
+    ensure_db_initialized()
 
 
 atexit.register(close_all_connections)
