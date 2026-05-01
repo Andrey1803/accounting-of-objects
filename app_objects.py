@@ -275,13 +275,18 @@ _SQL_OBJECTS_ORDER = (
 )
 
 
-def _sql_objects_estimate_aggregates(as_work, as_mat, as_profit):
+def _sql_objects_estimate_aggregates(as_work, as_mat, as_profit, as_mat_cost='estimate_material_cost'):
     """Общий фрагмент SELECT + JOIN для объектов с агрегатами по сметам."""
     return (
         f"SELECT o.*, "
         f"COALESCE(SUM(CASE WHEN ei.section = 'work' THEN ei.total ELSE 0 END), 0) AS {as_work}, "
         f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN ei.total ELSE 0 END), 0) AS {as_mat}, "
-        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN ei.material_profit ELSE 0 END), 0) AS {as_profit} "
+        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN ei.material_profit ELSE 0 END), 0) AS {as_profit}, "
+        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN "
+        f"CASE WHEN COALESCE(ei.purchase_price, 0) > 0 AND COALESCE(ei.quantity, 0) > 0 "
+        f"THEN ei.purchase_price * ei.quantity "
+        f"ELSE MAX(0, COALESCE(ei.total, 0) - COALESCE(ei.material_profit, 0)) END "
+        f"ELSE 0 END), 0) AS {as_mat_cost} "
         "FROM objects o "
         "LEFT JOIN estimates e ON e.object_id = o.id AND e.user_id = o.user_id "
         "AND ("
@@ -311,7 +316,15 @@ def _work_revenue_once(sum_work, estimate_works):
     return max(sw, ew)
 
 
-def _compute_object_financials(sum_work, estimate_works, estimate_materials, estimate_material_profit, expenses, salary):
+def _compute_object_financials(
+    sum_work,
+    estimate_works,
+    estimate_materials,
+    estimate_material_profit,
+    expenses,
+    salary,
+    estimate_material_cost=None,
+):
     """
     Выручка, затраты и прибыль объекта без двойного учёта материалов по смете.
 
@@ -331,14 +344,16 @@ def _compute_object_financials(sum_work, estimate_works, estimate_materials, est
         ew = float(estimate_works or 0)
         em = float(estimate_materials or 0)
         emp = float(estimate_material_profit or 0)
+        emc = float(estimate_material_cost or 0)
         raw_exp = float(expenses or 0)
         sal = float(salary or 0)
     except (TypeError, ValueError):
-        ew = em = emp = raw_exp = sal = 0.0
+        ew = em = emp = emc = raw_exp = sal = 0.0
 
     work_rev = _work_revenue_once(sum_work, ew)
     total_revenue = work_rev + em
-    mat_cogs = max(0.0, em - emp)
+    # Для старых смет material_profit часто пустой; тогда считаем себестоимость из purchase_price*qty.
+    mat_cogs = max(0.0, emc) if emc > 0 else max(0.0, em - emp)
     if em > 0 and raw_exp + 1e-9 >= em:
         other_exp = max(0.0, raw_exp - em)
     else:
@@ -512,7 +527,6 @@ def favicon():
     return '', 204
 
 @app.route('/offline')
-@login_required
 def offline_page():
     return render_template('offline.html')
 
@@ -635,7 +649,7 @@ def get_objects_with_estimates():
         emp = obj.get('estimate_material_profit', 0) or 0
 
         tr, te, tp = _compute_object_financials(
-            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary')
+            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), obj.get('estimate_material_cost')
         )
         obj['total_revenue'] = tr
         obj['total_expenses'] = te
@@ -1303,7 +1317,7 @@ def get_stats():
         em = float(obj.get('estimate_materials', 0) or 0)
         emp = float(obj.get('estimate_material_profit', 0) or 0)
         rev, exp, prof = _compute_object_financials(
-            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary')
+            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), obj.get('estimate_material_cost')
         )
         total_revenue += rev
         total_expenses += exp
@@ -1331,7 +1345,7 @@ def get_stats():
 def get_detailed_stats():
     # ОДИН запрос с LEFT JOIN вместо N+1 (для клиентов)
     objects_with_est = fetch_all(
-        _sql_objects_estimate_aggregates('est_works', 'est_materials', 'est_mat_profit')
+        _sql_objects_estimate_aggregates('est_works', 'est_materials', 'est_mat_profit', 'est_mat_cost')
         + "WHERE o.user_id = ? GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER,
         (current_user.id,),
     )
@@ -1353,9 +1367,10 @@ def get_detailed_stats():
         ew = obj.get('est_works', 0) or 0
         em = obj.get('est_materials', 0) or 0
         emp = obj.get('est_mat_profit', 0) or 0
+        emc = obj.get('est_mat_cost', 0) or 0
 
         rev, exp, prof = _compute_object_financials(
-            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary')
+            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), emc
         )
 
         clients_stat[c]['revenue'] += rev
@@ -1375,9 +1390,10 @@ def get_detailed_stats():
             ew = obj.get('est_works', 0) or 0
             em = obj.get('est_materials', 0) or 0
             emp = obj.get('est_mat_profit', 0) or 0
+            emc = obj.get('est_mat_cost', 0) or 0
 
             rev, exp, prof = _compute_object_financials(
-                obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary')
+                obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), emc
             )
 
             months[m]['revenue'] += rev
@@ -1507,7 +1523,7 @@ def get_report():
         emp = obj.get('estimate_material_profit', 0) or 0
 
         tr, te, tp = _compute_object_financials(
-            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary')
+            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), obj.get('estimate_material_cost')
         )
         obj['total_revenue'] = tr
         obj['total_expenses'] = te
