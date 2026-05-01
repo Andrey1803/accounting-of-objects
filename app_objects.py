@@ -752,9 +752,10 @@ def integration_create_object_from_taskmgr():
             if contact_in in ('—', '-', '–'):
                 contact_in = ''
             company_in = (data.get('company_name') or '').strip()
+            date_start_in = (data.get('date_start') or '').strip()
             phone = str(data.get('customer_phone') or '').strip()
             address = str(data.get('object_address') or '').strip()
-            has_payload = bool(contact_in or company_in or phone or address or advance_payload is not None)
+            has_payload = bool(contact_in or company_in or phone or address or date_start_in or advance_payload is not None)
             card_name = _integration_client_card_name(contact_in, company_in)
             client_id, client_name = _integration_find_or_create_client(
                 target_user_id, card_name, phone, address, reuse_existing=True
@@ -765,10 +766,11 @@ def integration_create_object_from_taskmgr():
             if not has_payload and not mismatch:
                 return jsonify({'ok': True, 'idempotent': True, 'object': existing}), 200
             name_new = (data.get('name') or '').strip() or (existing.get('name') or '')
+            date_start_new = date_start_in or (existing.get('date_start') or None)
             advance_new = existing.get('advance', 0) if advance_payload is None else advance_payload
             execute(
-                'UPDATE objects SET name=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
-                (name_new, client_name, client_id, advance_new, existing['id'], target_user_id),
+                'UPDATE objects SET name=?, date_start=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
+                (name_new, date_start_new, client_name, client_id, advance_new, existing['id'], target_user_id),
             )
             obj = fetch_one('SELECT * FROM objects WHERE id=? AND user_id=?', (existing['id'], target_user_id))
             return jsonify({'ok': True, 'idempotent': True, 'object': obj, 'synced': True}), 200
