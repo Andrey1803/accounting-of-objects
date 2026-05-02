@@ -300,6 +300,14 @@
                     </div>
                     <div class="form-group"><label>Аванс</label><input type="number" id="advance" step="0.01" value="0"></div>
                 </div>
+                <div class="form-group"><label>Расчёт «затрат на рабочих»</label>
+                    <select id="salary-allocation-mode" title="По умолчанию доля всех активных рабочих на все объекты за день. Исключения — если выезжали сами или на объекте не вся бригада.">
+                        <option value="all_workers">Все активные рабочие ÷ объекты за день (как раньше)</option>
+                        <option value="assigned_workers">Только рабочие из списка на этом объекте</option>
+                        <option value="manual">Вручную (поле ниже не пересчитывается)</option>
+                    </select>
+                    <small style="color:#666;display:block;margin-top:4px;font-size:12px;">При «только с объекта» учитываются уникальные ставки тех, кого добавили в «👷 Рабочие». При «вручную» введите сумму сами.</small>
+                </div>
                 <div class="form-group"><label>Затраты на рабочих</label>
                     <div style="display:flex; gap:8px; align-items:center;">
                         <input type="number" id="salary" step="0.01" value="0" style="flex:1;" readonly title="Рассчитывается автоматически">
@@ -372,7 +380,7 @@
             <div id="object-workers-list" style="max-height:300px; overflow-y:auto;"></div>
             
             <div style="text-align:center; margin-top:15px; padding:10px; background:#e3f2fd; border-radius:5px;">
-                <small style="color:#666;">💡 Затраты на рабочих распределяются поровну между всеми объектами за день</small>
+                <small style="color:#666;">💡 В карточке объекта можно выбрать: все рабочие на все объекты за день, только назначенные на этот объект или сумму вручную</small>
             </div>
             
             <div class="modal-actions" style="display:flex; gap:10px; margin-top:15px; justify-content:flex-end;">
@@ -753,6 +761,15 @@
         function formatDate(dateStr) { if (!dateStr) return '-'; const parts = dateStr.split('-'); return `${parts[2]}.${parts[1]}.${parts[0]}`; }
         function formatMoney(val) { return Number(val).toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' BYN'; }
 
+        function syncSalaryAllocationUi() {
+            var sel = document.getElementById('salary-allocation-mode');
+            var sal = document.getElementById('salary');
+            if (!sel || !sal) return;
+            var m = sel.value;
+            sal.readOnly = (m !== 'manual');
+            sal.title = m === 'manual' ? 'Сумма задаётся вручную; автопересчёт отключён' : 'Рассчитывается автоматически (если не режим «вручную»)';
+        }
+
         function openModal(id = null) {
             editingId = id;
             document.getElementById('modal').classList.add('active');
@@ -769,6 +786,8 @@
                 document.getElementById('status').value = obj.status;
                 document.getElementById('advance').value = obj.advance;
                 document.getElementById('salary').value = obj.salary;
+                document.getElementById('salary-allocation-mode').value = obj.salary_allocation_mode || 'all_workers';
+                syncSalaryAllocationUi();
                 document.getElementById('notes').value = obj.notes || '';
 
                 // Автозаполнение из сметы
@@ -784,6 +803,8 @@
             } else {
                 document.getElementById('object-form').reset();
                 document.getElementById('date-start').value = new Date().toISOString().split('T')[0];
+                document.getElementById('salary-allocation-mode').value = 'all_workers';
+                syncSalaryAllocationUi();
                 document.getElementById('salary-info').textContent = '';
                 // Автозаполнение для нового объекта: покажем предполагаемую зарплату
                 showExpectedSalary();
@@ -844,8 +865,40 @@
 
         async function showExpectedSalary() {
             try {
+                var modeEl = document.getElementById('salary-allocation-mode');
+                var mode = modeEl ? modeEl.value : 'all_workers';
+                if (mode === 'manual') {
+                    document.getElementById('salary-info').textContent = 'Ручной режим: введите «Затраты на рабочих» сами и сохраните.';
+                    return;
+                }
                 const dateStart = document.getElementById('date-start').value || new Date().toISOString().split('T')[0];
-                // Загружаем всех активных рабочих
+                const objsRes = await fetch('/api/objects');
+                const allObjects = await objsRes.json();
+                const sameDayObjects = allObjects.filter(o => o.date_start && o.date_start.startsWith(dateStart));
+                const numObjects = Math.max(sameDayObjects.length, 1);
+
+                if (mode === 'assigned_workers') {
+                    if (!editingId) {
+                        document.getElementById('salary-info').textContent = 'Только с объекта: сохраните объект и добавьте рабочих в «👷 Рабочие».';
+                        return;
+                    }
+                    const owRes = await fetch('/api/objects/' + editingId + '/workers');
+                    if (!owRes.ok) return;
+                    const owData = await owRes.json();
+                    const asg = owData.assignments || [];
+                    var byW = {};
+                    asg.forEach(function(a) { byW[a.worker_id] = Number(a.daily_rate) || 0; });
+                    var totalDailyRate = Object.keys(byW).reduce(function(s, k) { return s + byW[k]; }, 0);
+                    if (totalDailyRate <= 0) {
+                        document.getElementById('salary-info').textContent = '⚠️ Нет назначенных рабочих на объект (или ставки 0)';
+                        return;
+                    }
+                    const salaryPerObject = totalDailyRate / numObjects;
+                    document.getElementById('salary-info').textContent =
+                        'Назначенные: Σ ' + totalDailyRate + ' руб/день / ' + numObjects + ' объект(ов) за день ≈ ' + salaryPerObject.toFixed(2) + ' руб';
+                    return;
+                }
+
                 const workersRes = await fetch('/api/workers');
                 if (!workersRes.ok) return;
                 const allWorkers = await workersRes.json();
@@ -854,12 +907,6 @@
                     document.getElementById('salary-info').textContent = '⚠️ Нет активных рабочих';
                     return;
                 }
-                // Считаем сколько объектов началось в этот же день
-                const objsRes = await fetch('/api/objects');
-                const allObjects = await objsRes.json();
-                const sameDayObjects = allObjects.filter(o => o.date_start && o.date_start.startsWith(dateStart));
-                const numObjects = Math.max(sameDayObjects.length, 1);
-                // Формула: (Σ daily_rate) / кол-во объектов за день
                 let totalDailyRate = 0;
                 activeWorkers.forEach(function(w) {
                     totalDailyRate += w.daily_rate;
@@ -914,6 +961,7 @@
                 status: 'Ожидает старта',
                 advance: obj.advance || 0,
                 salary: obj.salary || 0,
+                salary_allocation_mode: obj.salary_allocation_mode || 'all_workers',
                 notes: obj.notes || ''
             };
 
@@ -957,6 +1005,7 @@
                 status: document.getElementById('status').value,
                 advance: parseFloat(document.getElementById('advance').value) || 0,
                 salary: parseFloat(document.getElementById('salary').value) || 0,
+                salary_allocation_mode: document.getElementById('salary-allocation-mode').value,
                 notes: document.getElementById('notes').value
             };
 
@@ -1004,6 +1053,16 @@
                 }
             }
         });
+
+        (function () {
+            var allocMode = document.getElementById('salary-allocation-mode');
+            if (allocMode) {
+                allocMode.addEventListener('change', function () {
+                    syncSalaryAllocationUi();
+                    void showExpectedSalary();
+                });
+            }
+        })();
 
         async function deleteObject(id) {
             if (confirm('Удалить объект?')) {

@@ -400,6 +400,7 @@ def init_db():
                 sum_work REAL DEFAULT 0, expenses REAL DEFAULT 0, status TEXT DEFAULT 'Ожидает старта',
                 advance REAL DEFAULT 0, salary REAL DEFAULT 0, notes TEXT,
                 integration_source TEXT,
+                salary_allocation_mode TEXT DEFAULT 'all_workers',
                 created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW())
             """,
             """
@@ -486,6 +487,7 @@ def init_db():
             "ALTER TABLE estimate_items ADD COLUMN IF NOT EXISTS wholesale_price REAL DEFAULT 0",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS client_id INTEGER",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS integration_source TEXT",
+            "ALTER TABLE objects ADD COLUMN IF NOT EXISTS salary_allocation_mode TEXT DEFAULT 'all_workers'",
         ):
             try:
                 cur.execute(alter)
@@ -516,6 +518,7 @@ def init_db():
                 sum_work REAL DEFAULT 0, expenses REAL DEFAULT 0, status TEXT DEFAULT 'Ожидает старта',
                 advance REAL DEFAULT 0, salary REAL DEFAULT 0, notes TEXT,
                 integration_source TEXT,
+                salary_allocation_mode TEXT DEFAULT 'all_workers',
                 created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '');
 
             CREATE TABLE IF NOT EXISTS clients (
@@ -657,6 +660,15 @@ def init_db():
     try:
         if not IS_POSTGRES:
             conn.execute("ALTER TABLE objects ADD COLUMN integration_source TEXT")
+            conn.commit()
+    except Exception:
+        pass
+
+    try:
+        if not IS_POSTGRES:
+            conn.execute(
+                "ALTER TABLE objects ADD COLUMN salary_allocation_mode TEXT DEFAULT 'all_workers'"
+            )
             conn.commit()
     except Exception:
         pass
