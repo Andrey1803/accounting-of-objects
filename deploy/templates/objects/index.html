@@ -457,16 +457,22 @@
         }
 
         function statusPriorityForSort(st) {
-            if (st === 'Ожидает старта' || st === 'Запланирован') return 0;
-            if (st === 'В работе') return 1;
-            return 2;
+            var s = String(st || '').trim();
+            if (s === 'Ожидает старта' || s === 'Запланирован') return 0;
+            if (s === 'В работе') return 1;
+            if (s === 'Приостановлен') return 2;
+            if (s === 'Выполнен' || s === 'Завершён') return 3;
+            if (s === 'Закрыт' || s === 'Оплачен') return 4;
+            return 99;
         }
 
         function sortObjectsDefaultOrder(arr) {
             arr.sort(function(a, b) {
                 var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
                 if (pa !== pb) return pa - pb;
-                return String(b.date_start || '').localeCompare(String(a.date_start || ''));
+                var ds = String(b.date_start || '').localeCompare(String(a.date_start || ''));
+                if (ds !== 0) return ds;
+                return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
             });
         }
 

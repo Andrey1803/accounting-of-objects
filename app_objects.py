@@ -304,11 +304,25 @@ def _norm_salary_allocation_mode(raw, fallback=SALARY_ALLOCATION_ALL_WORKERS):
 CASHBOOK_KINDS = frozenset({'client_payment', 'expense', 'handover'})
 CASHBOOK_EXPENSE_CATS = frozenset({'lunch', 'fuel', 'repair', 'other'})
 
-# Порядок в списках: сначала ожидает старта и в работе, затем остальные
-_SQL_OBJECTS_ORDER = (
-    f"CASE o.status WHEN '{OBJECT_STATUS_WAITING}' THEN 0 WHEN 'Запланирован' THEN 0 "
-    f"WHEN '{OBJECT_STATUS_ACTIVE}' THEN 1 ELSE 2 END, o.date_start DESC"
-)
+
+def _sql_fragment_order_objects_by_status(prefix: str) -> str:
+    """Фрагмент ORDER BY: статус (этап работ), затем дата начала (новее выше), затем название."""
+    p = f"{prefix}." if prefix else ""
+    return (
+        f"CASE {p}status "
+        f"WHEN '{OBJECT_STATUS_WAITING}' THEN 0 "
+        f"WHEN 'Запланирован' THEN 0 "
+        f"WHEN '{OBJECT_STATUS_ACTIVE}' THEN 1 "
+        f"WHEN 'Приостановлен' THEN 2 "
+        f"WHEN '{OBJECT_STATUS_DONE}' THEN 3 "
+        f"WHEN 'Завершён' THEN 3 "
+        f"WHEN '{OBJECT_STATUS_CLOSED}' THEN 4 "
+        f"WHEN 'Оплачен' THEN 4 "
+        f"ELSE 99 END, {p}date_start DESC, {p}name ASC"
+    )
+
+
+_SQL_OBJECTS_ORDER = _sql_fragment_order_objects_by_status("o")
 
 
 def _sql_objects_estimate_aggregates(as_work, as_mat, as_profit, as_mat_cost='estimate_material_cost'):
@@ -714,11 +728,8 @@ def get_objects_with_estimates():
 @app.route('/api/objects', methods=['GET'])
 @login_required
 def get_objects():
-    objects = fetch_all(
-        "SELECT * FROM objects WHERE user_id = ? ORDER BY CASE status WHEN ? THEN 0 "
-        "WHEN 'Запланирован' THEN 0 WHEN ? THEN 1 ELSE 2 END, date_start DESC",
-        (current_user.id, OBJECT_STATUS_WAITING, OBJECT_STATUS_ACTIVE),
-    )
+    order = _sql_fragment_order_objects_by_status("")
+    objects = fetch_all(f"SELECT * FROM objects WHERE user_id = ? ORDER BY {order}", (current_user.id,))
     return jsonify(objects)
 
 @app.route('/api/objects', methods=['POST'])
