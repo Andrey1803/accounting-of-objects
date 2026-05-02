@@ -330,8 +330,8 @@
         <div class="modal-content" style="width: min(90vw, 500px);">
             <h2>🔑 Смена пароля</h2>
             <form id="password-form" onsubmit="submitPasswordChange(); return false;">
-                <div class="form-group"><label>Текущий пароль</label><input type="password" id="current-pass" placeholder="Введите текущий пароль" required></div>
-                <div class="form-group"><label>Новый пароль</label><input type="password" id="new-pass" placeholder="Введите новый пароль" required minlength="8"></div>
+                <div class="form-group"><label>Текущий пароль</label><input type="password" id="current-pass" placeholder="Введите текущий пароль" required autocomplete="current-password"></div>
+                <div class="form-group"><label>Новый пароль</label><input type="password" id="new-pass" placeholder="Введите новый пароль" required minlength="8" autocomplete="new-password"></div>
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-primary">Сохранить</button>
                     <button type="button" class="btn btn-cancel" onclick="closePasswordModal()">Отмена</button>
@@ -346,7 +346,7 @@
             <h2 style="color:#f44336;">⚠️ Удаление аккаунта</h2>
             <p style="color:#666;margin:10px 0;font-size:14px;">ВНИМАНИЕ: Это действие необратимо. Все данные (объекты, сметы, клиенты) будут удалены.</p>
             <form id="delete-account-form" onsubmit="submitDeleteAccount(); return false;">
-                <div class="form-group"><label>Введите пароль для подтверждения</label><input type="password" id="delete-pass" placeholder="Введите текущий пароль" required></div>
+                <div class="form-group"><label>Введите пароль для подтверждения</label><input type="password" id="delete-pass" placeholder="Введите текущий пароль" required autocomplete="current-password"></div>
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-danger" style="background:#f44336;color:white;">Удалить навсегда</button>
                     <button type="button" class="btn btn-cancel" onclick="closeDeleteAccountModal()">Отмена</button>
@@ -888,14 +888,14 @@
                     const asg = owData.assignments || [];
                     var byW = {};
                     asg.forEach(function(a) { byW[a.worker_id] = Number(a.daily_rate) || 0; });
-                    var totalDailyRate = Object.keys(byW).reduce(function(s, k) { return s + byW[k]; }, 0);
-                    if (totalDailyRate <= 0) {
+                    var assignedRateSum = Object.keys(byW).reduce(function(s, k) { return s + byW[k]; }, 0);
+                    if (assignedRateSum <= 0) {
                         document.getElementById('salary-info').textContent = '⚠️ Нет назначенных рабочих на объект (или ставки 0)';
                         return;
                     }
-                    const salaryPerObject = totalDailyRate / numObjects;
+                    const salaryPerObjectAssigned = assignedRateSum / numObjects;
                     document.getElementById('salary-info').textContent =
-                        'Назначенные: Σ ' + totalDailyRate + ' руб/день / ' + numObjects + ' объект(ов) за день ≈ ' + salaryPerObject.toFixed(2) + ' руб';
+                        'Назначенные: Σ ' + assignedRateSum + ' руб/день / ' + numObjects + ' объект(ов) за день ≈ ' + salaryPerObjectAssigned.toFixed(2) + ' руб';
                     return;
                 }
 
@@ -2113,27 +2113,27 @@
 
             <div style="background:#f5f5f5;border-radius:8px;padding:15px;margin-bottom:15px;">
                 <h4 style="margin:0 0 10px;">⚙️ Настройки</h4>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <form id="priceSyncCredsForm" onsubmit="return false;" autocomplete="on" style="display:flex;gap:10px;flex-wrap:wrap;">
                     <div style="flex:1;min-width:200px;">
                         <label style="font-size:12px;display:block;margin-bottom:3px;">Логин opt-akvabreg.by</label>
-                        <input type="text" id="optLogin" placeholder="Логин" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                        <input type="text" id="optLogin" name="username" placeholder="Логин" autocomplete="username" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
                     </div>
                     <div style="flex:1;min-width:200px;">
                         <label style="font-size:12px;display:block;margin-bottom:3px;">Пароль</label>
-                        <input type="password" id="optPassword" placeholder="Пароль" autocomplete="off" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+                        <input type="password" id="optPassword" name="password" placeholder="Пароль" autocomplete="current-password" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
                         <label style="font-size:11px;margin-top:4px;display:flex;align-items:center;gap:6px;cursor:pointer;">
                             <input type="checkbox" id="optPasswordShow" onchange="toggleOptPasswordVisible()"> Показать пароль в поле
                         </label>
                     </div>
-                </div>
+                </form>
                 <div id="priceSyncCheckpointHint" style="font-size:12px;color:#555;margin:8px 0;line-height:1.4;"></div>
                 <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;">
                     <button type="button" onclick="revealSavedOptPassword()" style="padding:6px 12px;background:#6d4c41;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;">👁 Показать сохранённый пароль</button>
-                    <button onclick="savePriceSyncConfig()" style="padding:6px 12px;background:#2E75B6;color:white;border:none;border-radius:4px;cursor:pointer;">💾 Сохранить</button>
+                    <button type="button" onclick="savePriceSyncConfig()" style="padding:6px 12px;background:#2E75B6;color:white;border:none;border-radius:4px;cursor:pointer;">💾 Сохранить</button>
                 </div>
             </div>
 
-            <button id="runSyncBtn" onclick="runPriceSync()" style="width:100%;padding:12px;background:#4CAF50;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
+            <button type="button" id="runSyncBtn" onclick="runPriceSync()" style="width:100%;padding:12px;background:#4CAF50;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">
                 🔄 Запустить синхронизацию
             </button>
 
