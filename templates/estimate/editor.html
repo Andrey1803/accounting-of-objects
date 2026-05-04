@@ -1766,8 +1766,10 @@
                 return;
             }
 
-            // Показываем загрузку
-            dropZone.innerHTML = '<div style="text-align:center;padding:30px;"><div class="spinner"></div><br>Обработка PDF...</div>';
+            // Показываем загрузку только внутри зоны перетаскивания (поля колонок не трогаем)
+            var innerId = dropZone.id === 'pdfDropZoneWholesale' ? 'pdfDropWholesaleInner' : 'pdfDropRetailInner';
+            var innerEl = document.getElementById(innerId) || dropZone;
+            innerEl.innerHTML = '<div style="text-align:center;padding:30px;"><div class="spinner"></div><br>Обработка PDF...</div>';
 
             const formData = new FormData();
             formData.append('file', file);
@@ -1775,11 +1777,12 @@
             const importMode = (forcedMode === 'wholesale' || forcedMode === 'retail')
                 ? forcedMode
                 : (dropZone.getAttribute('data-import-mode') || 'retail');
-            const manualName = (document.getElementById('pdfColName')?.value || '').trim();
-            const manualUnit = (document.getElementById('pdfColUnit')?.value || '').trim();
-            const manualQty = (document.getElementById('pdfColQty')?.value || '').trim();
-            const manualRetail = (document.getElementById('pdfColRetail')?.value || '').trim();
-            const manualPurchase = (document.getElementById('pdfColPurchase')?.value || '').trim();
+            const suf = importMode === 'wholesale' ? 'Wholesale' : 'Retail';
+            const manualName = (document.getElementById('pdfColName' + suf)?.value || '').trim();
+            const manualUnit = (document.getElementById('pdfColUnit' + suf)?.value || '').trim();
+            const manualQty = (document.getElementById('pdfColQty' + suf)?.value || '').trim();
+            const manualRetail = (document.getElementById('pdfColRetail' + suf)?.value || '').trim();
+            const manualPurchase = (document.getElementById('pdfColPurchase' + suf)?.value || '').trim();
             fetch('/estimate/api/parse-pdf', {
                 method: 'POST',
                 body: (function(){
@@ -1794,10 +1797,11 @@
             })
             .then(r => r.json())
             .then(data => {
+                resetPdfDropZones();
                 if (data.error) { alert('Ошибка: ' + data.error); return; }
                 showPdfImportResults(data);
             })
-            .catch(err => alert('Ошибка загрузки: ' + err.message));
+            .catch(err => { resetPdfDropZones(); alert('Ошибка загрузки: ' + err.message); });
         }
 
         function showPdfImportResults(data) {
@@ -2091,13 +2095,13 @@
 
         // Drag-and-drop обработчики
         function resetPdfDropZones() {
-            var retail = document.getElementById('pdfDropZoneRetail');
-            if (retail) {
-                retail.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🛒</div><div style="font-size:14px;font-weight:600;">Розничный счёт (РРЦ)</div><div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div><input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'retail\')">';
+            var retailInner = document.getElementById('pdfDropRetailInner');
+            if (retailInner) {
+                retailInner.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🛒</div><div style="font-size:14px;font-weight:600;">Розничный счёт (РРЦ)</div><div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div><input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'retail\')">';
             }
-            var wholesale = document.getElementById('pdfDropZoneWholesale');
-            if (wholesale) {
-                wholesale.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🏷️</div><div style="font-size:14px;font-weight:600;">Оптовый счёт (с НДС)</div><div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div><input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'wholesale\')">';
+            var wholesaleInner = document.getElementById('pdfDropWholesaleInner');
+            if (wholesaleInner) {
+                wholesaleInner.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🏷️</div><div style="font-size:14px;font-weight:600;">Оптовый счёт (с НДС)</div><div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div><input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'wholesale\')">';
             }
         }
 
@@ -2133,33 +2137,52 @@
                 <button class="btn-close" onclick="closePdfImport()">✕</button>
             </div>
 
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                <div id="pdfDropZoneRetail" data-pdf-drop-zone="1" data-import-mode="retail" style="border:2px dashed #ddd;border-radius:12px;padding:22px;text-align:center;cursor:pointer;transition:all 0.2s;">
-                    <div style="font-size:38px;margin-bottom:8px;">🛒</div>
-                    <div style="font-size:14px;font-weight:600;">Розничный счёт (РРЦ)</div>
-                    <div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div>
-                    <input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'retail')">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+                <div>
+                    <div id="pdfDropZoneRetail" data-pdf-drop-zone="1" data-import-mode="retail" style="border:2px dashed #ddd;border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:all 0.2s;">
+                        <div id="pdfDropRetailInner">
+                            <div style="font-size:38px;margin-bottom:8px;">🛒</div>
+                            <div style="font-size:14px;font-weight:600;">Розничный счёт (РРЦ)</div>
+                            <div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div>
+                            <input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'retail')">
+                        </div>
+                    </div>
+                    <div style="margin-top:8px;padding:8px;border:1px solid #e8e8e8;border-radius:8px;background:#fafafa;">
+                        <div style="font-size:11px;color:#555;font-weight:600;margin-bottom:6px;">Номера колонок в этом PDF (с 1)</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;">
+                            <label style="font-size:10px;color:#666;">Наимен.<input id="pdfColNameRetail" type="number" min="1" step="1" placeholder="2" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Ед.<input id="pdfColUnitRetail" type="number" min="1" step="1" placeholder="3" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Кол-во<input id="pdfColQtyRetail" type="number" min="1" step="1" placeholder="4" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Розница<input id="pdfColRetailRetail" type="number" min="1" step="1" placeholder="5" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Закуп (необяз.)<input id="pdfColPurchaseRetail" type="number" min="1" step="1" placeholder="6" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                        </div>
+                        <div style="font-size:10px;color:#888;margin-top:6px;">Ручной разбор включается, если заданы <b>наименование</b>, <b>кол-во</b> и <b>розница</b> (остальные по желанию).</div>
+                    </div>
                 </div>
-                <div id="pdfDropZoneWholesale" data-pdf-drop-zone="1" data-import-mode="wholesale" style="border:2px dashed #ddd;border-radius:12px;padding:22px;text-align:center;cursor:pointer;transition:all 0.2s;">
-                    <div style="font-size:38px;margin-bottom:8px;">🏷️</div>
-                    <div style="font-size:14px;font-weight:600;">Оптовый счёт (с НДС)</div>
-                    <div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div>
-                    <input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'wholesale')">
+                <div>
+                    <div id="pdfDropZoneWholesale" data-pdf-drop-zone="1" data-import-mode="wholesale" style="border:2px dashed #ddd;border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:all 0.2s;">
+                        <div id="pdfDropWholesaleInner">
+                            <div style="font-size:38px;margin-bottom:8px;">🏷️</div>
+                            <div style="font-size:14px;font-weight:600;">Оптовый счёт (с НДС)</div>
+                            <div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div>
+                            <input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'wholesale')">
+                        </div>
+                    </div>
+                    <div style="margin-top:8px;padding:8px;border:1px solid #e8e8e8;border-radius:8px;background:#fafafa;">
+                        <div style="font-size:11px;color:#555;font-weight:600;margin-bottom:6px;">Номера колонок в этом PDF (с 1)</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;">
+                            <label style="font-size:10px;color:#666;">Наимен.<input id="pdfColNameWholesale" type="number" min="1" step="1" placeholder="2" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Ед.<input id="pdfColUnitWholesale" type="number" min="1" step="1" placeholder="3" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Кол-во<input id="pdfColQtyWholesale" type="number" min="1" step="1" placeholder="4" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Розница<input id="pdfColRetailWholesale" type="number" min="1" step="1" placeholder="5" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Закуп/Опт<input id="pdfColPurchaseWholesale" type="number" min="1" step="1" placeholder="6" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                        </div>
+                        <div style="font-size:10px;color:#888;margin-top:6px;">Ручной разбор включается, если заданы <b>наименование</b>, <b>кол-во</b> и <b>розница</b> (колонка закупа дополнительно подставится, если указана).</div>
+                    </div>
                 </div>
             </div>
             <div style="margin-top:10px;font-size:12px;color:#666;">
                 Для розницы: цена попадёт в смету и обновит <b>РРЦ</b>. Для опта: обновятся <b>закуп/опт (с НДС)</b>, без перезаписи розницы.
-            </div>
-            <div style="margin-top:10px;padding:10px;border:1px solid #e0e0e0;border-radius:8px;background:#fafafa;">
-                <div style="font-size:12px;color:#444;font-weight:600;margin-bottom:6px;">Ручной выбор колонок (номер колонки в PDF, начиная с 1)</div>
-                <div style="display:grid;grid-template-columns:repeat(5,minmax(90px,1fr));gap:8px;">
-                    <label style="font-size:11px;color:#666;">Наименование<input id="pdfColName" type="number" min="1" step="1" placeholder="напр. 2" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
-                    <label style="font-size:11px;color:#666;">Ед.<input id="pdfColUnit" type="number" min="1" step="1" placeholder="напр. 3" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
-                    <label style="font-size:11px;color:#666;">Кол-во<input id="pdfColQty" type="number" min="1" step="1" placeholder="напр. 4" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
-                    <label style="font-size:11px;color:#666;">Розница<input id="pdfColRetail" type="number" min="1" step="1" placeholder="напр. 5" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
-                    <label style="font-size:11px;color:#666;">Закуп/Опт<input id="pdfColPurchase" type="number" min="1" step="1" placeholder="напр. 6" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
-                </div>
-                <div style="font-size:11px;color:#888;margin-top:6px;">Если заполнено Наименование + Кол-во + Розница, импорт использует эти колонки вместо автоопределения.</div>
             </div>
 
             <div id="pdfResults" style="margin-top:15px;"></div>
