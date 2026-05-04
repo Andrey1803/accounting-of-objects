@@ -35,6 +35,8 @@ _PDF_CART_PRICE_LINE = re.compile(
     re.I,
 )
 _PDF_CART_ARTICLE_LINE = re.compile(r'^Артикул\s+(\d+)\s*$', re.I)
+# Оптовый счёт в PDF: закуп часто указан без НДС; в каталог пишем purchase с НДС (20 %).
+_PDF_WHOLESALE_EX_VAT_TO_WITH_VAT = 1.2
 
 
 def _pdf_parse_cart_ready_format(full_text):
@@ -318,7 +320,8 @@ def _pdf_line_amount_matches_unit_qty(unit_price, qty, line_sum, rel_tol=0.025):
 
 def _pdf_resolve_wholesale_unit_table(row, table_layout):
     """
-    Цена закупа с НДС за единицу. Сумма в смете часто = qty×розница, поэтому не выбираем закуп
+    Цена закупа за единицу из ячеек PDF (у поставщика обычно без НДС). Перед ответом API для режима
+    wholesale умножается на коэффициент НДС. Сумма в смете часто = qty×розница, поэтому не выбираем закуп
     только по совпадению с суммой. Опираемся на колонку закупа из хвоста (уже без «1,2 НДС»)
     и на то, что закуп < розницы в той же строке.
     """
@@ -754,8 +757,9 @@ def _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=False, table_layout=No
 
 def _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf=False, table_layout=None):
     """
-    Цена за единицу с НДС (для оптового счёта).
-    Для cart-ready PDF без колонки НДС возвращаем обычную цену за единицу.
+    Цена закупа за единицу из оптового PDF (как в документе; чаще без НДС).
+    Для cart-ready PDF возвращаем розничную цену за единицу (режим корзины).
+    Для табличного опта дальше в parse-pdf цена умножается на _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT.
     """
     if from_cart_pdf:
         return _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=True, table_layout=None)
@@ -1432,6 +1436,14 @@ def api_parse_pdf():
 
             pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf, table_layout)
             pdf_wholesale_unit = _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf, table_layout)
+            if (
+                import_mode == 'wholesale'
+                and pdf_wholesale_unit is not None
+                and not from_cart_pdf
+            ):
+                pdf_wholesale_unit = round(
+                    float(pdf_wholesale_unit) * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4
+                )
             file_unit_price = pdf_wholesale_unit if import_mode == 'wholesale' else pdf_retail_unit
 
             article_match_item = _pdf_match_by_article(row_text, row, catalog_by_article)

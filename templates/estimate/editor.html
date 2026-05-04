@@ -1829,7 +1829,7 @@
                 const importMode = data.import_mode === 'wholesale' ? 'wholesale' : 'retail';
                 html += '<p style="font-size:12px;color:#666;margin:6px 0;">Галочка по умолчанию только при уверенности ≥75%. ' + (importMode === 'retail'
                     ? 'В смету подставляется <b>розничная цена из PDF</b>.'
-                    : 'При применении обновляется <b>оптовая/закупочная цена с НДС</b>; розница не перезаписывается.'
+                    : 'В счёте закуп без НДС; в каталог подставится <b>закуп с НДС 20%</b>. Розница не перезаписывается.'
                     ) + '</p>';
                 html += '<h4 style="margin:10px 0 5px;">✅ Совпавшие позиции:</h4>';
                 html += '<div style="max-height:300px;overflow-y:auto;border:1px solid #ddd;border-radius:6px;">';
@@ -2084,7 +2084,7 @@
                 } else {
                     render();
                     await saveEstimateToDB();
-                    alert(`Обновлено ${added} оптовых цен (с НДС). Розничные цены не изменялись.`);
+                    alert(`Обновлено ${added} закупочных цен (с НДС 20% от сумм из PDF). Розничные цены не изменялись.`);
                 }
                 closePdfImport();
                 resetPdfDropZones();
@@ -2101,7 +2101,7 @@
             }
             var wholesaleInner = document.getElementById('pdfDropWholesaleInner');
             if (wholesaleInner) {
-                wholesaleInner.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🏷️</div><div style="font-size:14px;font-weight:600;">Оптовый счёт (с НДС)</div><div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div><input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'wholesale\')">';
+                wholesaleInner.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🏷️</div><div style="font-size:14px;font-weight:600;">Оптовый счёт (в PDF без НДС)</div><div style="font-size:12px;color:#999;margin-top:5px;">В закуп каталога подставится цена +20% НДС. Перетащите PDF или нажмите</div><input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'wholesale\')">';
             }
         }
 
@@ -2163,8 +2163,8 @@
                     <div id="pdfDropZoneWholesale" data-pdf-drop-zone="1" data-import-mode="wholesale" style="border:2px dashed #ddd;border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:all 0.2s;">
                         <div id="pdfDropWholesaleInner">
                             <div style="font-size:38px;margin-bottom:8px;">🏷️</div>
-                            <div style="font-size:14px;font-weight:600;">Оптовый счёт (с НДС)</div>
-                            <div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div>
+                            <div style="font-size:14px;font-weight:600;">Оптовый счёт (в PDF без НДС)</div>
+                            <div style="font-size:12px;color:#999;margin-top:5px;">В каталог — закуп с НДС 20%. Перетащите PDF сюда или нажмите</div>
                             <input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'wholesale')">
                         </div>
                     </div>
@@ -2182,7 +2182,7 @@
                 </div>
             </div>
             <div style="margin-top:10px;font-size:12px;color:#666;">
-                Для розницы: цена попадёт в смету и обновит <b>РРЦ</b>. Для опта: обновятся <b>закуп/опт (с НДС)</b>, без перезаписи розницы.
+                Для розницы: цена попадёт в смету и обновит <b>РРЦ</b>. Для опта: в PDF цены без НДС — в каталог пишется <b>закуп с НДС 20%</b>, розница не меняется.
             </div>
 
             <div id="pdfResults" style="margin-top:15px;"></div>
