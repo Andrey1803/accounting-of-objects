@@ -218,10 +218,14 @@ def _pdf_parse_money_cell(cell):
     return v
 
 
-def _pdf_table_tail_purchase_and_sum(cells, retail_idx, qty_hint=None, list_price=None):
+def _pdf_table_tail_purchase_and_sum(
+    cells, retail_idx, qty_hint=None, list_price=None, for_wholesale=False
+):
     """
     После колонки «розница»: закуп, (НДС 1,2 / маржа %), сумма.
     Не считать первое число закупом, если это коэф. НДС или если другое число даёт сумму×кол-во.
+    Для опта и сметы «сумма = розница×кол-во»: закуп — не первая ячейка хвоста (часто маржа % без %),
+    а число строго меньше розницы (обычно max из подходящих).
     """
     money_vals = []
     for i in range(retail_idx + 1, len(cells)):
@@ -241,6 +245,28 @@ def _pdf_table_tail_purchase_and_sum(cells, retail_idx, qty_hint=None, list_pric
         q = float(qty_hint) if qty_hint is not None else 0.0
     except (TypeError, ValueError):
         q = 0.0
+
+    if for_wholesale and list_price is not None and q > 0 and len(money_vals) >= 2:
+        try:
+            lp = float(list_price)
+            sf = float(s_last)
+        except (TypeError, ValueError):
+            lp = sf = 0.0
+        if (
+            lp > 0
+            and sf > 0
+            and _pdf_line_amount_matches_unit_qty(lp, q, sf)
+            and head
+        ):
+            below = []
+            for v in head:
+                fv = float(v)
+                if 1.17 <= fv <= 1.22:
+                    continue
+                if fv < lp - 1e-5:
+                    below.append(fv)
+            if below:
+                return (max(below), s_last)
 
     if q > 0 and len(head) >= 1:
         match_vs_sum = []
@@ -310,6 +336,13 @@ def _pdf_resolve_wholesale_unit_table(row, table_layout):
     use_hint = float(p_hint) if p_hint is not None and float(p_hint) > 0 else None
     hint_rejected_low = False
 
+    retail_sum_line = (
+        s_line is not None
+        and list_col is not None
+        and qty > 0
+        and _pdf_line_amount_matches_unit_qty(list_col, qty, s_line)
+    )
+
     if use_hint is not None and list_col is not None:
         ph, lp = float(use_hint), float(list_col)
         if ph < lp - 1e-6:
@@ -329,7 +362,7 @@ def _pdf_resolve_wholesale_unit_table(row, table_layout):
             return round(lp, 4)
     elif use_hint is not None:
         return round(float(use_hint), 4)
-    elif list_col is not None and not hint_rejected_low:
+    elif list_col is not None and not hint_rejected_low and not retail_sum_line:
         return round(float(list_col), 4)
 
     if s_line and s_line > 0:
@@ -338,13 +371,26 @@ def _pdf_resolve_wholesale_unit_table(row, table_layout):
             return round(per, 4)
         if list_col is None:
             return round(per, 4)
+
+    if retail_sum_line and list_col is not None:
+        lc = float(list_col)
+        for j in range(ri + 1, len(row)):
+            v = _pdf_parse_money_cell(row[j])
+            if v is None:
+                continue
+            fv = float(v)
+            if 1.17 <= fv <= 1.22:
+                continue
+            if fv < lc - 1e-5:
+                return round(fv, 4)
     return None
 
 
-def _pdf_detect_table_material_row(row):
+def _pdf_detect_table_material_row(row, import_mode='retail'):
     """
     Типичная таблица как на скрине сметы: Наименование | Ед. | Кол-во | Розница | Закуп | …
     Либо с ведущим № п/п: № | Наименование | Ед. | Кол-во | Розница | …
+    import_mode: для wholesale иначе выбирается колонка закупа при «сумма = розница×qty».
     """
     if not row or len(row) < 4:
         return None
@@ -370,7 +416,11 @@ def _pdf_detect_table_material_row(row):
     qty_hint = _pdf_parse_money_cell(cells[qty_idx])
     list_price = _pdf_parse_money_cell(cells[retail_idx])
     purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(
-        cells, retail_idx, qty_hint, list_price
+        cells,
+        retail_idx,
+        qty_hint,
+        list_price,
+        for_wholesale=(str(import_mode).lower() == 'wholesale'),
     )
     return {
         'name_idx': name_idx,
@@ -1264,7 +1314,7 @@ def api_parse_pdf():
             if _PDF_TOTALS_ROW.search(row_text):
                 continue
 
-            table_layout = None if from_cart_pdf else _pdf_detect_table_material_row(row)
+            table_layout = None if from_cart_pdf else _pdf_detect_table_material_row(row, import_mode)
 
             pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf, table_layout)
             pdf_wholesale_unit = _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf, table_layout)
