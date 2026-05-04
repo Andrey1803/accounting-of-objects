@@ -1105,11 +1105,22 @@ def api_parse_pdf():
                     rej = 'low_score'
                 else:
                     rej = 'no_match' if catalog_items else 'no_catalog'
+                qty_u = _pdf_sanitize_qty(
+                    _pdf_extract_qty(row, from_cart_pdf),
+                    (file_unit_price if file_unit_price is not None else 0),
+                    0,
+                )
+                unit_u = _pdf_extract_unit(row)
                 unmatched.append({
                     'row': row,
                     'row_text': row_text,
                     'clean_name': clean_name,
                     'reject_reason': rej,
+                    'qty': qty_u,
+                    'unit': unit_u,
+                    'file_unit_price': round(float(file_unit_price), 4)
+                    if file_unit_price is not None
+                    else None,
                 })
 
         return jsonify({

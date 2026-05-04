@@ -1835,25 +1835,43 @@
             }
 
             if (data.unmatched.length > 0) {
-                html += '<h4 style="margin:15px 0 5px;color:#f44336;">❌ Не импортировано (нет совпадения / слишком похожи несколько позиций):</h4>';
-                html += '<div style="max-height:150px;overflow-y:auto;border:1px solid #fdd;border-radius:6px;padding:8px;font-size:12px;">';
-                data.unmatched.slice(0, 20).forEach(u => {
-                    const tag = u.reject_reason === 'ambiguous' ? ' <small style="color:#E65100;">(неоднозначно)</small>' : (u.reject_reason === 'low_score' ? ' <small style="color:#999;">(низкая уверенность)</small>' : (u.reject_reason === 'price_not_in_catalog' ? ' <small style="color:#c62828;">(нет позиции с такой розничной ценой)</small>' : (u.reject_reason === 'no_catalog' ? ' <small style="color:#c62828;">(нет каталога)</small>' : '')));
-                    html += `<div style="padding:3px 0;border-bottom:1px solid #fee;">${esc(u.row_text)}${tag}</div>`;
+                html += '<h4 style="margin:15px 0 5px;color:#ef6c00;">🆕 Не найдено в каталоге — можно добавить как новые позиции:</h4>';
+                html += '<div style="max-height:220px;overflow-y:auto;border:1px solid #ffe0b2;border-radius:6px;">';
+                html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+                html += '<tr style="background:#fff3e0;"><th style="padding:6px;text-align:left;">✓</th><th style="padding:6px;text-align:left;">Позиция из PDF</th><th style="padding:6px;">Кол-во</th><th style="padding:6px;">Ед.</th><th style="padding:6px;">Цена</th><th style="padding:6px;">Причина</th></tr>';
+                data.unmatched.forEach((u, i) => {
+                    const reason = u.reject_reason === 'ambiguous'
+                        ? 'неоднозначно'
+                        : (u.reject_reason === 'low_score'
+                            ? 'низкая уверенность'
+                            : (u.reject_reason === 'price_not_in_catalog'
+                                ? 'нет цены в каталоге'
+                                : (u.reject_reason === 'no_catalog' ? 'каталог пуст' : 'нет совпадения')));
+                    const nm = esc((u.clean_name || u.row_text || '').trim());
+                    const unit = esc(u.unit || 'шт');
+                    const qty = Number(u.qty || 1);
+                    const unitPrice = Number(u.file_unit_price || 0);
+                    html += `<tr style="border-bottom:1px solid #ffe0b2;">
+                        <td style="padding:6px;"><input type="checkbox" id="pdf-unmatch-${i}" checked value="${i}"></td>
+                        <td style="padding:6px;max-width:260px;word-break:break-word;">${nm}</td>
+                        <td style="padding:6px;text-align:center;"><input type="number" id="pdf-unmatch-qty-${i}" value="${qty > 0 ? qty : 1}" min="0.1" step="0.1" style="width:64px;padding:3px;border:1px solid #ddd;border-radius:3px;"></td>
+                        <td style="padding:6px;text-align:center;">${unit}</td>
+                        <td style="padding:6px;text-align:right;">${unitPrice.toFixed(2)}</td>
+                        <td style="padding:6px;color:#bf360c;">${reason}</td>
+                    </tr>`;
                 });
-                if (data.unmatched.length > 20) {
-                    html += `<div style="color:#999;padding:5px;">... и ещё ${data.unmatched.length - 20}</div>`;
-                }
-                html += '</div>';
+                html += '</table></div>';
             }
 
             // Сохраняем данные для импорта
             window._pdfMatchedData = data.matched;
+            window._pdfUnmatchedData = data.unmatched || [];
             resultsDiv.innerHTML = html;
         }
 
         function selectAllMatches(checked) {
             document.querySelectorAll('[id^="pdf-match-"]').forEach(cb => cb.checked = checked);
+            document.querySelectorAll('input[type="checkbox"][id^="pdf-unmatch-"]').forEach(cb => cb.checked = checked);
         }
 
         async function importSelectedMatches() {
@@ -1970,6 +1988,60 @@
                             }
                         } catch(e) {
                             console.error('Ошибка добавления позиции ' + m.item.name + ':', e);
+                        }
+                    }
+                }
+            }
+
+            // Не найденные: создаём новые позиции каталога; в РРЦ ещё и добавляем в смету.
+            const unmatchedList = window._pdfUnmatchedData || [];
+            for (var j = 0; j < unmatchedList.length; j++) {
+                const u = unmatchedList[j];
+                const cbU = document.getElementById('pdf-unmatch-' + j);
+                const qtyUInput = document.getElementById('pdf-unmatch-qty-' + j);
+                if (!cbU || !cbU.checked) continue;
+                const qtyU = qtyUInput ? (parseFloat(qtyUInput.value) || 1) : 1;
+                const unitU = (u.unit || 'шт').toString();
+                const nameU = (u.clean_name || u.row_text || '').toString().trim().replace(/\s+/g, ' ');
+                if (!nameU) continue;
+                const filePriceU = Number(u.file_unit_price || 0);
+                try {
+                    const createBody = {
+                        name: nameU,
+                        unit: unitU,
+                        category: '',
+                        article: '',
+                        brand: '',
+                        item_type: '',
+                        purchase_price: importMode === 'wholesale' ? filePriceU : 0,
+                        wholesale_price: importMode === 'wholesale' ? filePriceU : 0,
+                        retail_price: importMode === 'retail' ? filePriceU : 0,
+                        min_wholesale_qty: 10,
+                        description: 'Создано из PDF импорта'
+                    };
+                    await fetchCsrf('/estimate/api/catalog/materials', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
+                        body: JSON.stringify(createBody)
+                    });
+                    if (importMode === 'retail') {
+                        await doAddFromCatalog(
+                            { name: nameU, unit: unitU, retail_price: filePriceU, purchase_price: 0 },
+                            qtyU > 0 ? qtyU : 1,
+                        );
+                    }
+                    added++;
+                } catch (e) {
+                    console.error('Ошибка создания новой позиции из PDF:', nameU, e);
+                    if (importMode === 'retail') {
+                        try {
+                            await doAddFromCatalog(
+                                { name: nameU, unit: unitU, retail_price: filePriceU, purchase_price: 0 },
+                                qtyU > 0 ? qtyU : 1,
+                            );
+                            added++;
+                        } catch (e2) {
+                            console.error('Ошибка добавления новой позиции в смету:', nameU, e2);
                         }
                     }
                 }
