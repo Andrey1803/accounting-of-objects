@@ -583,6 +583,81 @@ def _pdf_detect_table_material_row(row, import_mode='retail', header_layout=None
     }
 
 
+def _pdf_table_layout_header_fallback(row, import_mode, header_layout):
+    """
+    Если _pdf_detect_table_material_row вернула None (короткое наименование, «битая» строка и т.д.),
+    но по файлу уже есть header_layout — всё равно фиксируем индексы колонок из заголовка.
+    Иначе _pdf_extract_qty/_extract_unit уходят в разбор всей строки и смешивают колонки.
+    """
+    if not row or not header_layout:
+        return None
+    cells = [str(c or '').strip() for c in row]
+    if len(cells) < 4:
+        return None
+    hl = header_layout
+    name_idx = hl.get('name_idx')
+    qty_idx = hl.get('qty_idx')
+    retail_idx = hl.get('retail_idx')
+    if name_idx is None or qty_idx is None or retail_idx is None:
+        return None
+    try:
+        mx = max(int(name_idx), int(qty_idx), int(retail_idx))
+    except (TypeError, ValueError):
+        return None
+    unit_idx = hl.get('unit_idx')
+    purchase_idx = hl.get('purchase_idx')
+    if unit_idx is not None:
+        try:
+            mx = max(mx, int(unit_idx))
+        except (TypeError, ValueError):
+            return None
+    if purchase_idx is not None:
+        try:
+            mx = max(mx, int(purchase_idx))
+        except (TypeError, ValueError):
+            return None
+    if mx >= len(cells):
+        return None
+    row_join = ' '.join(cells).lower()
+    if _PDF_TOTALS_ROW.search(row_join):
+        return None
+
+    qty_hint = _pdf_parse_qty_cell(cells[qty_idx])
+    if qty_hint is None:
+        qty_hint = _pdf_parse_money_cell(cells[qty_idx])
+    list_price = _pdf_parse_money_cell(cells[retail_idx])
+    purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(
+        cells,
+        retail_idx,
+        qty_hint,
+        list_price,
+        for_wholesale=(str(import_mode).lower() == 'wholesale'),
+    )
+    if str(import_mode).lower() == 'wholesale':
+        direct_idx = purchase_idx if purchase_idx is not None else (retail_idx + 1)
+        direct_purchase = _pdf_parse_money_cell(cells[direct_idx]) if direct_idx < len(cells) else None
+        if direct_purchase is not None and direct_purchase > 0:
+            if list_price is None or direct_purchase < (float(list_price) * 1.25 + 0.01):
+                purchase_hint = float(direct_purchase)
+    return {
+        'name_idx': name_idx,
+        'unit_idx': unit_idx,
+        'qty_idx': qty_idx,
+        'retail_idx': retail_idx,
+        'purchase_idx': purchase_idx,
+        'purchase_from_tail': purchase_hint,
+        'line_sum_from_tail': sum_hint,
+    }
+
+
+def _pdf_table_layout_for_row(row, import_mode, header_layout):
+    """Раскладка колонок: полная проверка строки или fallback по header_layout файла."""
+    layout = _pdf_detect_table_material_row(row, import_mode, header_layout)
+    if layout is not None:
+        return layout
+    return _pdf_table_layout_header_fallback(row, import_mode, header_layout)
+
+
 def _pdf_unit_from_table_cell(cell):
     """Нормализация ед. изм. для сметы из ячейки таблицы."""
     if not cell:
@@ -1481,7 +1556,7 @@ def api_parse_pdf():
             if _PDF_TOTALS_ROW.search(row_text):
                 continue
 
-            table_layout = None if from_cart_pdf else _pdf_detect_table_material_row(row, import_mode, header_layout)
+            table_layout = None if from_cart_pdf else _pdf_table_layout_for_row(row, import_mode, header_layout)
 
             pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf, table_layout)
             pdf_wholesale_unit = _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf, table_layout)
