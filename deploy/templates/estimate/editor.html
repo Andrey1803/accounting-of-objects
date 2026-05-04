@@ -1743,9 +1743,39 @@
             window._pdfMatchedData = [];
             window._pdfUnmatchedData = [];
             resetPdfDropZones();
+            clearPdfColumnOverrideFields();
             const resultsDiv = document.getElementById('pdfResults');
             if (resultsDiv) resultsDiv.innerHTML = '';
             document.getElementById('pdfImportModal').classList.add('active');
+        }
+
+        function _pdfIdx0ToColNumber(v) {
+            if (v === null || v === undefined || v === '') return '';
+            var n = Number(v);
+            if (Number.isNaN(n)) return '';
+            return String(n + 1);
+        }
+        function applyPdfHeaderLayoutToForm(headerLayout, importMode) {
+            if (!headerLayout || typeof headerLayout !== 'object') return;
+            var suf = (importMode === 'wholesale') ? 'Wholesale' : 'Retail';
+            var set = function(id, idx0) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                el.value = _pdfIdx0ToColNumber(idx0);
+            };
+            set('pdfColName' + suf, headerLayout.name_idx);
+            set('pdfColUnit' + suf, headerLayout.unit_idx);
+            set('pdfColQty' + suf, headerLayout.qty_idx);
+            set('pdfColRetail' + suf, headerLayout.retail_idx);
+            set('pdfColPurchase' + suf, headerLayout.purchase_idx);
+        }
+        function clearPdfColumnOverrideFields() {
+            ['Retail', 'Wholesale'].forEach(function(suf) {
+                ['pdfColName', 'pdfColUnit', 'pdfColQty', 'pdfColRetail', 'pdfColPurchase'].forEach(function(prefix) {
+                    var el = document.getElementById(prefix + suf);
+                    if (el) el.value = '';
+                });
+            });
         }
 
         function closePdfImport() {
@@ -1807,6 +1837,9 @@
         function showPdfImportResults(data) {
             const resultsDiv = document.getElementById('pdfResults');
             window._pdfImportMode = data.import_mode === 'wholesale' ? 'wholesale' : 'retail';
+            if (data.header_layout && typeof data.header_layout === 'object') {
+                applyPdfHeaderLayoutToForm(data.header_layout, data.import_mode);
+            }
             let html = `<div style="margin-bottom:10px;font-size:13px;color:#666;">
                 Найдено строк: ${data.total_rows} | 
                 Совпало: <b style="color:#4CAF50">${data.matched_count}</b> | 
@@ -1817,8 +1850,16 @@
                 const hl = data.header_layout;
                 const idxText = (v) => (v == null ? '—' : (Number(v) + 1));
                 const src = data.header_layout_source === 'manual' ? 'ручной' : 'авто';
+                let headerRowHtml = '';
+                if (Array.isArray(hl.header_cells) && hl.header_cells.length) {
+                    const raw = hl.header_cells.map(function(c) { return String(c || '').trim(); }).filter(Boolean).join(' · ');
+                    if (raw) {
+                        const show = raw.length > 140 ? (raw.slice(0, 137) + '…') : raw;
+                        headerRowHtml = '<div style="margin-top:6px;font-size:11px;color:#1565c0;line-height:1.35;">Подписи в строке заголовка: ' + esc(show) + '</div>';
+                    }
+                }
                 html += `<div style="margin:8px 0 10px;padding:8px 10px;border-radius:8px;background:#e3f2fd;border:1px solid #bbdefb;font-size:12px;color:#0d47a1;">
-                    Колонки из PDF (${src}): Наименование <b>${idxText(hl.name_idx)}</b>, Ед. <b>${idxText(hl.unit_idx)}</b>, Кол-во <b>${idxText(hl.qty_idx)}</b>, Розница <b>${idxText(hl.retail_idx)}</b>, Закуп/Опт <b>${idxText(hl.purchase_idx)}</b>.
+                    Колонки (${src}): наимен. <b>${idxText(hl.name_idx)}</b>, ед. <b>${idxText(hl.unit_idx)}</b>, кол-во <b>${idxText(hl.qty_idx)}</b>, розница <b>${idxText(hl.retail_idx)}</b>, закуп/опт <b>${idxText(hl.purchase_idx)}</b>.${headerRowHtml}
                 </div>`;
             }
             if (data.catalog_empty) {
@@ -2148,15 +2189,15 @@
                         </div>
                     </div>
                     <div style="margin-top:8px;padding:8px;border:1px solid #e8e8e8;border-radius:8px;background:#fafafa;">
-                        <div style="font-size:11px;color:#555;font-weight:600;margin-bottom:6px;">Номера колонок в этом PDF (с 1)</div>
+                        <div style="font-size:11px;color:#555;font-weight:600;margin-bottom:6px;">Колонки (с 1) — после разбора PDF подставятся автоматически; при ошибке поправьте и перетащите файл снова</div>
                         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;">
-                            <label style="font-size:10px;color:#666;">Наимен.<input id="pdfColNameRetail" type="number" min="1" step="1" placeholder="2" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Ед.<input id="pdfColUnitRetail" type="number" min="1" step="1" placeholder="3" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Кол-во<input id="pdfColQtyRetail" type="number" min="1" step="1" placeholder="4" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Розница<input id="pdfColRetailRetail" type="number" min="1" step="1" placeholder="5" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Закуп (необяз.)<input id="pdfColPurchaseRetail" type="number" min="1" step="1" placeholder="6" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Наимен.<input id="pdfColNameRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Ед.<input id="pdfColUnitRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Кол-во<input id="pdfColQtyRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Розница<input id="pdfColRetailRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Закуп (необяз.)<input id="pdfColPurchaseRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
                         </div>
-                        <div style="font-size:10px;color:#888;margin-top:6px;">Ручной разбор включается, если заданы <b>наименование</b>, <b>кол-во</b> и <b>розница</b> (остальные по желанию).</div>
+                        <div style="font-size:10px;color:#888;margin-top:6px;">Если вручную указать <b>наименование</b>, <b>кол-во</b> и <b>розницу</b>, при следующем перетаскивании используются они вместо авто.</div>
                     </div>
                 </div>
                 <div>
@@ -2169,15 +2210,15 @@
                         </div>
                     </div>
                     <div style="margin-top:8px;padding:8px;border:1px solid #e8e8e8;border-radius:8px;background:#fafafa;">
-                        <div style="font-size:11px;color:#555;font-weight:600;margin-bottom:6px;">Номера колонок в этом PDF (с 1)</div>
+                        <div style="font-size:11px;color:#555;font-weight:600;margin-bottom:6px;">Колонки (с 1) — после разбора PDF подставятся автоматически; при ошибке поправьте и перетащите файл снова</div>
                         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;">
-                            <label style="font-size:10px;color:#666;">Наимен.<input id="pdfColNameWholesale" type="number" min="1" step="1" placeholder="2" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Ед.<input id="pdfColUnitWholesale" type="number" min="1" step="1" placeholder="3" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Кол-во<input id="pdfColQtyWholesale" type="number" min="1" step="1" placeholder="4" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Розница<input id="pdfColRetailWholesale" type="number" min="1" step="1" placeholder="5" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Закуп/Опт<input id="pdfColPurchaseWholesale" type="number" min="1" step="1" placeholder="6" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Наимен.<input id="pdfColNameWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Ед.<input id="pdfColUnitWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Кол-во<input id="pdfColQtyWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Розница<input id="pdfColRetailWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                            <label style="font-size:10px;color:#666;">Закуп/Опт<input id="pdfColPurchaseWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
                         </div>
-                        <div style="font-size:10px;color:#888;margin-top:6px;">Ручной разбор включается, если заданы <b>наименование</b>, <b>кол-во</b> и <b>розница</b> (колонка закупа дополнительно подставится, если указана).</div>
+                        <div style="font-size:10px;color:#888;margin-top:6px;">Если вручную указать <b>наименование</b>, <b>кол-во</b> и <b>розницу</b>, при следующем перетаскивании используются они вместо авто (закуп по желанию).</div>
                     </div>
                 </div>
             </div>

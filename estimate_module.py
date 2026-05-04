@@ -413,7 +413,12 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
         for i, h in enumerate(n):
             if not h:
                 continue
-            if name_idx is None and ('наимен' in h or h in ('товар',)):
+            if name_idx is None and (
+                'наимен' in h
+                or h in ('товар',)
+                or 'материал' in h
+                or 'номенклат' in h
+            ):
                 name_idx = i
             if unit_idx is None and (h.startswith('ед') or 'изм' in h):
                 unit_idx = i
@@ -433,6 +438,7 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
             'qty_idx': qty_idx,
             'retail_idx': retail_idx,
             'purchase_idx': purchase_idx,
+            'header_cells': [str(c or '').strip() for c in cells],
         }
     return None
 
