@@ -56,6 +56,64 @@
 
         /* Drag-over PDF — дополнение к components.css */
         [data-pdf-drop-zone].dragover { transform: scale(1.02); }
+        [data-pdf-drop-zone].pdf-import-drop.dragover { transform: none; }
+
+        /* ——— Импорт PDF: отдельный макет модалки ——— */
+        .pdf-import-sheet { max-width: 920px; }
+        .pdf-import-sheet .modal-body { padding-top: var(--pad-md, 12px); padding-bottom: var(--pad-md, 12px); }
+        .pdf-import-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+        .pdf-import-header h2 { margin: 0; font-size: 1.2rem; font-weight: 700; color: #263238; letter-spacing: -0.02em; }
+        .pdf-import-lead { font-size: 13px; color: #546e7a; margin: 6px 0 0; max-width: 560px; line-height: 1.45; }
+        .pdf-import-tabs { display: flex; gap: 0; margin-bottom: 14px; border-radius: 12px; overflow: hidden; border: 1px solid #e0e0e0; background: #eceff1; }
+        .pdf-import-tab { flex: 1; padding: 12px 14px; border: none; background: transparent; font-size: 14px; font-weight: 600; color: #607d8b; cursor: pointer; transition: background .15s, color .15s; }
+        .pdf-import-tab:hover { background: rgba(255,255,255,.5); color: #37474f; }
+        .pdf-import-tab.active { background: #fff; color: var(--primary); box-shadow: inset 0 -3px 0 var(--primary); }
+        .pdf-import-panel { display: none; animation: pdfImportFade .2s ease; }
+        .pdf-import-panel.active { display: block; }
+        @keyframes pdfImportFade { from { opacity: 0; } to { opacity: 1; } }
+        .pdf-import-drop {
+            border: 2px dashed #cfd8dc; border-radius: 14px; padding: 26px 18px; text-align: center; cursor: pointer;
+            transition: border-color .2s, background .2s, box-shadow .2s; background: #fafbfc;
+        }
+        .pdf-import-drop:hover { border-color: #90caf9; background: #f3f8ff; box-shadow: 0 2px 12px rgba(33,150,243,.08); }
+        [data-pdf-drop-zone].pdf-import-drop.dragover { border-color: var(--primary); background: #e3f2fd; box-shadow: 0 0 0 3px rgba(33,150,243,.15); }
+        .pdf-import-drop-icon { font-size: 2.25rem; line-height: 1; margin-bottom: 10px; }
+        .pdf-import-drop-title { font-size: 15px; font-weight: 700; color: #37474f; }
+        .pdf-import-drop-hint { font-size: 12px; color: #78909c; margin-top: 8px; line-height: 1.45; max-width: 400px; margin-left: auto; margin-right: auto; }
+        .pdf-import-drop-loading { text-align: center; padding: 32px 16px; color: #607d8b; font-size: 14px; }
+        .pdf-import-drop-loading .spinner { margin: 0 auto 12px; }
+        .pdf-import-details { margin-top: 12px; border: 1px solid #eceff1; border-radius: 12px; background: #fff; overflow: hidden; }
+        .pdf-import-details > summary { padding: 11px 14px; cursor: pointer; font-size: 13px; font-weight: 600; color: #546e7a; background: #fafafa; list-style: none; user-select: none; }
+        .pdf-import-details > summary::-webkit-details-marker { display: none; }
+        .pdf-import-details[open] > summary { border-bottom: 1px solid #eceff1; }
+        .pdf-import-col-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; padding: 14px; }
+        .pdf-import-col-grid label { font-size: 11px; color: #607d8b; display: flex; flex-direction: column; gap: 5px; font-weight: 600; }
+        .pdf-import-col-grid input { width: 100%; padding: 8px 10px; border: 1px solid #cfd8dc; border-radius: 8px; font-size: 14px; box-sizing: border-box; }
+        .pdf-import-results { margin-top: 20px; padding-top: 18px; border-top: 1px solid #eceff1; }
+        .pdf-import-results-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #90a4ae; margin-bottom: 12px; }
+        .pdf-import-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+        .pdf-import-stat { background: #f5f7fa; border-radius: 10px; padding: 8px 12px; font-size: 13px; color: #455a64; border: 1px solid #eceff1; }
+        .pdf-import-stat b { color: #263238; }
+        .pdf-import-callout { margin: 0 0 12px; padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.45; }
+        .pdf-import-callout--info { background: #e3f2fd; border: 1px solid #bbdefb; color: #0d47a1; }
+        .pdf-import-callout--warn { background: #fff8e1; border: 1px solid #ffe082; color: #e65100; }
+        .pdf-import-hintline { font-size: 12px; color: #78909c; margin: 0 0 12px; line-height: 1.45; }
+        .pdf-import-section-title { font-size: 14px; font-weight: 700; margin: 18px 0 8px; color: #37474f; display: flex; align-items: center; gap: 8px; }
+        .pdf-import-section-title.unmatched { color: #ef6c00; }
+        .pdf-import-table-wrap { max-height: min(360px, 46vh); overflow: auto; border: 1px solid #e0e0e0; border-radius: 10px; margin-bottom: 4px; }
+        .pdf-import-table-wrap--unmatched { border-color: #ffe0b2; background: #fffaf5; }
+        .pdf-import-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .pdf-import-table th { background: #eceff1; padding: 8px 6px; text-align: left; font-weight: 600; color: #455a64; position: sticky; top: 0; z-index: 1; border-bottom: 1px solid #cfd8dc; }
+        .pdf-import-table-wrap--unmatched .pdf-import-table th { background: #fff3e0; color: #e65100; border-color: #ffe0b2; }
+        .pdf-import-table td { padding: 8px 6px; border-bottom: 1px solid #f5f5f5; vertical-align: middle; }
+        .pdf-import-table tr:hover td { background: #fafafa; }
+        .pdf-import-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+        .pdf-import-actions button { flex: 1; min-width: 110px; padding: 11px 14px; border-radius: 10px; border: 1px solid #cfd8dc; background: #fff; font-weight: 600; cursor: pointer; font-size: 13px; color: #37474f; }
+        .pdf-import-actions button:hover { background: #f5f5f5; }
+        .pdf-import-actions button.pdf-import-btn-primary { background: var(--color-success, #43a047); color: #fff; border-color: transparent; flex: 2; min-width: 200px; }
+        .pdf-import-actions button.pdf-import-btn-primary:hover { filter: brightness(1.05); }
+        .pdf-import-footer { display: flex; justify-content: flex-end; gap: 10px; }
+        .pdf-import-footer button { padding: 10px 20px; border-radius: 10px; border: 1px solid #cfd8dc; background: #fff; font-weight: 600; cursor: pointer; font-size: 13px; }
 
         /* Адаптив */
         @media (max-width: 768px) {
@@ -1738,14 +1796,30 @@
         }
 
         // === Импорт из PDF ===
+        function setPdfImportTab(mode) {
+            var isWholesale = (mode === 'wholesale');
+            document.querySelectorAll('.pdf-import-tab').forEach(function(btn) {
+                var w = btn.getAttribute('data-tab') === 'wholesale';
+                btn.classList.toggle('active', w === isWholesale);
+            });
+            var pr = document.getElementById('pdfImportPanelRetail');
+            var pw = document.getElementById('pdfImportPanelWholesale');
+            if (pr) pr.classList.toggle('active', !isWholesale);
+            if (pw) pw.classList.toggle('active', isWholesale);
+        }
+
         function openPdfImport() {
             window._pdfImportMode = null;
             window._pdfMatchedData = [];
             window._pdfUnmatchedData = [];
             resetPdfDropZones();
             clearPdfColumnOverrideFields();
+            setPdfImportTab('retail');
             const resultsDiv = document.getElementById('pdfResults');
-            if (resultsDiv) resultsDiv.innerHTML = '';
+            if (resultsDiv) {
+                resultsDiv.innerHTML = '';
+                resultsDiv.classList.remove('pdf-import-results');
+            }
             document.getElementById('pdfImportModal').classList.add('active');
         }
 
@@ -1799,7 +1873,7 @@
             // Показываем загрузку только внутри зоны перетаскивания (поля колонок не трогаем)
             var innerId = dropZone.id === 'pdfDropZoneWholesale' ? 'pdfDropWholesaleInner' : 'pdfDropRetailInner';
             var innerEl = document.getElementById(innerId) || dropZone;
-            innerEl.innerHTML = '<div style="text-align:center;padding:30px;"><div class="spinner"></div><br>Обработка PDF...</div>';
+            innerEl.innerHTML = '<div class="pdf-import-drop-loading"><div class="spinner"></div>Разбор PDF…</div>';
 
             const formData = new FormData();
             formData.append('file', file);
@@ -1837,48 +1911,56 @@
         function showPdfImportResults(data) {
             const resultsDiv = document.getElementById('pdfResults');
             window._pdfImportMode = data.import_mode === 'wholesale' ? 'wholesale' : 'retail';
+            if (data.import_mode) setPdfImportTab(data.import_mode === 'wholesale' ? 'wholesale' : 'retail');
             if (data.header_layout && typeof data.header_layout === 'object') {
                 applyPdfHeaderLayoutToForm(data.header_layout, data.import_mode);
             }
-            let html = `<div style="margin-bottom:10px;font-size:13px;color:#666;">
-                Найдено строк: ${data.total_rows} | 
-                Совпало: <b style="color:#4CAF50">${data.matched_count}</b> | 
-                Не найдено: <b style="color:#f44336">${data.unmatched_count}</b>
-                ${data.catalog_count != null ? ` | В каталоге материалов: <b>${data.catalog_count}</b>` : ''}
-            </div>`;
+            const importMode = data.import_mode === 'wholesale' ? 'wholesale' : 'retail';
+            const matched = data.matched || [];
+            const unmatched = data.unmatched || [];
+
+            let html = '<div class="pdf-import-results-title">Результат разбора</div>';
+            html += '<div class="pdf-import-stats">';
+            html += '<span class="pdf-import-stat">Строк в PDF: <b>' + (data.total_rows != null ? data.total_rows : '—') + '</b></span>';
+            html += '<span class="pdf-import-stat">Совпало: <b style="color:#2e7d32">' + (data.matched_count != null ? data.matched_count : 0) + '</b></span>';
+            html += '<span class="pdf-import-stat">Не найдено: <b style="color:#c62828">' + (data.unmatched_count != null ? data.unmatched_count : 0) + '</b></span>';
+            if (data.catalog_count != null) {
+                html += '<span class="pdf-import-stat">В каталоге: <b>' + data.catalog_count + '</b></span>';
+            }
+            html += '</div>';
+
             if (data.header_layout && typeof data.header_layout === 'object') {
                 const hl = data.header_layout;
                 const idxText = (v) => (v == null ? '—' : (Number(v) + 1));
-                const src = data.header_layout_source === 'manual' ? 'ручной' : 'авто';
+                const src = data.header_layout_source === 'manual' ? 'ручная сетка' : 'авто';
                 let headerRowHtml = '';
                 if (Array.isArray(hl.header_cells) && hl.header_cells.length) {
                     const raw = hl.header_cells.map(function(c) { return String(c || '').trim(); }).filter(Boolean).join(' · ');
                     if (raw) {
-                        const show = raw.length > 140 ? (raw.slice(0, 137) + '…') : raw;
-                        headerRowHtml = '<div style="margin-top:6px;font-size:11px;color:#1565c0;line-height:1.35;">Подписи в строке заголовка: ' + esc(show) + '</div>';
+                        const show = raw.length > 160 ? (raw.slice(0, 157) + '…') : raw;
+                        headerRowHtml = '<div style="margin-top:8px;opacity:.95;font-size:12px;line-height:1.4;"><strong>Заголовок в файле:</strong> ' + esc(show) + '</div>';
                     }
                 }
-                html += `<div style="margin:8px 0 10px;padding:8px 10px;border-radius:8px;background:#e3f2fd;border:1px solid #bbdefb;font-size:12px;color:#0d47a1;">
-                    Колонки (${src}): наимен. <b>${idxText(hl.name_idx)}</b>, ед. <b>${idxText(hl.unit_idx)}</b>, кол-во <b>${idxText(hl.qty_idx)}</b>, розница <b>${idxText(hl.retail_idx)}</b>, закуп/опт <b>${idxText(hl.purchase_idx)}</b>.${headerRowHtml}
-                </div>`;
+                html += '<div class="pdf-import-callout pdf-import-callout--info">';
+                html += '<strong>Колонки (' + src + '):</strong> наимен. <b>' + idxText(hl.name_idx) + '</b>, ед. <b>' + idxText(hl.unit_idx) + '</b>, кол-во <b>' + idxText(hl.qty_idx) + '</b>, розница <b>' + idxText(hl.retail_idx) + '</b>, закуп <b>' + idxText(hl.purchase_idx) + '</b>.' + headerRowHtml;
+                html += '</div>';
             }
+
             if (data.catalog_empty) {
-                html += '<div style="padding:12px;background:#fff3e0;border-radius:8px;margin-bottom:10px;font-size:13px;">Каталог материалов пуст — импорт не к чему привязать. Добавьте позиции в каталог (⚙️) или выберите товары вручную.</div>';
+                html += '<div class="pdf-import-callout pdf-import-callout--warn">Каталог материалов пуст — сопоставить не с чем. Добавьте позиции в каталог или создайте новые из списка ниже.</div>';
             }
 
-            if (data.matched.length > 0) {
-                const importMode = data.import_mode === 'wholesale' ? 'wholesale' : 'retail';
-                html += '<p style="font-size:12px;color:#666;margin:6px 0;">Галочка по умолчанию только при уверенности ≥75%. ' + (importMode === 'retail'
-                    ? 'В смету подставляется <b>розничная цена из PDF</b>.'
-                    : 'В счёте закуп без НДС; в каталог подставится <b>закуп с НДС 20%</b>. Розница не перезаписывается.'
+            if (matched.length > 0) {
+                html += '<p class="pdf-import-hintline">Галочка по умолчанию при уверенности ≥75%. ' + (importMode === 'retail'
+                    ? 'В смету подставляется <strong>розничная цена из PDF</strong>.'
+                    : 'В счёте закуп <strong>без НДС</strong>; в каталог — <strong>закуп с НДС 20%</strong>, розница в каталоге не меняется.'
                     ) + '</p>';
-                html += '<h4 style="margin:10px 0 5px;">✅ Совпавшие позиции:</h4>';
-                html += '<div style="max-height:300px;overflow-y:auto;border:1px solid #ddd;border-radius:6px;">';
-                html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-                html += '<tr style="background:#f5f5f5;"><th style="padding:6px;text-align:left;">✓</th><th style="padding:6px;text-align:left;">Как в PDF</th><th style="padding:6px;text-align:left;">Каталог</th><th style="padding:6px;">Кол-во</th><th style="padding:6px;">Ед.</th><th style="padding:6px;">Цена</th><th style="padding:6px;">%</th></tr>';
+                html += '<div class="pdf-import-section-title">Совпали с каталогом</div>';
+                html += '<div class="pdf-import-table-wrap"><table class="pdf-import-table">';
+                html += '<tr><th style="width:36px;">✓</th><th>Строка в PDF</th><th>Каталог</th><th style="text-align:center;">Кол-во</th><th style="text-align:center;">Ед.</th><th style="text-align:right;">Цена</th><th style="text-align:center;">%</th></tr>';
 
-                data.matched.forEach((m, i) => {
-                    const confColor = m.confidence >= 80 ? '#4CAF50' : (m.confidence >= 65 ? '#FF9800' : '#f44336');
+                matched.forEach((m, i) => {
+                    const confColor = m.confidence >= 80 ? '#2e7d32' : (m.confidence >= 65 ? '#f57c00' : '#c62828');
                     const preChecked = ((!m.ambiguous && m.confidence >= 75) || m.confidence >= 88) ? 'checked' : '';
                     const unitPrice = (m.file_unit_price != null && m.file_unit_price > 0)
                         ? Number(m.file_unit_price)
@@ -1887,32 +1969,31 @@
                             : (Number(m.file_retail_unit) || Number(m.item.retail_price) || 0));
                     const pdfUnit = esc(m.unit || 'шт');
                     const pdfSnippet = esc((m.row_text || '').length > 120 ? (m.row_text || '').slice(0, 117) + '…' : (m.row_text || ''));
-                    const ambHint = m.ambiguous ? ' <small style="color:#E65100;font-weight:600;">⚠ проверьте</small>' : '';
-                    html += `<tr style="border-bottom:1px solid #eee;" title="${esc(m.clean_name || m.row_text || '')}">
-                        <td style="padding:6px;"><input type="checkbox" id="pdf-match-${i}" ${preChecked} value="${i}"></td>
-                        <td style="padding:6px;max-width:200px;word-break:break-word;color:#444;">${pdfSnippet}</td>
-                        <td style="padding:6px;">${esc(m.item.name)}${ambHint}<br><small style="color:#999;">${esc(m.item.brand||'')} ${esc(m.item.category||'')}</small></td>
-                        <td style="padding:6px;text-align:center;"><input type="number" id="pdf-qty-${i}" value="${m.qty}" min="0.1" step="0.1" style="width:60px;padding:3px;border:1px solid #ddd;border-radius:3px;"></td>
-                        <td style="padding:6px;text-align:center;color:#555;">${pdfUnit}</td>
-                        <td style="padding:6px;text-align:right;">${unitPrice.toFixed(2)}</td>
-                        <td style="padding:6px;text-align:center;color:${confColor};font-weight:600;">${m.confidence}%</td>
-                    </tr>`;
+                    const ambHint = m.ambiguous ? ' <span style="color:#e65100;font-weight:600;">⚠</span>' : '';
+                    html += '<tr title="' + esc(m.clean_name || m.row_text || '') + '">';
+                    html += '<td><input type="checkbox" id="pdf-match-' + i + '" ' + preChecked + ' value="' + i + '"></td>';
+                    html += '<td style="max-width:200px;word-break:break-word;color:#455a64;">' + pdfSnippet + '</td>';
+                    html += '<td>' + esc(m.item.name) + ambHint + '<br><span style="color:#90a4ae;font-size:11px;">' + esc(m.item.brand || '') + ((m.item.brand && m.item.category) ? ' ' : '') + esc(m.item.category || '') + '</span></td>';
+                    html += '<td style="text-align:center;"><input type="number" id="pdf-qty-' + i + '" value="' + m.qty + '" min="0.1" step="0.1" style="width:62px;padding:5px;border:1px solid #cfd8dc;border-radius:6px;font-size:13px;"></td>';
+                    html += '<td style="text-align:center;color:#607d8b;">' + pdfUnit + '</td>';
+                    html += '<td style="text-align:right;font-variant-numeric:tabular-nums;">' + unitPrice.toFixed(2) + '</td>';
+                    html += '<td style="text-align:center;color:' + confColor + ';font-weight:700;">' + m.confidence + '%</td>';
+                    html += '</tr>';
                 });
                 html += '</table></div>';
 
-                html += `<div style="margin-top:10px;display:flex;gap:8px;">
-                    <button class="sort-btn" onclick="selectAllMatches(true)" style="flex:1;">☑ Выбрать все</button>
-                    <button class="sort-btn" onclick="selectAllMatches(false)" style="flex:1;">☐ Снять все</button>
-                    <button class="sort-btn" style="flex:2;background:#4CAF50;color:white;font-weight:600;" onclick="importSelectedMatches()">📥 Применить выбранные</button>
-                </div>`;
+                html += '<div class="pdf-import-actions">';
+                html += '<button type="button" onclick="selectAllMatches(true)">Выбрать все</button>';
+                html += '<button type="button" onclick="selectAllMatches(false)">Снять все</button>';
+                html += '<button type="button" class="pdf-import-btn-primary" onclick="importSelectedMatches()">Применить выбранное</button>';
+                html += '</div>';
             }
 
-            if (data.unmatched.length > 0) {
-                html += '<h4 style="margin:15px 0 5px;color:#ef6c00;">🆕 Не найдено в каталоге — можно добавить как новые позиции:</h4>';
-                html += '<div style="max-height:220px;overflow-y:auto;border:1px solid #ffe0b2;border-radius:6px;">';
-                html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-                html += '<tr style="background:#fff3e0;"><th style="padding:6px;text-align:left;">✓</th><th style="padding:6px;text-align:left;">Позиция из PDF</th><th style="padding:6px;">Кол-во</th><th style="padding:6px;">Ед.</th><th style="padding:6px;">Цена</th><th style="padding:6px;">Причина</th></tr>';
-                data.unmatched.forEach((u, i) => {
+            if (unmatched.length > 0) {
+                html += '<div class="pdf-import-section-title unmatched">Нет в каталоге — можно создать карточки</div>';
+                html += '<div class="pdf-import-table-wrap pdf-import-table-wrap--unmatched"><table class="pdf-import-table">';
+                html += '<tr><th style="width:36px;">✓</th><th>Из PDF</th><th style="text-align:center;">Кол-во</th><th style="text-align:center;">Ед.</th><th style="text-align:right;">Цена</th><th>Причина</th></tr>';
+                unmatched.forEach((u, i) => {
                     const reason = u.reject_reason === 'ambiguous'
                         ? 'неоднозначно'
                         : (u.reject_reason === 'low_score'
@@ -1924,22 +2005,26 @@
                     const unit = esc(u.unit || 'шт');
                     const qty = Number(u.qty || 1);
                     const unitPrice = Number(u.file_unit_price || 0);
-                    html += `<tr style="border-bottom:1px solid #ffe0b2;">
-                        <td style="padding:6px;"><input type="checkbox" id="pdf-unmatch-${i}" checked value="${i}"></td>
-                        <td style="padding:6px;max-width:260px;word-break:break-word;">${nm}</td>
-                        <td style="padding:6px;text-align:center;"><input type="number" id="pdf-unmatch-qty-${i}" value="${qty > 0 ? qty : 1}" min="0.1" step="0.1" style="width:64px;padding:3px;border:1px solid #ddd;border-radius:3px;"></td>
-                        <td style="padding:6px;text-align:center;">${unit}</td>
-                        <td style="padding:6px;text-align:right;">${unitPrice.toFixed(2)}</td>
-                        <td style="padding:6px;color:#bf360c;">${reason}</td>
-                    </tr>`;
+                    html += '<tr>';
+                    html += '<td><input type="checkbox" id="pdf-unmatch-' + i + '" checked value="' + i + '"></td>';
+                    html += '<td style="max-width:260px;word-break:break-word;">' + nm + '</td>';
+                    html += '<td style="text-align:center;"><input type="number" id="pdf-unmatch-qty-' + i + '" value="' + (qty > 0 ? qty : 1) + '" min="0.1" step="0.1" style="width:64px;padding:5px;border:1px solid #cfd8dc;border-radius:6px;font-size:13px;"></td>';
+                    html += '<td style="text-align:center;">' + unit + '</td>';
+                    html += '<td style="text-align:right;">' + unitPrice.toFixed(2) + '</td>';
+                    html += '<td style="color:#bf360c;font-size:11px;">' + reason + '</td>';
+                    html += '</tr>';
                 });
                 html += '</table></div>';
             }
 
-            // Сохраняем данные для импорта
-            window._pdfMatchedData = data.matched;
-            window._pdfUnmatchedData = data.unmatched || [];
+            if (matched.length === 0 && unmatched.length === 0) {
+                html += '<div class="pdf-import-callout pdf-import-callout--warn">Не удалось извлечь строки таблицы или формат не распознан. Попробуйте другой PDF либо задайте номера колонок в блоке «Настройка колонок» и перетащите файл снова.</div>';
+            }
+
+            window._pdfMatchedData = matched;
+            window._pdfUnmatchedData = unmatched;
             resultsDiv.innerHTML = html;
+            resultsDiv.classList.add('pdf-import-results');
         }
 
         function selectAllMatches(checked) {
@@ -2138,11 +2223,11 @@
         function resetPdfDropZones() {
             var retailInner = document.getElementById('pdfDropRetailInner');
             if (retailInner) {
-                retailInner.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🛒</div><div style="font-size:14px;font-weight:600;">Розничный счёт (РРЦ)</div><div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div><input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'retail\')">';
+                retailInner.innerHTML = '<div class="pdf-import-drop-icon">🛒</div><div class="pdf-import-drop-title">Розничный счёт</div><div class="pdf-import-drop-hint">РРЦ из PDF попадут в смету. Нажмите или перетащите файл.</div><input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'retail\')">';
             }
             var wholesaleInner = document.getElementById('pdfDropWholesaleInner');
             if (wholesaleInner) {
-                wholesaleInner.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🏷️</div><div style="font-size:14px;font-weight:600;">Оптовый счёт (в PDF без НДС)</div><div style="font-size:12px;color:#999;margin-top:5px;">В закуп каталога подставится цена +20% НДС. Перетащите PDF или нажмите</div><input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'wholesale\')">';
+                wholesaleInner.innerHTML = '<div class="pdf-import-drop-icon">🏷️</div><div class="pdf-import-drop-title">Оптовый счёт</div><div class="pdf-import-drop-hint">Цены в PDF без НДС → в каталог закуп с НДС +20%. Нажмите или перетащите файл.</div><input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'wholesale\')">';
             }
         }
 
@@ -2172,61 +2257,69 @@
 
     <!-- Модальное окно импорта из PDF -->
     <div class="modal" id="pdfImportModal">
-        <div class="modal-content" style="max-width:800px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                <h2 style="margin:0;">📄 Импорт из PDF</h2>
-                <button class="btn-close" onclick="closePdfImport()">✕</button>
-            </div>
-
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+        <div class="modal-sheet wide pdf-import-sheet">
+            <div class="modal-header pdf-import-header">
                 <div>
-                    <div id="pdfDropZoneRetail" data-pdf-drop-zone="1" data-import-mode="retail" style="border:2px dashed #ddd;border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:all 0.2s;">
+                    <h2>Импорт из PDF</h2>
+                    <p class="pdf-import-lead">Счёт поставщика: режим <strong>Розница</strong> — строки в смету с РРЦ из файла; режим <strong>Опт</strong> — обновление закупа в каталоге (в PDF без НДС, в каталог с +20%). Колонки таблицы определяются автоматически; при ошибке откройте «Настройка колонок», поправьте номера (с 1) и перетащите PDF снова.</p>
+                </div>
+                <button type="button" class="btn-close" onclick="closePdfImport()" aria-label="Закрыть">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="pdf-import-tabs" role="tablist">
+                    <button type="button" class="pdf-import-tab active" data-tab="retail" id="pdfImportTabRetail" onclick="setPdfImportTab('retail')">Розница</button>
+                    <button type="button" class="pdf-import-tab" data-tab="wholesale" id="pdfImportTabWholesale" onclick="setPdfImportTab('wholesale')">Опт</button>
+                </div>
+
+                <div id="pdfImportPanelRetail" class="pdf-import-panel active">
+                    <div id="pdfDropZoneRetail" class="pdf-import-drop" data-pdf-drop-zone="1" data-import-mode="retail">
                         <div id="pdfDropRetailInner">
-                            <div style="font-size:38px;margin-bottom:8px;">🛒</div>
-                            <div style="font-size:14px;font-weight:600;">Розничный счёт (РРЦ)</div>
-                            <div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div>
+                            <div class="pdf-import-drop-icon">🛒</div>
+                            <div class="pdf-import-drop-title">Розничный счёт</div>
+                            <div class="pdf-import-drop-hint">РРЦ из PDF попадут в смету. Нажмите или перетащите файл.</div>
                             <input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'retail')">
                         </div>
                     </div>
-                    <div style="margin-top:8px;padding:8px;border:1px solid #e8e8e8;border-radius:8px;background:#fafafa;">
-                        <div style="font-size:11px;color:#555;font-weight:600;margin-bottom:6px;">Колонки (с 1) — после разбора PDF подставятся автоматически; при ошибке поправьте и перетащите файл снова</div>
-                        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;">
-                            <label style="font-size:10px;color:#666;">Наимен.<input id="pdfColNameRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Ед.<input id="pdfColUnitRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Кол-во<input id="pdfColQtyRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Розница<input id="pdfColRetailRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Закуп (необяз.)<input id="pdfColPurchaseRetail" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                    <details class="pdf-import-details">
+                        <summary>Настройка колонок (если разбор неверный)</summary>
+                        <div class="pdf-import-col-grid">
+                            <label>Наимен.<input id="pdfColNameRetail" type="number" min="1" step="1" placeholder="авто" title="Номер колонки с 1"></label>
+                            <label>Ед.<input id="pdfColUnitRetail" type="number" min="1" step="1" placeholder="авто"></label>
+                            <label>Кол-во<input id="pdfColQtyRetail" type="number" min="1" step="1" placeholder="авто"></label>
+                            <label>Розница<input id="pdfColRetailRetail" type="number" min="1" step="1" placeholder="авто"></label>
+                            <label>Закуп (необяз.)<input id="pdfColPurchaseRetail" type="number" min="1" step="1" placeholder="авто"></label>
                         </div>
-                        <div style="font-size:10px;color:#888;margin-top:6px;">Если вручную указать <b>наименование</b>, <b>кол-во</b> и <b>розницу</b>, при следующем перетаскивании используются они вместо авто.</div>
-                    </div>
+                        <p style="margin:0 14px 14px;font-size:11px;color:#90a4ae;line-height:1.45;">После разбора номера подставятся сами. Чтобы принудительно задать сетку, укажите <strong>наименование</strong>, <strong>кол-во</strong> и <strong>розницу</strong> и загрузите PDF ещё раз.</p>
+                    </details>
                 </div>
-                <div>
-                    <div id="pdfDropZoneWholesale" data-pdf-drop-zone="1" data-import-mode="wholesale" style="border:2px dashed #ddd;border-radius:12px;padding:18px;text-align:center;cursor:pointer;transition:all 0.2s;">
+
+                <div id="pdfImportPanelWholesale" class="pdf-import-panel">
+                    <div id="pdfDropZoneWholesale" class="pdf-import-drop" data-pdf-drop-zone="1" data-import-mode="wholesale">
                         <div id="pdfDropWholesaleInner">
-                            <div style="font-size:38px;margin-bottom:8px;">🏷️</div>
-                            <div style="font-size:14px;font-weight:600;">Оптовый счёт (в PDF без НДС)</div>
-                            <div style="font-size:12px;color:#999;margin-top:5px;">В каталог — закуп с НДС 20%. Перетащите PDF сюда или нажмите</div>
+                            <div class="pdf-import-drop-icon">🏷️</div>
+                            <div class="pdf-import-drop-title">Оптовый счёт</div>
+                            <div class="pdf-import-drop-hint">Цены в PDF без НДС → в каталог закуп с НДС +20%. Нажмите или перетащите файл.</div>
                             <input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'wholesale')">
                         </div>
                     </div>
-                    <div style="margin-top:8px;padding:8px;border:1px solid #e8e8e8;border-radius:8px;background:#fafafa;">
-                        <div style="font-size:11px;color:#555;font-weight:600;margin-bottom:6px;">Колонки (с 1) — после разбора PDF подставятся автоматически; при ошибке поправьте и перетащите файл снова</div>
-                        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;">
-                            <label style="font-size:10px;color:#666;">Наимен.<input id="pdfColNameWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Ед.<input id="pdfColUnitWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Кол-во<input id="pdfColQtyWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Розница<input id="pdfColRetailWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
-                            <label style="font-size:10px;color:#666;">Закуп/Опт<input id="pdfColPurchaseWholesale" type="number" min="1" step="1" placeholder="авто" style="width:100%;padding:5px;border:1px solid #ddd;border-radius:5px;"></label>
+                    <details class="pdf-import-details">
+                        <summary>Настройка колонок (если разбор неверный)</summary>
+                        <div class="pdf-import-col-grid">
+                            <label>Наимен.<input id="pdfColNameWholesale" type="number" min="1" step="1" placeholder="авто"></label>
+                            <label>Ед.<input id="pdfColUnitWholesale" type="number" min="1" step="1" placeholder="авто"></label>
+                            <label>Кол-во<input id="pdfColQtyWholesale" type="number" min="1" step="1" placeholder="авто"></label>
+                            <label>Розница<input id="pdfColRetailWholesale" type="number" min="1" step="1" placeholder="авто"></label>
+                            <label>Закуп/Опт<input id="pdfColPurchaseWholesale" type="number" min="1" step="1" placeholder="авто"></label>
                         </div>
-                        <div style="font-size:10px;color:#888;margin-top:6px;">Если вручную указать <b>наименование</b>, <b>кол-во</b> и <b>розницу</b>, при следующем перетаскивании используются они вместо авто (закуп по желанию).</div>
-                    </div>
+                        <p style="margin:0 14px 14px;font-size:11px;color:#90a4ae;line-height:1.45;">То же, что для розницы: при необходимости задайте три обязательных номера колонки и повторите загрузку.</p>
+                    </details>
                 </div>
-            </div>
-            <div style="margin-top:10px;font-size:12px;color:#666;">
-                Для розницы: цена попадёт в смету и обновит <b>РРЦ</b>. Для опта: в PDF цены без НДС — в каталог пишется <b>закуп с НДС 20%</b>, розница не меняется.
-            </div>
 
-            <div id="pdfResults" style="margin-top:15px;"></div>
+                <div id="pdfResults"></div>
+            </div>
+            <div class="modal-footer pdf-import-footer">
+                <button type="button" onclick="closePdfImport()">Закрыть</button>
+            </div>
         </div>
     </div>
 </body>
