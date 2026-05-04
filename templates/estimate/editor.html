@@ -1775,10 +1775,20 @@
             const importMode = (forcedMode === 'wholesale' || forcedMode === 'retail')
                 ? forcedMode
                 : (dropZone.getAttribute('data-import-mode') || 'retail');
+            const manualName = (document.getElementById('pdfColName')?.value || '').trim();
+            const manualUnit = (document.getElementById('pdfColUnit')?.value || '').trim();
+            const manualQty = (document.getElementById('pdfColQty')?.value || '').trim();
+            const manualRetail = (document.getElementById('pdfColRetail')?.value || '').trim();
+            const manualPurchase = (document.getElementById('pdfColPurchase')?.value || '').trim();
             fetch('/estimate/api/parse-pdf', {
                 method: 'POST',
                 body: (function(){
                     formData.append('mode', importMode);
+                    if (manualName) formData.append('col_name', manualName);
+                    if (manualUnit) formData.append('col_unit', manualUnit);
+                    if (manualQty) formData.append('col_qty', manualQty);
+                    if (manualRetail) formData.append('col_retail', manualRetail);
+                    if (manualPurchase) formData.append('col_purchase', manualPurchase);
                     return formData;
                 })()
             })
@@ -1802,8 +1812,9 @@
             if (data.header_layout && typeof data.header_layout === 'object') {
                 const hl = data.header_layout;
                 const idxText = (v) => (v == null ? '—' : (Number(v) + 1));
+                const src = data.header_layout_source === 'manual' ? 'ручной' : 'авто';
                 html += `<div style="margin:8px 0 10px;padding:8px 10px;border-radius:8px;background:#e3f2fd;border:1px solid #bbdefb;font-size:12px;color:#0d47a1;">
-                    Колонки из PDF: Наименование <b>${idxText(hl.name_idx)}</b>, Ед. <b>${idxText(hl.unit_idx)}</b>, Кол-во <b>${idxText(hl.qty_idx)}</b>, Розница <b>${idxText(hl.retail_idx)}</b>, Закуп/Опт <b>${idxText(hl.purchase_idx)}</b>.
+                    Колонки из PDF (${src}): Наименование <b>${idxText(hl.name_idx)}</b>, Ед. <b>${idxText(hl.unit_idx)}</b>, Кол-во <b>${idxText(hl.qty_idx)}</b>, Розница <b>${idxText(hl.retail_idx)}</b>, Закуп/Опт <b>${idxText(hl.purchase_idx)}</b>.
                 </div>`;
             }
             if (data.catalog_empty) {
@@ -2138,6 +2149,17 @@
             </div>
             <div style="margin-top:10px;font-size:12px;color:#666;">
                 Для розницы: цена попадёт в смету и обновит <b>РРЦ</b>. Для опта: обновятся <b>закуп/опт (с НДС)</b>, без перезаписи розницы.
+            </div>
+            <div style="margin-top:10px;padding:10px;border:1px solid #e0e0e0;border-radius:8px;background:#fafafa;">
+                <div style="font-size:12px;color:#444;font-weight:600;margin-bottom:6px;">Ручной выбор колонок (номер колонки в PDF, начиная с 1)</div>
+                <div style="display:grid;grid-template-columns:repeat(5,minmax(90px,1fr));gap:8px;">
+                    <label style="font-size:11px;color:#666;">Наименование<input id="pdfColName" type="number" min="1" step="1" placeholder="напр. 2" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
+                    <label style="font-size:11px;color:#666;">Ед.<input id="pdfColUnit" type="number" min="1" step="1" placeholder="напр. 3" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
+                    <label style="font-size:11px;color:#666;">Кол-во<input id="pdfColQty" type="number" min="1" step="1" placeholder="напр. 4" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
+                    <label style="font-size:11px;color:#666;">Розница<input id="pdfColRetail" type="number" min="1" step="1" placeholder="напр. 5" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
+                    <label style="font-size:11px;color:#666;">Закуп/Опт<input id="pdfColPurchase" type="number" min="1" step="1" placeholder="напр. 6" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;"></label>
+                </div>
+                <div style="font-size:11px;color:#888;margin-top:6px;">Если заполнено Наименование + Кол-во + Розница, импорт использует эти колонки вместо автоопределения.</div>
             </div>
 
             <div id="pdfResults" style="margin-top:15px;"></div>

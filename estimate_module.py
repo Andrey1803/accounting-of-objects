@@ -424,9 +424,6 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
         # Иногда «цена» одна, но есть явный «закуп/опт»: считаем её розницей.
         if name_idx is None or qty_idx is None or retail_idx is None:
             continue
-        if str(import_mode).lower() == 'wholesale' and purchase_idx is None:
-            # Для опта без явной колонки закупа лучше не фиксировать layout.
-            continue
         return {
             'name_idx': name_idx,
             'unit_idx': unit_idx,
@@ -435,6 +432,40 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
             'purchase_idx': purchase_idx,
         }
     return None
+
+
+def _pdf_parse_manual_header_layout(req):
+    """
+    Ручной выбор колонок от пользователя (1-based индексы из UI).
+    Возвращает layout с 0-based индексами или None.
+    """
+    def _to_idx(name):
+        raw = req.form.get(name) if hasattr(req, 'form') else None
+        if raw is None:
+            raw = req.args.get(name) if hasattr(req, 'args') else None
+        if raw is None:
+            return None
+        s = str(raw).strip()
+        if not s:
+            return None
+        try:
+            v = int(s)
+        except (TypeError, ValueError):
+            return None
+        return (v - 1) if v >= 1 else None
+
+    name_idx = _to_idx('col_name')
+    qty_idx = _to_idx('col_qty')
+    retail_idx = _to_idx('col_retail')
+    if name_idx is None or qty_idx is None or retail_idx is None:
+        return None
+    return {
+        'name_idx': name_idx,
+        'unit_idx': _to_idx('col_unit'),
+        'qty_idx': qty_idx,
+        'retail_idx': retail_idx,
+        'purchase_idx': _to_idx('col_purchase'),
+    }
 
 
 def _pdf_detect_table_material_row(row, import_mode='retail', header_layout=None):
@@ -1352,11 +1383,11 @@ def api_parse_pdf():
 
         mode_raw = (request.form.get('mode') or request.args.get('mode') or 'retail').strip().lower()
         import_mode = 'wholesale' if mode_raw in ('wholesale', 'opt', 'purchase', 'cost') else 'retail'
-        header_layout = None if from_cart_pdf else _pdf_detect_header_layout(all_rows, import_mode)
-        if import_mode == 'wholesale' and not from_cart_pdf and not header_layout:
-            return jsonify({
-                "error": "Не удалось строго определить колонки опта по заголовкам PDF. Проверьте, что в файле есть явные колонки «Наименование», «Кол-во», «Розница/Цена», «Закуп/Опт».",
-            }), 400
+        manual_header_layout = None if from_cart_pdf else _pdf_parse_manual_header_layout(request)
+        header_layout = manual_header_layout if manual_header_layout else (
+            None if from_cart_pdf else _pdf_detect_header_layout(all_rows, import_mode)
+        )
+        header_layout_source = 'manual' if manual_header_layout else ('auto' if header_layout else None)
 
         # Получаем каталог пользователя
         catalog_items = fetch_all(
@@ -1528,6 +1559,7 @@ def api_parse_pdf():
         return jsonify({
             "import_mode": import_mode,
             "header_layout": header_layout,
+            "header_layout_source": header_layout_source,
             "matched": matched,
             "unmatched": unmatched,
             "total_rows": len(all_rows),
