@@ -386,7 +386,58 @@ def _pdf_resolve_wholesale_unit_table(row, table_layout):
     return None
 
 
-def _pdf_detect_table_material_row(row, import_mode='retail'):
+def _pdf_header_norm(s):
+    t = str(s or '').lower().replace('ё', 'е').strip()
+    t = re.sub(r'[\s\xa0]+', ' ', t)
+    t = re.sub(r'[^a-zа-я0-9% ]', '', t)
+    return t
+
+
+def _pdf_detect_header_layout(rows, import_mode='retail'):
+    """
+    Один раз на файл: определить индексы колонок по строке заголовков.
+    Это убирает гадание по данным строкам.
+    """
+    if not rows:
+        return None
+    limit = min(len(rows), 80)
+    for row in rows[:limit]:
+        cells = [str(c or '').strip() for c in row]
+        if len(cells) < 4:
+            continue
+        n = [_pdf_header_norm(c) for c in cells]
+        name_idx = unit_idx = qty_idx = retail_idx = purchase_idx = None
+        for i, h in enumerate(n):
+            if not h:
+                continue
+            if name_idx is None and ('наимен' in h or h in ('товар',)):
+                name_idx = i
+            if unit_idx is None and (h.startswith('ед') or 'изм' in h):
+                unit_idx = i
+            if qty_idx is None and ('колво' in h or 'кол во' in h or 'колич' in h):
+                qty_idx = i
+            if retail_idx is None and ('розн' in h or 'ррц' in h or h == 'цена'):
+                retail_idx = i
+            if purchase_idx is None and ('закуп' in h or 'опт' in h or 'себестоим' in h):
+                purchase_idx = i
+
+        # Иногда «цена» одна, но есть явный «закуп/опт»: считаем её розницей.
+        if name_idx is None or qty_idx is None or retail_idx is None:
+            continue
+        if str(import_mode).lower() == 'wholesale' and purchase_idx is None:
+            # Для опта без явной колонки закупа лучше не фиксировать layout.
+            continue
+        return {
+            'name_idx': name_idx,
+            'unit_idx': unit_idx,
+            'qty_idx': qty_idx,
+            'retail_idx': retail_idx,
+            'purchase_idx': purchase_idx,
+        }
+    return None
+
+
+def _pdf_detect_table_material_row(row, import_mode='retail', header_layout=None):
     """
     Типичная таблица как на скрине сметы: Наименование | Ед. | Кол-во | Розница | Закуп | …
     Либо с ведущим № п/п: № | Наименование | Ед. | Кол-во | Розница | …
@@ -396,15 +447,28 @@ def _pdf_detect_table_material_row(row, import_mode='retail'):
         return None
     cells = [str(c or '').strip() for c in row]
     name_idx = unit_idx = qty_idx = retail_idx = None
+    purchase_idx = None
 
-    if len(cells) >= 5 and re.fullmatch(r'\d{1,4}', cells[0] or '') and _pdf_cell_is_unit(cells[2]):
-        name_idx, unit_idx = 1, 2
-        qty_idx, retail_idx = 3, 4
-    elif _pdf_cell_is_unit(cells[1]):
-        name_idx, unit_idx = 0, 1
-        qty_idx, retail_idx = 2, 3
+    if header_layout:
+        name_idx = header_layout.get('name_idx')
+        unit_idx = header_layout.get('unit_idx')
+        qty_idx = header_layout.get('qty_idx')
+        retail_idx = header_layout.get('retail_idx')
+        purchase_idx = header_layout.get('purchase_idx')
+        required = [name_idx, qty_idx, retail_idx]
+        if any(x is None for x in required):
+            return None
+        if max(int(name_idx), int(qty_idx), int(retail_idx)) >= len(cells):
+            return None
     else:
-        return None
+        if len(cells) >= 5 and re.fullmatch(r'\d{1,4}', cells[0] or '') and _pdf_cell_is_unit(cells[2]):
+            name_idx, unit_idx = 1, 2
+            qty_idx, retail_idx = 3, 4
+        elif _pdf_cell_is_unit(cells[1]):
+            name_idx, unit_idx = 0, 1
+            qty_idx, retail_idx = 2, 3
+        else:
+            return None
 
     name_cell = (cells[name_idx] or '').strip()
     if len(name_cell) < 2:
@@ -424,8 +488,9 @@ def _pdf_detect_table_material_row(row, import_mode='retail'):
     )
     # Для опта в табличных счетах закуп обычно в соседней колонке сразу после «Розница».
     # Если она валидна — приоритетнее эвристик хвоста (где может быть маржа/служебные числа).
-    if str(import_mode).lower() == 'wholesale' and (retail_idx + 1) < len(cells):
-        direct_purchase = _pdf_parse_money_cell(cells[retail_idx + 1])
+    if str(import_mode).lower() == 'wholesale':
+        direct_idx = purchase_idx if purchase_idx is not None else (retail_idx + 1)
+        direct_purchase = _pdf_parse_money_cell(cells[direct_idx]) if direct_idx < len(cells) else None
         if direct_purchase is not None and direct_purchase > 0:
             if list_price is None or direct_purchase < (float(list_price) * 1.25 + 0.01):
                 purchase_hint = float(direct_purchase)
@@ -434,6 +499,7 @@ def _pdf_detect_table_material_row(row, import_mode='retail'):
         'unit_idx': unit_idx,
         'qty_idx': qty_idx,
         'retail_idx': retail_idx,
+        'purchase_idx': purchase_idx,
         'purchase_from_tail': purchase_hint,
         'line_sum_from_tail': sum_hint,
     }
@@ -663,6 +729,11 @@ def _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf=False, table_layout=
     if from_cart_pdf:
         return _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=True, table_layout=None)
     if table_layout is not None:
+        pidx = table_layout.get('purchase_idx')
+        if pidx is not None and pidx < len(row):
+            pv = _pdf_parse_money_cell(row[pidx])
+            if pv is not None and pv > 0:
+                return round(float(pv), 4)
         w = _pdf_resolve_wholesale_unit_table(row, table_layout)
         if w is not None:
             return w
@@ -1281,6 +1352,11 @@ def api_parse_pdf():
 
         mode_raw = (request.form.get('mode') or request.args.get('mode') or 'retail').strip().lower()
         import_mode = 'wholesale' if mode_raw in ('wholesale', 'opt', 'purchase', 'cost') else 'retail'
+        header_layout = None if from_cart_pdf else _pdf_detect_header_layout(all_rows, import_mode)
+        if import_mode == 'wholesale' and not from_cart_pdf and not header_layout:
+            return jsonify({
+                "error": "Не удалось строго определить колонки опта по заголовкам PDF. Проверьте, что в файле есть явные колонки «Наименование», «Кол-во», «Розница/Цена», «Закуп/Опт».",
+            }), 400
 
         # Получаем каталог пользователя
         catalog_items = fetch_all(
@@ -1321,7 +1397,7 @@ def api_parse_pdf():
             if _PDF_TOTALS_ROW.search(row_text):
                 continue
 
-            table_layout = None if from_cart_pdf else _pdf_detect_table_material_row(row, import_mode)
+            table_layout = None if from_cart_pdf else _pdf_detect_table_material_row(row, import_mode, header_layout)
 
             pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf, table_layout)
             pdf_wholesale_unit = _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf, table_layout)
@@ -1451,6 +1527,7 @@ def api_parse_pdf():
 
         return jsonify({
             "import_mode": import_mode,
+            "header_layout": header_layout,
             "matched": matched,
             "unmatched": unmatched,
             "total_rows": len(all_rows),

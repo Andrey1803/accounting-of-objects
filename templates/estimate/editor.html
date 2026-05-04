@@ -1799,6 +1799,13 @@
                 Не найдено: <b style="color:#f44336">${data.unmatched_count}</b>
                 ${data.catalog_count != null ? ` | В каталоге материалов: <b>${data.catalog_count}</b>` : ''}
             </div>`;
+            if (data.header_layout && typeof data.header_layout === 'object') {
+                const hl = data.header_layout;
+                const idxText = (v) => (v == null ? '—' : (Number(v) + 1));
+                html += `<div style="margin:8px 0 10px;padding:8px 10px;border-radius:8px;background:#e3f2fd;border:1px solid #bbdefb;font-size:12px;color:#0d47a1;">
+                    Колонки из PDF: Наименование <b>${idxText(hl.name_idx)}</b>, Ед. <b>${idxText(hl.unit_idx)}</b>, Кол-во <b>${idxText(hl.qty_idx)}</b>, Розница <b>${idxText(hl.retail_idx)}</b>, Закуп/Опт <b>${idxText(hl.purchase_idx)}</b>.
+                </div>`;
+            }
             if (data.catalog_empty) {
                 html += '<div style="padding:12px;background:#fff3e0;border-radius:8px;margin-bottom:10px;font-size:13px;">Каталог материалов пуст — импорт не к чему привязать. Добавьте позиции в каталог (⚙️) или выберите товары вручную.</div>';
             }
