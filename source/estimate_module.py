@@ -446,21 +446,37 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
             continue
         n = [_pdf_header_norm(c) for c in cells]
         name_idx = unit_idx = qty_idx = retail_idx = purchase_idx = None
+        line_total_vat_idx = None
         for i, h in enumerate(n):
             if not h:
                 continue
             if name_idx is None and (
                 'наимен' in h
                 or h in ('товар',)
+                or h.startswith('товар')
                 or 'материал' in h
                 or 'номенклат' in h
             ):
                 name_idx = i
             if unit_idx is None and (h.startswith('ед') or 'изм' in h):
                 unit_idx = i
-            if qty_idx is None and ('колво' in h or 'кол во' in h or 'колич' in h):
+            if qty_idx is None and (
+                'колво' in h
+                or 'кол во' in h
+                or 'колич' in h
+                or ('кол' in h and 'чество' in h)
+                or h == 'кол'
+                or (len(h) <= 6 and h.startswith('кол') and 'коллек' not in h and 'колон' not in h)
+            ):
                 qty_idx = i
-            if retail_idx is None and ('розн' in h or 'ррц' in h or h == 'цена'):
+            if line_total_vat_idx is None and h.startswith('всего') and 'ндс' in h:
+                line_total_vat_idx = i
+            if retail_idx is None and (
+                'розн' in h
+                or 'ррц' in h
+                or h == 'цена'
+                or ('цен' in h and 'ндс' not in h and '%' not in h and 'скид' not in h)
+            ):
                 retail_idx = i
             if purchase_idx is None and ('закуп' in h or 'опт' in h or 'себестоим' in h):
                 purchase_idx = i
@@ -468,12 +484,22 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
         # Иногда «цена» одна, но есть явный «закуп/опт»: считаем её розницей.
         if name_idx is None or qty_idx is None or retail_idx is None:
             continue
+        retail_is_line_total_vat = False
+        if (
+            str(import_mode).lower() == 'retail'
+            and line_total_vat_idx is not None
+            and line_total_vat_idx != retail_idx
+        ):
+            # Счёт с НДС: колонка «Цена» — без НДС; для сметы по РРЦ нужна сумма строки с НДС (делим на кол-во).
+            retail_idx = line_total_vat_idx
+            retail_is_line_total_vat = True
         return {
             'name_idx': name_idx,
             'unit_idx': unit_idx,
             'qty_idx': qty_idx,
             'retail_idx': retail_idx,
             'purchase_idx': purchase_idx,
+            'retail_is_line_total_vat': retail_is_line_total_vat,
             'header_cells': [str(c or '').strip() for c in cells],
         }
     return None
@@ -572,7 +598,7 @@ def _pdf_detect_table_material_row(row, import_mode='retail', header_layout=None
         if direct_purchase is not None and direct_purchase > 0:
             if list_price is None or direct_purchase < (float(list_price) * 1.25 + 0.01):
                 purchase_hint = float(direct_purchase)
-    return {
+    out = {
         'name_idx': name_idx,
         'unit_idx': unit_idx,
         'qty_idx': qty_idx,
@@ -581,6 +607,9 @@ def _pdf_detect_table_material_row(row, import_mode='retail', header_layout=None
         'purchase_from_tail': purchase_hint,
         'line_sum_from_tail': sum_hint,
     }
+    if header_layout and header_layout.get('retail_is_line_total_vat'):
+        out['retail_is_line_total_vat'] = True
+    return out
 
 
 def _pdf_table_layout_header_fallback(row, import_mode, header_layout):
@@ -639,7 +668,7 @@ def _pdf_table_layout_header_fallback(row, import_mode, header_layout):
         if direct_purchase is not None and direct_purchase > 0:
             if list_price is None or direct_purchase < (float(list_price) * 1.25 + 0.01):
                 purchase_hint = float(direct_purchase)
-    return {
+    out = {
         'name_idx': name_idx,
         'unit_idx': unit_idx,
         'qty_idx': qty_idx,
@@ -648,6 +677,9 @@ def _pdf_table_layout_header_fallback(row, import_mode, header_layout):
         'purchase_from_tail': purchase_hint,
         'line_sum_from_tail': sum_hint,
     }
+    if header_layout and header_layout.get('retail_is_line_total_vat'):
+        out['retail_is_line_total_vat'] = True
+    return out
 
 
 def _pdf_table_layout_for_row(row, import_mode, header_layout):
@@ -747,9 +779,16 @@ def _pdf_floats_in_order_from_text(s):
 
 
 def _pdf_first_matching_triplet(vals):
-    """Тройка (кол-во, цена за ед., сумма) где q×p ≈ t."""
+    """
+    Тройка (кол-во, цена за ед., сумма) где q×p ≈ t.
+    Если подходит несколько окон подряд, берём тройку с наибольшей «суммой» c:
+    иначе часто выбирается промежуточное число (частичная сумма / НДС / скидка),
+    из‑за чего количество и цена занижаются примерно вдвое.
+    """
     if len(vals) < 3:
         return None
+    best = None
+    best_c = -1.0
     for i in range(len(vals) - 2):
         a, b, c = vals[i], vals[i + 1], vals[i + 2]
         if a <= 0 or b <= 0 or c <= 0:
@@ -757,8 +796,10 @@ def _pdf_first_matching_triplet(vals):
         prod = a * b
         tol = max(0.015 * abs(c), 0.02 * abs(prod), 0.05)
         if abs(prod - c) <= tol:
-            return (a, b, c)
-    return None
+            if c > best_c + 1e-9:
+                best = (a, b, c)
+                best_c = c
+    return best
 
 
 def _pdf_qty_from_triplet(vals):
@@ -858,6 +899,14 @@ def _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=False, table_layout=No
         if ri < len(row):
             v = _pdf_parse_money_cell(row[ri])
             if v is not None and v > 0:
+                if table_layout.get('retail_is_line_total_vat'):
+                    q = _pdf_extract_qty(row, from_cart_pdf=from_cart_pdf, table_layout=table_layout)
+                    try:
+                        fq = float(q)
+                    except (TypeError, ValueError):
+                        fq = 0.0
+                    if fq > 0:
+                        return round(float(v) / fq, 4)
                 return v
     whole = ' '.join(str(c or '') for c in row)
     vals = _pdf_row_numeric_tail_vals(row)
