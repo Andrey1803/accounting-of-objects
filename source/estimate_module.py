@@ -218,10 +218,10 @@ def _pdf_parse_money_cell(cell):
     return v
 
 
-def _pdf_table_tail_purchase_and_sum(cells, retail_idx):
+def _pdf_table_tail_purchase_and_sum(cells, retail_idx, qty_hint=None, list_price=None):
     """
-    После колонки «розница»: закуп, (маржа %), сумма — маржу пропускаем.
-    Возвращает (закуп_за_ед или None, сумма_строки или None).
+    После колонки «розница»: закуп, (НДС 1,2 / маржа %), сумма.
+    Не считать первое число закупом, если это коэф. НДС или если другое число даёт сумму×кол-во.
     """
     money_vals = []
     for i in range(retail_idx + 1, len(cells)):
@@ -231,11 +231,114 @@ def _pdf_table_tail_purchase_and_sum(cells, retail_idx):
         v = _pdf_parse_money_cell(s)
         if v is not None:
             money_vals.append(v)
+    if not money_vals:
+        return None, None
+
+    s_last = money_vals[-1]
+    head = money_vals[:-1] if len(money_vals) >= 2 else []
+
+    try:
+        q = float(qty_hint) if qty_hint is not None else 0.0
+    except (TypeError, ValueError):
+        q = 0.0
+
+    if q > 0 and len(head) >= 1:
+        match_vs_sum = []
+        for v in head:
+            fv = float(v)
+            if 1.17 <= fv <= 1.22:
+                continue
+            if _pdf_line_amount_matches_unit_qty(fv, q, s_last):
+                match_vs_sum.append(fv)
+        if len(match_vs_sum) == 1:
+            return match_vs_sum[0], s_last
+        if len(match_vs_sum) > 1:
+            if list_price is not None:
+                try:
+                    lp = float(list_price)
+                    below = [x for x in match_vs_sum if x < lp - 1e-6]
+                    if len(below) == 1:
+                        return below[0], s_last
+                    if below:
+                        return min(below), s_last
+                except (TypeError, ValueError):
+                    pass
+            return min(match_vs_sum), s_last
+
     if len(money_vals) >= 2:
-        return money_vals[0], money_vals[-1]
-    if len(money_vals) == 1:
-        return None, money_vals[0]
-    return None, None
+        first_f = float(money_vals[0])
+        if 1.17 <= first_f <= 1.22:
+            if len(money_vals) >= 3:
+                return float(money_vals[1]), s_last
+            return None, s_last
+        return money_vals[0], s_last
+    return None, money_vals[0]
+
+
+def _pdf_line_amount_matches_unit_qty(unit_price, qty, line_sum, rel_tol=0.025):
+    """Проверка: цена_за_ед × кол-во ≈ сумма строки (как в счёте/смете)."""
+    try:
+        u = float(unit_price)
+        q = float(qty)
+        s = float(line_sum)
+    except (TypeError, ValueError):
+        return False
+    if u <= 0 or q <= 0 or s <= 0:
+        return False
+    prod = u * q
+    tol = max(0.05, rel_tol * s, rel_tol * prod)
+    return abs(prod - s) <= tol
+
+
+def _pdf_resolve_wholesale_unit_table(row, table_layout):
+    """
+    Цена закупа с НДС за единицу. Сумма в смете часто = qty×розница, поэтому не выбираем закуп
+    только по совпадению с суммой. Опираемся на колонку закупа из хвоста (уже без «1,2 НДС»)
+    и на то, что закуп < розницы в той же строке.
+    """
+    qty = _pdf_extract_qty(row, from_cart_pdf=False, table_layout=table_layout)
+    if qty is None or qty <= 0:
+        qty = 1.0
+    ri = table_layout['retail_idx']
+    list_col = _pdf_parse_money_cell(row[ri]) if ri < len(row) else None
+    p_hint = table_layout.get('purchase_from_tail')
+    s_line = table_layout.get('line_sum_from_tail')
+
+    if p_hint and 1.17 <= float(p_hint) <= 1.22:
+        p_hint = None
+
+    use_hint = float(p_hint) if p_hint is not None and float(p_hint) > 0 else None
+    hint_rejected_low = False
+
+    if use_hint is not None and list_col is not None:
+        ph, lp = float(use_hint), float(list_col)
+        if ph < lp - 1e-6:
+            if lp > 40 and ph < lp * 0.05:
+                use_hint = None
+                hint_rejected_low = True
+            else:
+                return round(ph, 4)
+        elif ph > lp * 1.35 + 0.01:
+            trial = ph / float(qty)
+            if 0.01 < trial < lp - 1e-6:
+                return round(trial, 4)
+            if s_line and s_line > 0:
+                per = float(s_line) / float(qty)
+                if 0.01 < per < lp - 1e-6:
+                    return round(per, 4)
+            return round(lp, 4)
+    elif use_hint is not None:
+        return round(float(use_hint), 4)
+    elif list_col is not None and not hint_rejected_low:
+        return round(float(list_col), 4)
+
+    if s_line and s_line > 0:
+        per = float(s_line) / float(qty)
+        if list_col is not None and per < float(list_col) - 1e-6:
+            return round(per, 4)
+        if list_col is None:
+            return round(per, 4)
+    return None
 
 
 def _pdf_detect_table_material_row(row):
@@ -264,7 +367,11 @@ def _pdf_detect_table_material_row(row):
     if _PDF_HEADER_START.search(low) or _PDF_TOTALS_ROW.search(low):
         return None
 
-    purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(cells, retail_idx)
+    qty_hint = _pdf_parse_money_cell(cells[qty_idx])
+    list_price = _pdf_parse_money_cell(cells[retail_idx])
+    purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(
+        cells, retail_idx, qty_hint, list_price
+    )
     return {
         'name_idx': name_idx,
         'unit_idx': unit_idx,
@@ -498,10 +605,21 @@ def _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf=False, table_layout=
     """
     if from_cart_pdf:
         return _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=True, table_layout=None)
-    if table_layout is not None and table_layout.get('purchase_from_tail') is not None:
-        p = float(table_layout['purchase_from_tail'])
-        if p > 0:
-            return round(p, 4)
+    if table_layout is not None:
+        w = _pdf_resolve_wholesale_unit_table(row, table_layout)
+        if w is not None:
+            return w
+        ri = table_layout['retail_idx']
+        list_top = _pdf_parse_money_cell(row[ri]) if ri < len(row) else None
+        for j in range(ri + 1, min(ri + 5, len(row))):
+            v = _pdf_parse_money_cell(row[j])
+            if v is None:
+                continue
+            fv = float(v)
+            if 1.17 <= fv <= 1.22:
+                continue
+            if list_top is not None and fv < float(list_top) - 1e-6:
+                return round(fv, 4)
     qty = _pdf_extract_qty(row, from_cart_pdf=False, table_layout=table_layout)
     if qty is None or qty <= 0:
         return None
@@ -510,10 +628,13 @@ def _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf=False, table_layout=
     money_vals = [v for v in vals if v > 0 and (abs(v - round(v)) > 1e-9 or v >= 1000)]
     if not money_vals:
         return None
-    total_with_vat = money_vals[-1]
-    unit_price = total_with_vat / qty
-    if 0.0001 <= unit_price <= 1_000_000:
-        return round(unit_price, 4)
+    fq = float(qty)
+    for v in reversed(money_vals):
+        if 1.17 <= v <= 1.22:
+            continue
+        unit_price = v / fq
+        if 0.0001 <= unit_price <= 1_000_000:
+            return round(unit_price, 4)
     return None
 
 
