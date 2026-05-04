@@ -762,6 +762,9 @@ def integration_create_object_from_taskmgr():
 
     Разные задачи — разные объекты учёта (ключ task_id). Один заказчик может иметь общую карточку
     clients или отдельные: см. INTEGRATION_REUSE_CLIENT_BY_PHONE и поле dedupe_client в JSON.
+
+    Для уже существующего объекта: поле advance_delta (число, BYN) прибавляется к advance
+    (поступления/сдача из диспетчера «выручка на руках» с привязкой к задаче).
     """
     try:
         if not _integration_api_key_matches():
@@ -788,6 +791,7 @@ def integration_create_object_from_taskmgr():
             return jsonify({'error': 'task_id is required'}), 400
         reuse_client_card = _integration_should_reuse_client_card(data)
         advance_payload = _integration_parse_money(data.get('advance'))
+        advance_delta_payload = _integration_parse_money(data.get('advance_delta'))
         source_key = f'taskmgr:{task_id}'
         existing = fetch_one(
             'SELECT * FROM objects WHERE user_id = ? AND integration_source = ?',
@@ -803,7 +807,15 @@ def integration_create_object_from_taskmgr():
             date_start_in = (data.get('date_start') or '').strip()
             phone = str(data.get('customer_phone') or '').strip()
             address = str(data.get('object_address') or '').strip()
-            has_payload = bool(contact_in or company_in or phone or address or date_start_in or advance_payload is not None)
+            has_payload = bool(
+                contact_in
+                or company_in
+                or phone
+                or address
+                or date_start_in
+                or advance_payload is not None
+                or advance_delta_payload is not None
+            )
             card_name = _integration_client_card_name(contact_in, company_in)
             client_id, client_name = _integration_find_or_create_client(
                 target_user_id, card_name, phone, address, reuse_existing=True
@@ -815,7 +827,19 @@ def integration_create_object_from_taskmgr():
                 return jsonify({'ok': True, 'idempotent': True, 'object': existing}), 200
             name_new = (data.get('name') or '').strip() or (existing.get('name') or '')
             date_start_new = date_start_in or (existing.get('date_start') or None)
-            advance_new = existing.get('advance', 0) if advance_payload is None else advance_payload
+            if advance_delta_payload is not None:
+                try:
+                    base_adv = float(existing.get('advance') or 0)
+                except (TypeError, ValueError):
+                    base_adv = 0.0
+                advance_new = base_adv + float(advance_delta_payload)
+            elif advance_payload is not None:
+                advance_new = advance_payload
+            else:
+                try:
+                    advance_new = float(existing.get('advance') or 0)
+                except (TypeError, ValueError):
+                    advance_new = 0.0
             execute(
                 'UPDATE objects SET name=?, date_start=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
                 (name_new, date_start_new, client_name, client_id, advance_new, existing['id'], target_user_id),

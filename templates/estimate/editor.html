@@ -107,7 +107,7 @@
             <table class="items-table"><thead><tr>
                 <th style="width:36px;text-align:center;" title="Выделить все"><input type="checkbox" aria-label="Выделить все материалы" onchange="toggleSectionSelectAll('material', this.checked)"></th>
                 <th width="22%">Наименование</th><th width="8%">Ед.</th><th width="8%">Кол-во</th>
-                <th width="12%">Розница</th><th width="12%">Закуп</th><th width="12%">Сумма</th>
+                <th width="11%">Розница</th><th width="11%">Закуп</th><th width="10%">Маржа %</th><th width="12%">Сумма</th>
             </tr></thead><tbody id="mat-body"></tbody></table>
             <div id="mat-cards"></div>
         </div>
@@ -772,9 +772,16 @@
             var tBody = document.getElementById(tableId);
             tBody.innerHTML = list.map((item, idx) => {
                 var purch = (item.purchase_price != null && item.purchase_price !== '') ? item.purchase_price : 0;
+                var marginPct = 0;
+                if (isMat) {
+                    var priceNum = parseFloat(item.price) || 0;
+                    var purchaseNum = parseFloat(purch) || 0;
+                    marginPct = priceNum > 0 ? ((priceNum - purchaseNum) / priceNum * 100) : 0;
+                }
                 var priceCells = isMat
                     ? ('<td><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></td>'+
-                       '<td><input type="number" value="'+purch+'" step="0.01" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></td>')
+                       '<td><input type="number" value="'+purch+'" step="0.01" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></td>'+
+                       '<td style="text-align:center;font-weight:600;color:'+(marginPct >= 30 ? '#2e7d32' : (marginPct >= 15 ? '#f57f17' : '#c62828'))+'">'+marginPct.toFixed(1)+'%</td>')
                     : ('<td><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></td>');
                 return '<tr>'+
                     '<td style="text-align:center;vertical-align:middle;"><input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'" aria-label="Выбрать строку"></td>'+
@@ -795,6 +802,7 @@
                     ? ('<div style="display:flex; gap:10px; flex-wrap:wrap;">'+
                         '<div class="field" style="flex:1;min-width:110px"><label>Розница</label><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></div>'+
                         '<div class="field" style="flex:1;min-width:110px"><label>Закуп</label><input type="number" value="'+purch+'" step="0.01" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></div>'+
+                        '<div class="field" style="flex:1;min-width:110px"><label>Маржа</label><input type="text" value="'+((parseFloat(item.price)||0) > 0 ? ((((parseFloat(item.price)||0)-(parseFloat(purch)||0))/(parseFloat(item.price)||0)*100).toFixed(1)+'%') : '0.0%')+'" disabled></div>'+
                       '</div>')
                     : ('<div class="field"><label>Расценка</label><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></div>');
                 return '<div class="item-card">'+
@@ -1708,9 +1716,14 @@
             const formData = new FormData();
             formData.append('file', file);
 
+            const modeSel = document.getElementById('pdfImportMode');
+            const importMode = modeSel ? modeSel.value : 'retail';
             fetch('/estimate/api/parse-pdf', {
                 method: 'POST',
-                body: formData
+                body: (function(){
+                    formData.append('mode', importMode);
+                    return formData;
+                })()
             })
             .then(r => r.json())
             .then(data => {
@@ -1733,18 +1746,24 @@
             }
 
             if (data.matched.length > 0) {
-                html += '<p style="font-size:12px;color:#666;margin:6px 0;">Галочка по умолчанию только при уверенности ≥75%. В смету подставляется <b>цена из PDF</b> (закупка — пропорционально каталогу). Каталог — только для привязки позиции.</p>';
+                const importMode = data.import_mode === 'wholesale' ? 'wholesale' : 'retail';
+                html += '<p style="font-size:12px;color:#666;margin:6px 0;">Галочка по умолчанию только при уверенности ≥75%. ' + (importMode === 'retail'
+                    ? 'В смету подставляется <b>розничная цена из PDF</b>.'
+                    : 'При применении обновляется <b>оптовая/закупочная цена с НДС</b>; розница не перезаписывается.'
+                    ) + '</p>';
                 html += '<h4 style="margin:10px 0 5px;">✅ Совпавшие позиции:</h4>';
                 html += '<div style="max-height:300px;overflow-y:auto;border:1px solid #ddd;border-radius:6px;">';
                 html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-                html += '<tr style="background:#f5f5f5;"><th style="padding:6px;text-align:left;">✓</th><th style="padding:6px;text-align:left;">Как в PDF</th><th style="padding:6px;text-align:left;">Каталог</th><th style="padding:6px;">Кол-во</th><th style="padding:6px;">Ед.</th><th style="padding:6px;">Цена в смете</th><th style="padding:6px;">%</th></tr>';
+                html += '<tr style="background:#f5f5f5;"><th style="padding:6px;text-align:left;">✓</th><th style="padding:6px;text-align:left;">Как в PDF</th><th style="padding:6px;text-align:left;">Каталог</th><th style="padding:6px;">Кол-во</th><th style="padding:6px;">Ед.</th><th style="padding:6px;">Цена</th><th style="padding:6px;">%</th></tr>';
 
                 data.matched.forEach((m, i) => {
                     const confColor = m.confidence >= 80 ? '#4CAF50' : (m.confidence >= 65 ? '#FF9800' : '#f44336');
                     const preChecked = ((!m.ambiguous && m.confidence >= 75) || m.confidence >= 88) ? 'checked' : '';
-                    const rp = (m.file_retail_unit != null && m.file_retail_unit > 0)
-                        ? Number(m.file_retail_unit)
-                        : (Number(m.item.retail_price) || 0);
+                    const unitPrice = (m.file_unit_price != null && m.file_unit_price > 0)
+                        ? Number(m.file_unit_price)
+                        : (importMode === 'wholesale'
+                            ? (Number(m.file_wholesale_unit) || Number(m.item.purchase_price) || 0)
+                            : (Number(m.file_retail_unit) || Number(m.item.retail_price) || 0));
                     const pdfUnit = esc(m.unit || 'шт');
                     const pdfSnippet = esc((m.row_text || '').length > 120 ? (m.row_text || '').slice(0, 117) + '…' : (m.row_text || ''));
                     const ambHint = m.ambiguous ? ' <small style="color:#E65100;font-weight:600;">⚠ проверьте</small>' : '';
@@ -1754,7 +1773,7 @@
                         <td style="padding:6px;">${esc(m.item.name)}${ambHint}<br><small style="color:#999;">${esc(m.item.brand||'')} ${esc(m.item.category||'')}</small></td>
                         <td style="padding:6px;text-align:center;"><input type="number" id="pdf-qty-${i}" value="${m.qty}" min="0.1" step="0.1" style="width:60px;padding:3px;border:1px solid #ddd;border-radius:3px;"></td>
                         <td style="padding:6px;text-align:center;color:#555;">${pdfUnit}</td>
-                        <td style="padding:6px;text-align:right;">${rp.toFixed(2)}</td>
+                        <td style="padding:6px;text-align:right;">${unitPrice.toFixed(2)}</td>
                         <td style="padding:6px;text-align:center;color:${confColor};font-weight:600;">${m.confidence}%</td>
                     </tr>`;
                 });
@@ -1763,7 +1782,7 @@
                 html += `<div style="margin-top:10px;display:flex;gap:8px;">
                     <button class="sort-btn" onclick="selectAllMatches(true)" style="flex:1;">☑ Выбрать все</button>
                     <button class="sort-btn" onclick="selectAllMatches(false)" style="flex:1;">☐ Снять все</button>
-                    <button class="sort-btn" style="flex:2;background:#4CAF50;color:white;font-weight:600;" onclick="importSelectedMatches()">📥 Добавить в смету</button>
+                    <button class="sort-btn" style="flex:2;background:#4CAF50;color:white;font-weight:600;" onclick="importSelectedMatches()">📥 Применить выбранные</button>
                 </div>`;
             }
 
@@ -1792,8 +1811,11 @@
         async function importSelectedMatches() {
             if (!window._pdfMatchedData) return;
 
-            // Сначала гарантируем что смета создана
-            if (!estimateId) {
+            const modeSel = document.getElementById('pdfImportMode');
+            const importMode = modeSel ? modeSel.value : 'retail';
+
+            // Для режима РРЦ гарантируем, что смета создана.
+            if (importMode === 'retail' && !estimateId) {
                 try {
                     var data = {
                         date: document.getElementById('date').value || new Date().toISOString().split('T')[0],
@@ -1824,7 +1846,7 @@
                 }
             }
 
-            // Теперь добавляем все выбранные позиции ПОСЛЕДОВАТЕЛЬНО
+            // Теперь применяем выбранные позиции ПОСЛЕДОВАТЕЛЬНО
             let added = 0;
             for (var i = 0; i < window._pdfMatchedData.length; i++) {
                 const m = window._pdfMatchedData[i];
@@ -1834,19 +1856,70 @@
                     const qty = parseFloat(qtyInput.value) || 1;
                     if (qty > 0) {
                         try {
-                            var useRetail = (m.file_retail_unit != null && m.file_retail_unit > 0)
-                                ? Number(m.file_retail_unit)
-                                : (Number(m.item.retail_price) || 0);
-                            var usePurchase = (m.file_purchase_unit != null && m.file_purchase_unit >= 0)
-                                ? Number(m.file_purchase_unit)
-                                : (Number(m.item.purchase_price) || 0);
-                            await doAddFromCatalog({
-                                name: m.item.name,
-                                unit: m.unit || 'шт',
-                                retail_price: useRetail,
-                                purchase_price: usePurchase
-                            }, qty);
-                            added++;
+                            if (importMode === 'retail') {
+                                var useRetail = (m.file_retail_unit != null && m.file_retail_unit > 0)
+                                    ? Number(m.file_retail_unit)
+                                    : (Number(m.item.retail_price) || 0);
+                                var usePurchase = (m.file_purchase_unit != null && m.file_purchase_unit >= 0)
+                                    ? Number(m.file_purchase_unit)
+                                    : (Number(m.item.purchase_price) || 0);
+                                await fetchCsrf('/estimate/api/catalog/materials/' + m.item.id, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
+                                    body: JSON.stringify({
+                                        name: m.item.name,
+                                        unit: m.unit || 'шт',
+                                        category: m.item.category || '',
+                                        article: m.item.article || '',
+                                        brand: m.item.brand || '',
+                                        item_type: m.item.item_type || '',
+                                        purchase_price: Number(m.item.purchase_price) || 0,
+                                        wholesale_price: Number(m.item.wholesale_price) || 0,
+                                        retail_price: useRetail,
+                                        min_wholesale_qty: 10,
+                                        description: ''
+                                    })
+                                });
+                                await doAddFromCatalog({
+                                    name: m.item.name,
+                                    unit: m.unit || 'шт',
+                                    retail_price: useRetail,
+                                    purchase_price: usePurchase
+                                }, qty);
+                                added++;
+                            } else {
+                                var useWholesaleWithVat = (m.file_wholesale_unit != null && m.file_wholesale_unit > 0)
+                                    ? Number(m.file_wholesale_unit)
+                                    : (Number(m.item.purchase_price) || 0);
+                                var updBody = {
+                                    name: m.item.name,
+                                    unit: m.unit || 'шт',
+                                    category: m.item.category || '',
+                                    article: m.item.article || '',
+                                    brand: m.item.brand || '',
+                                    item_type: m.item.item_type || '',
+                                    purchase_price: useWholesaleWithVat,
+                                    wholesale_price: useWholesaleWithVat,
+                                    retail_price: Number(m.item.retail_price) || 0,
+                                    min_wholesale_qty: 10,
+                                    description: ''
+                                };
+                                await fetchCsrf('/estimate/api/catalog/materials/' + m.item.id, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
+                                    body: JSON.stringify(updBody)
+                                });
+                                items.forEach(function(it){
+                                    if (it.section !== 'material') return;
+                                    if ((it.name || '').trim().toLowerCase() !== (m.item.name || '').trim().toLowerCase()) return;
+                                    it.purchase_price = useWholesaleWithVat;
+                                    var p = parseFloat(it.price) || 0;
+                                    var q = parseFloat(it.quantity) || 0;
+                                    it.material_profit = (p - useWholesaleWithVat) * q;
+                                    it.total = p * q;
+                                });
+                                added++;
+                            }
                         } catch(e) {
                             console.error('Ошибка добавления позиции ' + m.item.name + ':', e);
                         }
@@ -1855,7 +1928,13 @@
             }
 
             if (added > 0) {
-                alert(`Добавлено ${added} позиций в смету №${document.getElementById('estimate-number').textContent}`);
+                if (importMode === 'retail') {
+                    alert(`Добавлено ${added} позиций в смету №${document.getElementById('estimate-number').textContent}`);
+                } else {
+                    render();
+                    await saveEstimateToDB();
+                    alert(`Обновлено ${added} оптовых цен (с НДС). Розничные цены не изменялись.`);
+                }
                 closePdfImport();
                 document.getElementById('pdfDropZone').innerHTML = '<div style="font-size:48px;margin-bottom:10px;">📄</div><div style="font-size:14px;font-weight:600;">Перетащите PDF сюда</div><div style="font-size:12px;color:#999;margin-top:5px;">или нажмите для выбора файла</div><input type="file" id="pdfFileInput" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event)">';
             } else {
@@ -1898,6 +1977,13 @@
                 <div style="font-size:14px;font-weight:600;">Перетащите PDF сюда</div>
                 <div style="font-size:12px;color:#999;margin-top:5px;">или нажмите для выбора файла</div>
                 <input type="file" id="pdfFileInput" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event)">
+            </div>
+            <div style="margin-top:10px;">
+                <label for="pdfImportMode" style="display:block;font-size:12px;color:#666;margin-bottom:4px;">Режим импорта</label>
+                <select id="pdfImportMode" style="padding:8px;border:1px solid #ddd;border-radius:6px;">
+                    <option value="retail">РРЦ (розница): добавить в смету + обновить retail</option>
+                    <option value="wholesale">ОПТ с НДС: обновить закупку/опт (без изменения розницы)</option>
+                </select>
             </div>
 
             <div id="pdfResults" style="margin-top:15px;"></div>

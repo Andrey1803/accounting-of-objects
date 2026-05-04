@@ -379,6 +379,28 @@ def _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=False):
     return None
 
 
+def _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf=False):
+    """
+    Цена за единицу с НДС (для оптового счёта).
+    Для cart-ready PDF без колонки НДС возвращаем обычную цену за единицу.
+    """
+    if from_cart_pdf:
+        return _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=True)
+    qty = _pdf_extract_qty(row, from_cart_pdf=False)
+    if qty is None or qty <= 0:
+        return None
+    whole = ' '.join(str(c or '') for c in row)
+    vals = _pdf_floats_in_order_from_text(whole)
+    money_vals = [v for v in vals if v > 0 and (abs(v - round(v)) > 1e-9 or v >= 1000)]
+    if not money_vals:
+        return None
+    total_with_vat = money_vals[-1]
+    unit_price = total_with_vat / qty
+    if 0.0001 <= unit_price <= 1_000_000:
+        return round(unit_price, 4)
+    return None
+
+
 def _pdf_extract_unit(row):
     """Ед. изм. из строки PDF (для сметы), не из карточки каталога."""
     whole = ' '.join(str(c or '') for c in row)
@@ -936,9 +958,12 @@ def api_parse_pdf():
         if from_cart_pdf:
             all_rows = cart_rows
 
+        mode_raw = (request.form.get('mode') or request.args.get('mode') or 'retail').strip().lower()
+        import_mode = 'wholesale' if mode_raw in ('wholesale', 'opt', 'purchase', 'cost') else 'retail'
+
         # Получаем каталог пользователя
         catalog_items = fetch_all(
-            "SELECT id, name, article, brand, category, retail_price, purchase_price, item_type FROM catalog_materials WHERE user_id = ?",
+            "SELECT id, name, article, brand, category, retail_price, purchase_price, wholesale_price, item_type FROM catalog_materials WHERE user_id = ?",
             (current_user.id,)
         )
 
@@ -976,6 +1001,8 @@ def api_parse_pdf():
                 continue
 
             pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf)
+            pdf_wholesale_unit = _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf)
+            file_unit_price = pdf_wholesale_unit if import_mode == 'wholesale' else pdf_retail_unit
 
             article_match_item = _pdf_match_by_article(row_text, row, catalog_by_article)
             best_match = article_match_item
@@ -996,7 +1023,9 @@ def api_parse_pdf():
 
             if not best_match and clean_name:
                 best_match, best_score, second_score, lex_ratio, word_cov = _pdf_fuzzy_best_match(
-                    clean_name, catalog_search_index, pdf_retail_unit
+                    clean_name,
+                    catalog_search_index,
+                    (pdf_retail_unit if import_mode == 'retail' else None),
                 )
 
             reach_match = (
@@ -1039,6 +1068,7 @@ def api_parse_pdf():
                         'category': best_match['category'],
                         'retail_price': best_match['retail_price'],
                         'purchase_price': best_match['purchase_price'],
+                        'wholesale_price': best_match.get('wholesale_price'),
                         'item_type': best_match['item_type'],
                     },
                     'qty': qty,
@@ -1048,10 +1078,18 @@ def api_parse_pdf():
                     'file_retail_unit': round(float(pdf_retail_unit), 4)
                     if pdf_retail_unit is not None
                     else None,
+                    'file_wholesale_unit': round(float(pdf_wholesale_unit), 4)
+                    if pdf_wholesale_unit is not None
+                    else None,
+                    'file_unit_price': round(float(file_unit_price), 4)
+                    if file_unit_price is not None
+                    else None,
                     'file_purchase_unit': file_purchase,
                 })
             else:
                 if (
+                    import_mode == 'retail'
+                    and
                     not best_match
                     and pdf_retail_unit is not None
                     and catalog_items
@@ -1075,6 +1113,7 @@ def api_parse_pdf():
                 })
 
         return jsonify({
+            "import_mode": import_mode,
             "matched": matched,
             "unmatched": unmatched,
             "total_rows": len(all_rows),
