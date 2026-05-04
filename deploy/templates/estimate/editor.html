@@ -612,6 +612,10 @@
             return m ? m.getAttribute('content') : '';
         }
 
+        function _pdfNormName(s) {
+            return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+        }
+
         // Универсальный fetch с автоматическим обновлением CSRF токена
         async function fetchCsrf(url, options) {
             var token = getCsrf();
@@ -1517,7 +1521,8 @@
             doAddFromCatalog(item, qty);
         }
 
-        async function doAddFromCatalog(item, qty) {
+        async function doAddFromCatalog(item, qty, sectionOverride) {
+            var section = sectionOverride || currentType;
             var price = item.retail_price || item.price;
             var purchase = item.purchase_price || 0;
             var wholesale = 0;
@@ -1535,7 +1540,7 @@
                         'Content-Type':'application/json',
                         'X-CSRF-Token': getCsrf()
                     },
-                    body: JSON.stringify({ section: currentType, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale })
+                    body: JSON.stringify({ section: section, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale })
                 });
                 if (!res.ok) {
                     var errText = await res.text();
@@ -1544,7 +1549,7 @@
                 }
                 var data = await res.json();
                 console.log('Item added successfully, id=' + data.id);
-                var newItem = { id: data.id, section: currentType, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale, total: total, material_profit: profit, _new: true };
+                var newItem = { id: data.id, section: section, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale, total: total, material_profit: profit, _new: true };
                 items.push(newItem);
                 // Сохраняем в IndexedDB
                 await saveEstimateToDB();
@@ -1554,14 +1559,14 @@
                 console.error('doAddFromCatalog error:', e);
                 // Офлайн - сохраняем локально
                 var tempId = Date.now() + Math.random();
-                var newItem = { id: tempId, section: currentType, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale, total: total, material_profit: profit, _new: true, _offline: true };
+                var newItem = { id: tempId, section: section, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale, total: total, material_profit: profit, _new: true, _offline: true };
                 items.push(newItem);
 
                 // Добавляем в очередь синхронизации
                 await OfflineDB.addToQueue({
                     method: 'POST',
                     url: '/estimate/api/estimates/'+estimateId+'/items',
-                    body: { section: currentType, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale }
+                    body: { section: section, name: item.name, unit: item.unit, quantity: qty, price, purchase_price: purchase, wholesale_price: wholesale }
                 });
 
                 // Сохраняем смету в IndexedDB
@@ -1864,7 +1869,15 @@
             if (!dropZone) return;
             dropZone.classList.remove('dragover');
 
-            const file = e.dataTransfer ? e.dataTransfer.files[0] : e.target.files[0];
+            var file = null;
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+                file = e.dataTransfer.files[0];
+            } else if (e.target && e.target.files && e.target.files.length) {
+                file = e.target.files[0];
+            }
+            if (e.target && e.target.type === 'file') {
+                try { e.target.value = ''; } catch (ignore) {}
+            }
             if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
                 alert('Пожалуйста, выберите PDF файл');
                 return;
@@ -1887,10 +1900,15 @@
             const manualQty = (document.getElementById('pdfColQty' + suf)?.value || '').trim();
             const manualRetail = (document.getElementById('pdfColRetail' + suf)?.value || '').trim();
             const manualPurchase = (document.getElementById('pdfColPurchase' + suf)?.value || '').trim();
+            const csrf = getCsrf();
+            const parseHeaders = {};
+            if (csrf) parseHeaders['X-CSRF-Token'] = csrf;
             fetch('/estimate/api/parse-pdf', {
                 method: 'POST',
+                headers: parseHeaders,
                 body: (function(){
                     formData.append('mode', importMode);
+                    if (csrf) formData.append('csrf_token', csrf);
                     if (manualName) formData.append('col_name', manualName);
                     if (manualUnit) formData.append('col_unit', manualUnit);
                     if (manualQty) formData.append('col_qty', manualQty);
@@ -1899,13 +1917,24 @@
                     return formData;
                 })()
             })
-            .then(r => r.json())
-            .then(data => {
+            .then(function(r) { return r.text().then(function(text) { return { ok: r.ok, status: r.status, text: text }; }); })
+            .then(function(res) {
                 resetPdfDropZones();
+                var data;
+                try {
+                    data = JSON.parse(res.text);
+                } catch (parseErr) {
+                    alert('Ошибка сервера: неверный формат ответа (HTTP ' + res.status + ')');
+                    return;
+                }
+                if (!res.ok) {
+                    alert('Ошибка: ' + (data && data.error ? data.error : ('HTTP ' + res.status)));
+                    return;
+                }
                 if (data.error) { alert('Ошибка: ' + data.error); return; }
                 showPdfImportResults(data);
             })
-            .catch(err => { resetPdfDropZones(); alert('Ошибка загрузки: ' + err.message); });
+            .catch(function(err) { resetPdfDropZones(); alert('Ошибка загрузки: ' + err.message); });
         }
 
         function showPdfImportResults(data) {
@@ -1981,12 +2010,6 @@
                     html += '</tr>';
                 });
                 html += '</table></div>';
-
-                html += '<div class="pdf-import-actions">';
-                html += '<button type="button" onclick="selectAllMatches(true)">Выбрать все</button>';
-                html += '<button type="button" onclick="selectAllMatches(false)">Снять все</button>';
-                html += '<button type="button" class="pdf-import-btn-primary" onclick="importSelectedMatches()">Применить выбранное</button>';
-                html += '</div>';
             }
 
             if (unmatched.length > 0) {
@@ -2017,6 +2040,14 @@
                 html += '</table></div>';
             }
 
+            if (matched.length > 0 || unmatched.length > 0) {
+                html += '<div class="pdf-import-actions">';
+                html += '<button type="button" onclick="selectAllMatches(true)">Выбрать все</button>';
+                html += '<button type="button" onclick="selectAllMatches(false)">Снять все</button>';
+                html += '<button type="button" class="pdf-import-btn-primary" onclick="importSelectedMatches()">Применить выбранное</button>';
+                html += '</div>';
+            }
+
             if (matched.length === 0 && unmatched.length === 0) {
                 html += '<div class="pdf-import-callout pdf-import-callout--warn">Не удалось извлечь строки таблицы или формат не распознан. Попробуйте другой PDF либо задайте номера колонок в блоке «Настройка колонок» и перетащите файл снова.</div>';
             }
@@ -2033,7 +2064,7 @@
         }
 
         async function importSelectedMatches() {
-            if (!window._pdfMatchedData) return;
+            if (!Array.isArray(window._pdfMatchedData) || !Array.isArray(window._pdfUnmatchedData)) return;
 
             const importMode = (window._pdfImportMode === 'wholesale') ? 'wholesale' : 'retail';
 
@@ -2108,7 +2139,7 @@
                                     unit: m.unit || 'шт',
                                     retail_price: useRetail,
                                     purchase_price: usePurchase
-                                }, qty);
+                                }, qty, 'material');
                                 added++;
                             } else {
                                 var useWholesaleWithVat = (m.file_wholesale_unit != null && m.file_wholesale_unit > 0)
@@ -2132,9 +2163,10 @@
                                     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
                                     body: JSON.stringify(updBody)
                                 });
+                                var catNm = _pdfNormName(m.item.name);
                                 items.forEach(function(it){
                                     if (it.section !== 'material') return;
-                                    if ((it.name || '').trim().toLowerCase() !== (m.item.name || '').trim().toLowerCase()) return;
+                                    if (_pdfNormName(it.name) !== catNm) return;
                                     it.purchase_price = useWholesaleWithVat;
                                     var p = parseFloat(it.price) || 0;
                                     var q = parseFloat(it.quantity) || 0;
@@ -2185,6 +2217,7 @@
                         await doAddFromCatalog(
                             { name: nameU, unit: unitU, retail_price: filePriceU, purchase_price: 0 },
                             qtyU > 0 ? qtyU : 1,
+                            'material'
                         );
                     }
                     added++;
@@ -2195,6 +2228,7 @@
                             await doAddFromCatalog(
                                 { name: nameU, unit: unitU, retail_price: filePriceU, purchase_price: 0 },
                                 qtyU > 0 ? qtyU : 1,
+                                'material'
                             );
                             added++;
                         } catch (e2) {
@@ -2234,14 +2268,30 @@
         function bindPdfDropZone(zoneId, inputId, mode) {
             const dropZone = document.getElementById(zoneId);
             if (!dropZone) return;
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, e => { e.preventDefault(); e.stopPropagation(); });
+            var dragDepth = 0;
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(function(eventName) {
+                dropZone.addEventListener(eventName, function(e) { e.preventDefault(); e.stopPropagation(); });
             });
-            dropZone.addEventListener('dragenter', () => dropZone.classList.add('dragover'));
-            dropZone.addEventListener('dragover', () => dropZone.classList.add('dragover'));
-            dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-            dropZone.addEventListener('drop', (e) => handlePdfDrop(e, mode));
-            dropZone.addEventListener('click', () => document.getElementById(inputId)?.click());
+            dropZone.addEventListener('dragenter', function() {
+                dragDepth++;
+                dropZone.classList.add('dragover');
+            });
+            dropZone.addEventListener('dragover', function() {
+                dropZone.classList.add('dragover');
+            });
+            dropZone.addEventListener('dragleave', function() {
+                dragDepth = Math.max(0, dragDepth - 1);
+                if (dragDepth === 0) dropZone.classList.remove('dragover');
+            });
+            dropZone.addEventListener('drop', function(e) {
+                dragDepth = 0;
+                dropZone.classList.remove('dragover');
+                handlePdfDrop(e, mode);
+            });
+            dropZone.addEventListener('click', function() {
+                var inp = document.getElementById(inputId);
+                if (inp) inp.click();
+            });
         }
 
         function initPdfDragAndDrop() {

@@ -1461,6 +1461,7 @@ def api_add_category():
 
 @estimate_bp.route('/api/parse-pdf', methods=['POST'])
 @login_required
+@_require_csrf
 def api_parse_pdf():
     """Загрузить PDF, извлечь таблицы, сопоставить с каталогом"""
     try:
