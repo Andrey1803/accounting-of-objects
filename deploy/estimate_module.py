@@ -422,6 +422,13 @@ def _pdf_detect_table_material_row(row, import_mode='retail'):
         list_price,
         for_wholesale=(str(import_mode).lower() == 'wholesale'),
     )
+    # Для опта в табличных счетах закуп обычно в соседней колонке сразу после «Розница».
+    # Если она валидна — приоритетнее эвристик хвоста (где может быть маржа/служебные числа).
+    if str(import_mode).lower() == 'wholesale' and (retail_idx + 1) < len(cells):
+        direct_purchase = _pdf_parse_money_cell(cells[retail_idx + 1])
+        if direct_purchase is not None and direct_purchase > 0:
+            if list_price is None or direct_purchase < (float(list_price) * 1.25 + 0.01):
+                purchase_hint = float(direct_purchase)
     return {
         'name_idx': name_idx,
         'unit_idx': unit_idx,

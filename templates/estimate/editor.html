@@ -55,7 +55,7 @@
         .item-count { font-size: 12px; color: #999; padding: 5px 0; }
 
         /* Drag-over PDF — дополнение к components.css */
-        #pdfDropZone.dragover { transform: scale(1.02); }
+        [data-pdf-drop-zone].dragover { transform: scale(1.02); }
 
         /* Адаптив */
         @media (max-width: 768px) {
@@ -1739,6 +1739,12 @@
 
         // === Импорт из PDF ===
         function openPdfImport() {
+            window._pdfImportMode = null;
+            window._pdfMatchedData = [];
+            window._pdfUnmatchedData = [];
+            resetPdfDropZones();
+            const resultsDiv = document.getElementById('pdfResults');
+            if (resultsDiv) resultsDiv.innerHTML = '';
             document.getElementById('pdfImportModal').classList.add('active');
         }
 
@@ -1746,10 +1752,12 @@
             document.getElementById('pdfImportModal').classList.remove('active');
         }
 
-        function handlePdfDrop(e) {
+        function handlePdfDrop(e, forcedMode) {
             e.preventDefault();
             e.stopPropagation();
-            const dropZone = document.getElementById('pdfDropZone');
+            const targetZone = e.currentTarget || e.target;
+            const dropZone = targetZone && targetZone.closest ? targetZone.closest('[data-pdf-drop-zone]') : document.getElementById('pdfDropZoneRetail');
+            if (!dropZone) return;
             dropZone.classList.remove('dragover');
 
             const file = e.dataTransfer ? e.dataTransfer.files[0] : e.target.files[0];
@@ -1764,8 +1772,9 @@
             const formData = new FormData();
             formData.append('file', file);
 
-            const modeSel = document.getElementById('pdfImportMode');
-            const importMode = modeSel ? modeSel.value : 'retail';
+            const importMode = (forcedMode === 'wholesale' || forcedMode === 'retail')
+                ? forcedMode
+                : (dropZone.getAttribute('data-import-mode') || 'retail');
             fetch('/estimate/api/parse-pdf', {
                 method: 'POST',
                 body: (function(){
@@ -1783,6 +1792,7 @@
 
         function showPdfImportResults(data) {
             const resultsDiv = document.getElementById('pdfResults');
+            window._pdfImportMode = data.import_mode === 'wholesale' ? 'wholesale' : 'retail';
             let html = `<div style="margin-bottom:10px;font-size:13px;color:#666;">
                 Найдено строк: ${data.total_rows} | 
                 Совпало: <b style="color:#4CAF50">${data.matched_count}</b> | 
@@ -1877,8 +1887,7 @@
         async function importSelectedMatches() {
             if (!window._pdfMatchedData) return;
 
-            const modeSel = document.getElementById('pdfImportMode');
-            const importMode = modeSel ? modeSel.value : 'retail';
+            const importMode = (window._pdfImportMode === 'wholesale') ? 'wholesale' : 'retail';
 
             // Для режима РРЦ гарантируем, что смета создана.
             if (importMode === 'retail' && !estimateId) {
@@ -2056,26 +2065,40 @@
                     alert(`Обновлено ${added} оптовых цен (с НДС). Розничные цены не изменялись.`);
                 }
                 closePdfImport();
-                document.getElementById('pdfDropZone').innerHTML = '<div style="font-size:48px;margin-bottom:10px;">📄</div><div style="font-size:14px;font-weight:600;">Перетащите PDF сюда</div><div style="font-size:12px;color:#999;margin-top:5px;">или нажмите для выбора файла</div><input type="file" id="pdfFileInput" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event)">';
+                resetPdfDropZones();
             } else {
                 alert('Не выбрано ни одной позиции для добавления');
             }
         }
 
         // Drag-and-drop обработчики
-        function initPdfDragAndDrop() {
-            const dropZone = document.getElementById('pdfDropZone');
-            if (!dropZone) return;
+        function resetPdfDropZones() {
+            var retail = document.getElementById('pdfDropZoneRetail');
+            if (retail) {
+                retail.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🛒</div><div style="font-size:14px;font-weight:600;">Розничный счёт (РРЦ)</div><div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div><input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'retail\')">';
+            }
+            var wholesale = document.getElementById('pdfDropZoneWholesale');
+            if (wholesale) {
+                wholesale.innerHTML = '<div style="font-size:38px;margin-bottom:8px;">🏷️</div><div style="font-size:14px;font-weight:600;">Оптовый счёт (с НДС)</div><div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div><input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'wholesale\')">';
+            }
+        }
 
+        function bindPdfDropZone(zoneId, inputId, mode) {
+            const dropZone = document.getElementById(zoneId);
+            if (!dropZone) return;
             ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
                 dropZone.addEventListener(eventName, e => { e.preventDefault(); e.stopPropagation(); });
             });
-
             dropZone.addEventListener('dragenter', () => dropZone.classList.add('dragover'));
             dropZone.addEventListener('dragover', () => dropZone.classList.add('dragover'));
             dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-            dropZone.addEventListener('drop', handlePdfDrop);
-            dropZone.addEventListener('click', () => document.getElementById('pdfFileInput')?.click());
+            dropZone.addEventListener('drop', (e) => handlePdfDrop(e, mode));
+            dropZone.addEventListener('click', () => document.getElementById(inputId)?.click());
+        }
+
+        function initPdfDragAndDrop() {
+            bindPdfDropZone('pdfDropZoneRetail', 'pdfFileInputRetail', 'retail');
+            bindPdfDropZone('pdfDropZoneWholesale', 'pdfFileInputWholesale', 'wholesale');
         }
 
         // Инициализация при загрузке
@@ -2092,18 +2115,22 @@
                 <button class="btn-close" onclick="closePdfImport()">✕</button>
             </div>
 
-            <div id="pdfDropZone" style="border:2px dashed #ddd;border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all 0.2s;" ondragover="this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')">
-                <div style="font-size:48px;margin-bottom:10px;">📄</div>
-                <div style="font-size:14px;font-weight:600;">Перетащите PDF сюда</div>
-                <div style="font-size:12px;color:#999;margin-top:5px;">или нажмите для выбора файла</div>
-                <input type="file" id="pdfFileInput" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event)">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div id="pdfDropZoneRetail" data-pdf-drop-zone="1" data-import-mode="retail" style="border:2px dashed #ddd;border-radius:12px;padding:22px;text-align:center;cursor:pointer;transition:all 0.2s;">
+                    <div style="font-size:38px;margin-bottom:8px;">🛒</div>
+                    <div style="font-size:14px;font-weight:600;">Розничный счёт (РРЦ)</div>
+                    <div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div>
+                    <input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'retail')">
+                </div>
+                <div id="pdfDropZoneWholesale" data-pdf-drop-zone="1" data-import-mode="wholesale" style="border:2px dashed #ddd;border-radius:12px;padding:22px;text-align:center;cursor:pointer;transition:all 0.2s;">
+                    <div style="font-size:38px;margin-bottom:8px;">🏷️</div>
+                    <div style="font-size:14px;font-weight:600;">Оптовый счёт (с НДС)</div>
+                    <div style="font-size:12px;color:#999;margin-top:5px;">Перетащите PDF сюда или нажмите</div>
+                    <input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'wholesale')">
+                </div>
             </div>
-            <div style="margin-top:10px;">
-                <label for="pdfImportMode" style="display:block;font-size:12px;color:#666;margin-bottom:4px;">Режим импорта</label>
-                <select id="pdfImportMode" style="padding:8px;border:1px solid #ddd;border-radius:6px;">
-                    <option value="retail">РРЦ (розница): добавить в смету + обновить retail</option>
-                    <option value="wholesale">ОПТ с НДС: обновить закупку/опт (без изменения розницы)</option>
-                </select>
+            <div style="margin-top:10px;font-size:12px;color:#666;">
+                Для розницы: цена попадёт в смету и обновит <b>РРЦ</b>. Для опта: обновятся <b>закуп/опт (с НДС)</b>, без перезаписи розницы.
             </div>
 
             <div id="pdfResults" style="margin-top:15px;"></div>
