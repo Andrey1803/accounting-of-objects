@@ -132,6 +132,7 @@
             <div class="total-row"><span>Материалы:</span><span id="sum-mat">0.00 BYN</span></div>
             <div class="total-row"><span>Работы:</span><span id="sum-work">0.00 BYN</span></div>
             <div class="total-row" style="color:var(--green); font-size:14px;"><span>Прибыль с мат.:</span><span id="sum-profit">0.00 BYN</span></div>
+            <div id="margin-alert" style="display:none;margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;background:#ffebee;color:#b71c1c;border:1px solid #ef9a9a;"></div>
             <div class="total-row"><span>ИТОГО:</span><span id="sum-total">0.00 BYN</span></div>
         </div>
     </div>
@@ -760,6 +761,33 @@
             document.getElementById('sum-work').textContent = sWork.toFixed(2) + ' BYN';
             document.getElementById('sum-profit').textContent = '+' + sProfit.toFixed(2) + ' BYN';
             document.getElementById('sum-total').textContent = (sMat + sWork).toFixed(2) + ' BYN';
+            renderMarginAlert();
+        }
+
+        function getMaterialMarginPct(item) {
+            var price = parseFloat(item.price) || 0;
+            var purchase = parseFloat(item.purchase_price) || 0;
+            if (price <= 0) return 0;
+            return ((price - purchase) / price) * 100;
+        }
+
+        function getNegativeMarginMaterials() {
+            return items.filter(function(it) {
+                return it.section === 'material' && getMaterialMarginPct(it) < 0;
+            });
+        }
+
+        function renderMarginAlert() {
+            var box = document.getElementById('margin-alert');
+            if (!box) return;
+            var bad = getNegativeMarginMaterials();
+            if (!bad.length) {
+                box.style.display = 'none';
+                box.textContent = '';
+                return;
+            }
+            box.style.display = 'block';
+            box.textContent = 'Внимание: отрицательная маржа у ' + bad.length + ' позиций. Сохранение сметы будет заблокировано до исправления.';
         }
 
         function esc(str) {
@@ -778,12 +806,15 @@
                     var purchaseNum = parseFloat(purch) || 0;
                     marginPct = priceNum > 0 ? ((priceNum - purchaseNum) / priceNum * 100) : 0;
                 }
+                var rowStyle = '';
+                if (isMat && marginPct < 0) rowStyle = ' style="background:#ffebee;"';
+                else if (isMat && marginPct < 10) rowStyle = ' style="background:#fff8e1;"';
                 var priceCells = isMat
                     ? ('<td><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></td>'+
                        '<td><input type="number" value="'+purch+'" step="0.01" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></td>'+
                        '<td style="text-align:center;font-weight:600;color:'+(marginPct >= 30 ? '#2e7d32' : (marginPct >= 15 ? '#f57f17' : '#c62828'))+'">'+marginPct.toFixed(1)+'%</td>')
                     : ('<td><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></td>');
-                return '<tr>'+
+                return '<tr'+rowStyle+'>'+
                     '<td style="text-align:center;vertical-align:middle;"><input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'" aria-label="Выбрать строку"></td>'+
                     '<td><input type="text" value="'+esc(item.name)+'" onchange="updateItem('+item.id+', \'name\', this.value)"></td>'+
                     '<td><select onchange="updateItem('+item.id+', \'unit\', this.value)">'+
@@ -805,7 +836,14 @@
                         '<div class="field" style="flex:1;min-width:110px"><label>Маржа</label><input type="text" value="'+((parseFloat(item.price)||0) > 0 ? ((((parseFloat(item.price)||0)-(parseFloat(purch)||0))/(parseFloat(item.price)||0)*100).toFixed(1)+'%') : '0.0%')+'" disabled></div>'+
                       '</div>')
                     : ('<div class="field"><label>Расценка</label><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></div>');
+                var cardWarnStyle = '';
+                if (isMat) {
+                    var m = (parseFloat(item.price)||0) > 0 ? (((parseFloat(item.price)||0) - (parseFloat(purch)||0)) / (parseFloat(item.price)||0) * 100) : 0;
+                    if (m < 0) cardWarnStyle = 'border:1px solid #ef9a9a;background:#ffebee;';
+                    else if (m < 10) cardWarnStyle = 'border:1px solid #ffe082;background:#fff8e1;';
+                }
                 return '<div class="item-card">'+
+                    (cardWarnStyle ? '<div style="padding:4px 8px;border-radius:6px;margin-bottom:8px;font-size:11px;'+cardWarnStyle+'">'+(cardWarnStyle.indexOf('#ef9a9a')>=0?'Отрицательная маржа':'Низкая маржа')+'</div>' : '')+
                     '<label class="est-card-cb-wrap" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:#555;cursor:pointer;">'+
                     '<input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'"><span>Выбрать для удаления</span></label>'+
                     '<div class="field"><label>Наименование</label><input type="text" value="'+esc(item.name)+'" onchange="updateItem('+item.id+', \'name\', this.value)"></div>'+
@@ -1522,6 +1560,16 @@
         };
 
         async function saveEstimate() {
+            var badMargins = getNegativeMarginMaterials();
+            if (badMargins.length > 0) {
+                var sample = badMargins.slice(0, 5).map(function(it){ return '• ' + (it.name || 'Без названия'); }).join('\n');
+                alert(
+                    'Сохранение остановлено: есть материалы с отрицательной маржой.\n' +
+                    'Исправьте розницу/закупку у этих позиций:\n' + sample +
+                    (badMargins.length > 5 ? '\n... и ещё ' + (badMargins.length - 5) : '')
+                );
+                return;
+            }
             var data = {
                 date: document.getElementById('date').value,
                 object_name: document.getElementById('object-name').value,
