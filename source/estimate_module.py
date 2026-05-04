@@ -183,6 +183,112 @@ def _pdf_row_product_title(raw):
     return s.strip()
 
 
+def _pdf_cell_is_unit(cell):
+    """Ячейка «ед. изм.» как в печатной смете (шт / м / компл …)."""
+    if cell is None:
+        return False
+    u = str(cell).strip().lower().replace('\xa0', '')
+    u_compact = re.sub(r'\s+', '', u).rstrip('.')
+    if u_compact in (
+        'шт', 'м', 'компл', 'комплект', 'упак', 'кор', 'т', 'тн', 'кг', 'л', 'м2', 'м²',
+        'пог.м', 'погм', 'п.м', 'пм',
+    ):
+        return True
+    if u_compact.startswith('компл'):
+        return True
+    if 'пог' in u_compact and 'м' in u_compact:
+        return True
+    return False
+
+
+def _pdf_parse_money_cell(cell):
+    """Число из ячейки цены/суммы (запятая, пробелы, без «%» для колонки маржи)."""
+    if cell is None:
+        return None
+    s = str(cell).strip().replace('\xa0', '').replace(' ', '')
+    if not s or '%' in s:
+        return None
+    s = s.replace(',', '.')
+    try:
+        v = float(s)
+    except ValueError:
+        return None
+    if v != v or v < 0 or v > 1_000_000:
+        return None
+    return v
+
+
+def _pdf_table_tail_purchase_and_sum(cells, retail_idx):
+    """
+    После колонки «розница»: закуп, (маржа %), сумма — маржу пропускаем.
+    Возвращает (закуп_за_ед или None, сумма_строки или None).
+    """
+    money_vals = []
+    for i in range(retail_idx + 1, len(cells)):
+        s = str(cells[i] or '')
+        if '%' in s:
+            continue
+        v = _pdf_parse_money_cell(s)
+        if v is not None:
+            money_vals.append(v)
+    if len(money_vals) >= 2:
+        return money_vals[0], money_vals[-1]
+    if len(money_vals) == 1:
+        return None, money_vals[0]
+    return None, None
+
+
+def _pdf_detect_table_material_row(row):
+    """
+    Типичная таблица как на скрине сметы: Наименование | Ед. | Кол-во | Розница | Закуп | …
+    Либо с ведущим № п/п: № | Наименование | Ед. | Кол-во | Розница | …
+    """
+    if not row or len(row) < 4:
+        return None
+    cells = [str(c or '').strip() for c in row]
+    name_idx = unit_idx = qty_idx = retail_idx = None
+
+    if len(cells) >= 5 and re.fullmatch(r'\d{1,4}', cells[0] or '') and _pdf_cell_is_unit(cells[2]):
+        name_idx, unit_idx = 1, 2
+        qty_idx, retail_idx = 3, 4
+    elif _pdf_cell_is_unit(cells[1]):
+        name_idx, unit_idx = 0, 1
+        qty_idx, retail_idx = 2, 3
+    else:
+        return None
+
+    name_cell = (cells[name_idx] or '').strip()
+    if len(name_cell) < 2:
+        return None
+    low = name_cell.lower()
+    if _PDF_HEADER_START.search(low) or _PDF_TOTALS_ROW.search(low):
+        return None
+
+    purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(cells, retail_idx)
+    return {
+        'name_idx': name_idx,
+        'unit_idx': unit_idx,
+        'qty_idx': qty_idx,
+        'retail_idx': retail_idx,
+        'purchase_from_tail': purchase_hint,
+        'line_sum_from_tail': sum_hint,
+    }
+
+
+def _pdf_unit_from_table_cell(cell):
+    """Нормализация ед. изм. для сметы из ячейки таблицы."""
+    if not cell:
+        return 'шт'
+    s = str(cell).strip().lower().replace('\xa0', '')
+    if 'пог' in s and 'м' in s:
+        return 'м'
+    if s.startswith('компл'):
+        return 'компл'
+    if re.match(r'^м\b', s) or s in ('м.', 'м'):
+        return 'м'
+    return 'шт'
+
+
 def _pdf_normalize_for_compare(s):
     """Агрессивная нормализация для сравнения с каталогом (разный пунктуация, дроби)."""
     if not s:
@@ -359,11 +465,17 @@ def _pdf_try_cart_row_qty_unit_price(row, from_cart_pdf=False):
     return qty, unit_p
 
 
-def _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=False):
+def _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=False, table_layout=None):
     """Розничная цена за единицу из строки прайса (колонка «цена», не сумма)."""
     _cq, cpu = _pdf_try_cart_row_qty_unit_price(row, from_cart_pdf)
     if cpu is not None:
         return cpu
+    if table_layout is not None:
+        ri = table_layout['retail_idx']
+        if ri < len(row):
+            v = _pdf_parse_money_cell(row[ri])
+            if v is not None and v > 0:
+                return v
     whole = ' '.join(str(c or '') for c in row)
     vals = _pdf_row_numeric_tail_vals(row)
     t = _pdf_first_matching_triplet(vals)
@@ -379,8 +491,38 @@ def _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=False):
     return None
 
 
-def _pdf_extract_unit(row):
+def _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf=False, table_layout=None):
+    """
+    Цена за единицу с НДС (для оптового счёта).
+    Для cart-ready PDF без колонки НДС возвращаем обычную цену за единицу.
+    """
+    if from_cart_pdf:
+        return _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=True, table_layout=None)
+    if table_layout is not None and table_layout.get('purchase_from_tail') is not None:
+        p = float(table_layout['purchase_from_tail'])
+        if p > 0:
+            return round(p, 4)
+    qty = _pdf_extract_qty(row, from_cart_pdf=False, table_layout=table_layout)
+    if qty is None or qty <= 0:
+        return None
+    whole = ' '.join(str(c or '') for c in row)
+    vals = _pdf_floats_in_order_from_text(whole)
+    money_vals = [v for v in vals if v > 0 and (abs(v - round(v)) > 1e-9 or v >= 1000)]
+    if not money_vals:
+        return None
+    total_with_vat = money_vals[-1]
+    unit_price = total_with_vat / qty
+    if 0.0001 <= unit_price <= 1_000_000:
+        return round(unit_price, 4)
+    return None
+
+
+def _pdf_extract_unit(row, table_layout=None):
     """Ед. изм. из строки PDF (для сметы), не из карточки каталога."""
+    if table_layout is not None:
+        ui = table_layout['unit_idx']
+        if ui < len(row):
+            return _pdf_unit_from_table_cell(row[ui])
     whole = ' '.join(str(c or '') for c in row)
     if re.search(r'\d+(?:[.,]\d+)?\s+пог\.?\s*м\b', whole, re.I):
         return 'м'
@@ -395,12 +537,35 @@ def _pdf_extract_unit(row):
     return 'шт'
 
 
-def _pdf_extract_qty(row, from_cart_pdf=False):
+def _pdf_extract_qty(row, from_cart_pdf=False, table_layout=None):
     """Количество: явные единицы, «N м» перед ценой, тройка qty×price≈total, иначе ячейки."""
     cq, _cpu = _pdf_try_cart_row_qty_unit_price(row, from_cart_pdf)
     if cq is not None:
         return cq
+    if table_layout is not None:
+        qi = table_layout['qty_idx']
+        if qi < len(row):
+            v = _pdf_parse_money_cell(row[qi])
+            if v is not None and 0.01 <= v <= 100_000:
+                return v
     whole = ' '.join(str(c or '') for c in row)
+
+    # Смета/счёт: колонка «Кол-во» идёт ПОСЛЕ «шт/м» — «… шт 1 16.36», иначе «25 шт» из «25x25x25 шт» даёт ложное qty.
+    for pat in (
+        r'(?:шт\.?|шт)\s+(\d+(?:[.,]\d+)?)\b',
+        r'(?:компл\.?|комплект)\s+(\d+(?:[.,]\d+)?)\b',
+        r'(?:пог\.?\s*м|п\.м\.?)\s+(\d+(?:[.,]\d+)?)\b',
+    ):
+        m = None
+        for m in re.finditer(pat, whole, re.I):
+            pass
+        if m:
+            try:
+                v = float(m.group(1).replace(',', '.').replace(' ', ''))
+                if 0.01 <= v <= 100_000:
+                    return v
+            except ValueError:
+                pass
 
     for pat in (
         r'(\d+(?:[.,]\d+)?)\s*(?:шт\.?|шт)\b',
@@ -936,9 +1101,12 @@ def api_parse_pdf():
         if from_cart_pdf:
             all_rows = cart_rows
 
+        mode_raw = (request.form.get('mode') or request.args.get('mode') or 'retail').strip().lower()
+        import_mode = 'wholesale' if mode_raw in ('wholesale', 'opt', 'purchase', 'cost') else 'retail'
+
         # Получаем каталог пользователя
         catalog_items = fetch_all(
-            "SELECT id, name, article, brand, category, retail_price, purchase_price, item_type FROM catalog_materials WHERE user_id = ?",
+            "SELECT id, name, article, brand, category, retail_price, purchase_price, wholesale_price, item_type FROM catalog_materials WHERE user_id = ?",
             (current_user.id,)
         )
 
@@ -975,7 +1143,11 @@ def api_parse_pdf():
             if _PDF_TOTALS_ROW.search(row_text):
                 continue
 
-            pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf)
+            table_layout = None if from_cart_pdf else _pdf_detect_table_material_row(row)
+
+            pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf, table_layout)
+            pdf_wholesale_unit = _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf, table_layout)
+            file_unit_price = pdf_wholesale_unit if import_mode == 'wholesale' else pdf_retail_unit
 
             article_match_item = _pdf_match_by_article(row_text, row, catalog_by_article)
             best_match = article_match_item
@@ -986,7 +1158,10 @@ def api_parse_pdf():
             lex_ratio = 1.0
             word_cov = 1.0
 
-            clean_name = _pdf_row_product_title(row_text)
+            if table_layout:
+                clean_name = str(row[table_layout['name_idx']] or '').strip()
+            else:
+                clean_name = _pdf_row_product_title(row_text)
             if len(clean_name) < 4:
                 clean_name = row_text
                 clean_name = re.sub(r'^\d+\s+', '', clean_name)
@@ -996,7 +1171,9 @@ def api_parse_pdf():
 
             if not best_match and clean_name:
                 best_match, best_score, second_score, lex_ratio, word_cov = _pdf_fuzzy_best_match(
-                    clean_name, catalog_search_index, pdf_retail_unit
+                    clean_name,
+                    catalog_search_index,
+                    (pdf_retail_unit if import_mode == 'retail' else None),
                 )
 
             reach_match = (
@@ -1005,9 +1182,9 @@ def api_parse_pdf():
                 or (pdf_retail_unit is not None and best_score >= 0.17)
             )
             if best_match and reach_match:
-                pdf_unit = _pdf_extract_unit(row)
+                pdf_unit = _pdf_extract_unit(row, table_layout)
                 qty = _pdf_sanitize_qty(
-                    _pdf_extract_qty(row, from_cart_pdf),
+                    _pdf_extract_qty(row, from_cart_pdf, table_layout),
                     best_match.get('retail_price'),
                     best_match.get('purchase_price'),
                 )
@@ -1039,6 +1216,7 @@ def api_parse_pdf():
                         'category': best_match['category'],
                         'retail_price': best_match['retail_price'],
                         'purchase_price': best_match['purchase_price'],
+                        'wholesale_price': best_match.get('wholesale_price'),
                         'item_type': best_match['item_type'],
                     },
                     'qty': qty,
@@ -1048,10 +1226,18 @@ def api_parse_pdf():
                     'file_retail_unit': round(float(pdf_retail_unit), 4)
                     if pdf_retail_unit is not None
                     else None,
+                    'file_wholesale_unit': round(float(pdf_wholesale_unit), 4)
+                    if pdf_wholesale_unit is not None
+                    else None,
+                    'file_unit_price': round(float(file_unit_price), 4)
+                    if file_unit_price is not None
+                    else None,
                     'file_purchase_unit': file_purchase,
                 })
             else:
                 if (
+                    import_mode == 'retail'
+                    and
                     not best_match
                     and pdf_retail_unit is not None
                     and catalog_items
@@ -1067,14 +1253,26 @@ def api_parse_pdf():
                     rej = 'low_score'
                 else:
                     rej = 'no_match' if catalog_items else 'no_catalog'
+                qty_u = _pdf_sanitize_qty(
+                    _pdf_extract_qty(row, from_cart_pdf, table_layout),
+                    (file_unit_price if file_unit_price is not None else 0),
+                    0,
+                )
+                unit_u = _pdf_extract_unit(row, table_layout)
                 unmatched.append({
                     'row': row,
                     'row_text': row_text,
                     'clean_name': clean_name,
                     'reject_reason': rej,
+                    'qty': qty_u,
+                    'unit': unit_u,
+                    'file_unit_price': round(float(file_unit_price), 4)
+                    if file_unit_price is not None
+                    else None,
                 })
 
         return jsonify({
+            "import_mode": import_mode,
             "matched": matched,
             "unmatched": unmatched,
             "total_rows": len(all_rows),
