@@ -220,6 +220,42 @@ def _pdf_parse_money_cell(cell):
     return v
 
 
+def _pdf_parse_qty_cell(cell):
+    """
+    Количество только из ячейки колонки «Кол-во» (не смешивать с ценами/артикулами из других колонок).
+    Поддержка «10», «10,5», «10 шт», «10.00 шт.», «2 короб».
+    """
+    if cell is None:
+        return None
+    s0 = str(cell).strip().replace('\xa0', ' ')
+    if not s0:
+        return None
+    v = _pdf_parse_money_cell(s0)
+    if v is not None and 0.0001 <= v <= 100_000:
+        return v
+    m = re.search(
+        r'(\d+(?:[.,]\d+)?)\s*(?:шт\.?|шт\b|м\b|компл\.?|комплект|пог\.?\s*м|п\.м\.?|пм\b|кор\.?|упак)\b',
+        s0,
+        re.I,
+    )
+    if m:
+        try:
+            v = float(m.group(1).replace(',', '.').replace(' ', ''))
+            if 0.0001 <= v <= 100_000:
+                return v
+        except ValueError:
+            pass
+    m = re.search(r'(\d+(?:[.,]\d+)?)', s0.replace(',', '.'))
+    if m:
+        try:
+            v = float(m.group(1).replace(',', '.'))
+            if 0.0001 <= v <= 100_000:
+                return v
+        except ValueError:
+            pass
+    return None
+
+
 def _pdf_table_tail_purchase_and_sum(
     cells, retail_idx, qty_hint=None, list_price=None, for_wholesale=False
 ):
@@ -517,7 +553,9 @@ def _pdf_detect_table_material_row(row, import_mode='retail', header_layout=None
     if _PDF_HEADER_START.search(low) or _PDF_TOTALS_ROW.search(low):
         return None
 
-    qty_hint = _pdf_parse_money_cell(cells[qty_idx])
+    qty_hint = _pdf_parse_qty_cell(cells[qty_idx])
+    if qty_hint is None:
+        qty_hint = _pdf_parse_money_cell(cells[qty_idx])
     list_price = _pdf_parse_money_cell(cells[retail_idx])
     purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(
         cells,
@@ -810,9 +848,12 @@ def _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf=False, table_layout=
 def _pdf_extract_unit(row, table_layout=None):
     """Ед. изм. из строки PDF (для сметы), не из карточки каталога."""
     if table_layout is not None:
-        ui = table_layout['unit_idx']
-        if ui < len(row):
+        ui = table_layout.get('unit_idx')
+        if ui is not None and int(ui) < len(row):
             return _pdf_unit_from_table_cell(row[ui])
+        # Таблица с известными индексами, но колонка «ед.» не найдена в заголовке —
+        # не тянуть «м/компл» из наименования или цен (ложные совпадения).
+        return 'шт'
     whole = ' '.join(str(c or '') for c in row)
     if re.search(r'\d+(?:[.,]\d+)?\s+пог\.?\s*м\b', whole, re.I):
         return 'м'
@@ -833,11 +874,13 @@ def _pdf_extract_qty(row, from_cart_pdf=False, table_layout=None):
     if cq is not None:
         return cq
     if table_layout is not None:
-        qi = table_layout['qty_idx']
-        if qi < len(row):
-            v = _pdf_parse_money_cell(row[qi])
-            if v is not None and 0.01 <= v <= 100_000:
+        qi = table_layout.get('qty_idx')
+        if qi is not None and int(qi) < len(row):
+            v = _pdf_parse_qty_cell(row[qi])
+            if v is not None and 0.0001 <= v <= 100_000:
                 return v
+            # Колонка «кол-во» задана таблицей — не подмешивать числа из цены/наименования.
+            return 1.0
     whole = ' '.join(str(c or '') for c in row)
 
     # Смета/счёт: колонка «Кол-во» идёт ПОСЛЕ «шт/м» — «… шт 1 16.36», иначе «25 шт» из «25x25x25 шт» даёт ложное qty.
