@@ -1893,6 +1893,113 @@
             };
             try { localStorage.setItem(_pdfLayoutStorageKey(mode), JSON.stringify(cfg)); } catch (e) {}
         }
+        function _pdfBuildDetectedColumns(data) {
+            var hl = (data && data.header_layout && typeof data.header_layout === 'object') ? data.header_layout : {};
+            var cells = Array.isArray(hl.header_cells) ? hl.header_cells : [];
+            var cols = [];
+            if (cells.length) {
+                cols = cells.map(function(cell, idx) {
+                    var nm = String(cell || '').trim();
+                    return { idx: idx, title: nm || ('Колонка ' + (idx + 1)) };
+                });
+            } else {
+                var maxIdx = -1;
+                ['name_idx', 'unit_idx', 'qty_idx', 'retail_idx', 'purchase_idx'].forEach(function(k) {
+                    var v = Number(hl[k]);
+                    if (!Number.isNaN(v) && v >= 0) maxIdx = Math.max(maxIdx, v);
+                });
+                var count = maxIdx >= 0 ? Math.max(maxIdx + 1, 6) : 6;
+                for (var i = 0; i < count; i++) cols.push({ idx: i, title: 'Колонка ' + (i + 1) });
+            }
+            return cols;
+        }
+        function renderPdfMappingUI(mode, data) {
+            var containerId = mode === 'wholesale' ? 'pdfMapBuilderWholesale' : 'pdfMapBuilderRetail';
+            var box = document.getElementById(containerId);
+            if (!box) return;
+            var cols = _pdfBuildDetectedColumns(data);
+            window._pdfDetectedColumns = window._pdfDetectedColumns || {};
+            window._pdfDetectedColumns[mode] = cols;
+            var hl = (data && data.header_layout && typeof data.header_layout === 'object') ? data.header_layout : {};
+            var initial = {
+                name: (hl.name_idx != null ? Number(hl.name_idx) : ''),
+                unit: (hl.unit_idx != null ? Number(hl.unit_idx) : ''),
+                qty: (hl.qty_idx != null ? Number(hl.qty_idx) : ''),
+                retail: (hl.retail_idx != null ? Number(hl.retail_idx) : ''),
+                purchase: (hl.purchase_idx != null ? Number(hl.purchase_idx) : ''),
+            };
+            var optionHtml = '<option value="">— не выбрано —</option>' + cols.map(function(c) {
+                return '<option value="' + c.idx + '">' + (c.idx + 1) + '. ' + esc(c.title) + '</option>';
+            }).join('');
+            var sourceList = cols.map(function(c) {
+                return '<label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0;">'
+                    + '<input type="checkbox" id="pdf-src-' + mode + '-' + c.idx + '" checked>'
+                    + '<span><b>' + (c.idx + 1) + '</b>. ' + esc(c.title) + '</span></label>';
+            }).join('');
+            var targets = [
+                ['name', 'Наименование'],
+                ['unit', 'Ед.'],
+                ['qty', 'Кол-во'],
+                ['retail', 'Розница'],
+                ['purchase', (mode === 'wholesale' ? 'Закуп/Опт' : 'Закуп (необяз.)')],
+            ];
+            var targetList = targets.map(function(t) {
+                return '<label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0;">'
+                    + '<input type="checkbox" id="pdf-dst-' + mode + '-' + t[0] + '" checked>'
+                    + '<span>' + t[1] + '</span></label>';
+            }).join('');
+            var mapRows = targets.map(function(t) {
+                return '<tr><td style="padding:4px 6px;">' + t[1] + '</td><td style="padding:4px 6px;">'
+                    + '<select id="pdf-map-' + mode + '-' + t[0] + '" style="width:100%;padding:4px 6px;">' + optionHtml + '</select>'
+                    + '</td></tr>';
+            }).join('');
+            box.innerHTML =
+                '<div style="margin-top:10px;border:1px solid #dbe4ee;border-radius:10px;background:#f8fbff;padding:10px;">'
+                + '<div style="font-weight:700;margin-bottom:8px;">Визуальное сопоставление колонок</div>'
+                + '<div style="display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:10px;">'
+                + '<div><div style="font-size:12px;color:#546e7a;margin-bottom:6px;">1) Колонки PDF (что найдено)</div>' + sourceList + '</div>'
+                + '<div><div style="font-size:12px;color:#546e7a;margin-bottom:6px;">2) Поля сметы (что интегрировать)</div>' + targetList + '</div>'
+                + '<div><div style="font-size:12px;color:#546e7a;margin-bottom:6px;">3) Карта интеграции в смету</div>'
+                + '<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3ebf3;border-radius:8px;overflow:hidden;">' + mapRows + '</table>'
+                + '<button type="button" style="margin-top:8px;background:#1e88e5;color:#fff;border:none;border-radius:8px;padding:8px 10px;cursor:pointer;" onclick="applyPdfMapToColumns(\'' + mode + '\')">Перенести карту в настройки колонок</button>'
+                + '</div></div></div>';
+            targets.forEach(function(t) {
+                var sel = document.getElementById('pdf-map-' + mode + '-' + t[0]);
+                if (!sel) return;
+                var v = initial[t[0]];
+                if (v !== '' && v != null) sel.value = String(v);
+            });
+        }
+        function applyPdfMapToColumns(mode) {
+            var suf = mode === 'wholesale' ? 'Wholesale' : 'Retail';
+            var mappings = {
+                name: 'pdfColName' + suf,
+                unit: 'pdfColUnit' + suf,
+                qty: 'pdfColQty' + suf,
+                retail: 'pdfColRetail' + suf,
+                purchase: 'pdfColPurchase' + suf
+            };
+            Object.keys(mappings).forEach(function(k) {
+                var enabled = document.getElementById('pdf-dst-' + mode + '-' + k);
+                if (enabled && !enabled.checked) return;
+                var sel = document.getElementById('pdf-map-' + mode + '-' + k);
+                var dst = document.getElementById(mappings[k]);
+                if (!sel || !dst) return;
+                dst.value = sel.value === '' ? '' : String(Number(sel.value) + 1);
+            });
+            window._pdfColumnsConfirmed = false;
+            var applyBtn = document.getElementById('pdfApplySelectedBtn');
+            var confirmBtn = document.getElementById('pdfConfirmColumnsBtn');
+            if (applyBtn) {
+                applyBtn.disabled = true;
+                applyBtn.title = 'Сначала подтвердите колонки';
+            }
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Подтвердить колонки';
+                confirmBtn.style.opacity = '1';
+            }
+        }
 
         function closePdfImport() {
             document.getElementById('pdfImportModal').classList.remove('active');
@@ -1982,6 +2089,7 @@
             if (data.header_layout && typeof data.header_layout === 'object') {
                 applyPdfHeaderLayoutToForm(data.header_layout, data.import_mode);
             }
+            renderPdfMappingUI(window._pdfImportMode, data);
             const importMode = data.import_mode === 'wholesale' ? 'wholesale' : 'retail';
             const matched = data.matched || [];
             const unmatched = data.unmatched || [];
@@ -2401,6 +2509,7 @@
                         </div>
                         <p style="margin:0 14px 14px;font-size:11px;color:#90a4ae;line-height:1.45;">После разбора номера подставятся сами. Чтобы принудительно задать сетку, укажите <strong>наименование</strong>, <strong>кол-во</strong> и <strong>розницу</strong> и загрузите PDF ещё раз.</p>
                     </details>
+                    <div id="pdfMapBuilderRetail"></div>
                 </div>
 
                 <div id="pdfImportPanelWholesale" class="pdf-import-panel">
@@ -2423,6 +2532,7 @@
                         </div>
                         <p style="margin:0 14px 14px;font-size:11px;color:#90a4ae;line-height:1.45;">То же, что для розницы: при необходимости задайте три обязательных номера колонки и повторите загрузку.</p>
                     </details>
+                    <div id="pdfMapBuilderWholesale"></div>
                 </div>
 
                 <div id="pdfResults"></div>
