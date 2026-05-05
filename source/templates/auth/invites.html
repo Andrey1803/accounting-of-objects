@@ -76,8 +76,18 @@
                         <td>
                             <div class="mono">{{ i.token }}</div>
                             <div class="invite-actions" style="margin-top:8px">
-                                <button type="button" class="btn btn-secondary" onclick="copyText({{ i.token|tojson }})">Копировать ключ</button>
-                                <button type="button" class="btn btn-secondary" onclick="copyText({{ reg_url|tojson }})">Копировать ссылку</button>
+                                <button
+                                    type="button"
+                                    class="btn btn-secondary"
+                                    data-copy="{{ i.token }}"
+                                    onclick="copyFromAttr(this)"
+                                >Копировать ключ</button>
+                                <button
+                                    type="button"
+                                    class="btn btn-secondary"
+                                    data-copy="{{ reg_url }}"
+                                    onclick="copyFromAttr(this)"
+                                >Копировать ссылку</button>
                             </div>
                         </td>
                         <td>{{ i.note or '—' }}</td>
@@ -100,28 +110,39 @@
         </div>
     </div>
     <script>
-        function copyText(t) {
+        function copyFromAttr(btn) {
+            var t = '';
+            if (btn && btn.dataset) t = btn.dataset.copy || '';
+            copyText(t);
+        }
+        async function copyText(t) {
             if (!t) return;
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(t).then(function() {
+            try {
+                if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(t);
                     alert('Скопировано в буфер обмена');
-                }).catch(function() {
-                    fallbackCopy(t);
-                });
-            } else {
-                fallbackCopy(t);
-            }
+                    return;
+                }
+            } catch (e) {}
+            fallbackCopy(t);
         }
         function fallbackCopy(t) {
             var ta = document.createElement('textarea');
             ta.value = t;
+            ta.setAttribute('readonly', '');
             ta.style.position = 'fixed';
             ta.style.left = '-9999px';
             document.body.appendChild(ta);
+            ta.focus();
             ta.select();
+            ta.setSelectionRange(0, ta.value.length);
             try {
-                document.execCommand('copy');
-                alert('Скопировано в буфер обмена');
+                var ok = document.execCommand('copy');
+                if (ok) {
+                    alert('Скопировано в буфер обмена');
+                } else {
+                    prompt('Скопируйте вручную:', t);
+                }
             } catch (e) {
                 prompt('Скопируйте вручную:', t);
             }
