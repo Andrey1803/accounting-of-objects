@@ -39,6 +39,18 @@ def _find_valid_invitation(token: str):
 def _consume_invitation(inv_id: int):
     execute("UPDATE invitations SET used_count = used_count + 1 WHERE id = ?", (inv_id,))
 
+
+def _ensure_admin_schema_ready():
+    """
+    Страховка для прода: если миграции не применились после деплоя,
+    поднимем нужные таблицы/колонки перед админ-операциями.
+    """
+    try:
+        init_db()
+    except Exception:
+        # Не валим запрос прямо здесь — ниже обработаем и покажем пользователю понятное сообщение.
+        pass
+
 class User:
     def __init__(self, id, username, role, created_at):
         self.id = id
@@ -180,24 +192,35 @@ def require_admin(f):
 @login_required
 @require_admin
 def admin_users():
-    users = fetch_all("SELECT * FROM users ORDER BY id")
-    return render_template('auth/users.html', users=users)
+    _ensure_admin_schema_ready()
+    try:
+        users = fetch_all("SELECT * FROM users ORDER BY id")
+        return render_template('auth/users.html', users=users)
+    except Exception as e:
+        flash(f'Не удалось открыть список пользователей: {e}', 'error')
+        return redirect('/')
 
 @auth_bp.route('/admin/invites')
 @login_required
 @require_admin
 def admin_invites():
-    rows = fetch_all(
-        "SELECT i.*, u.username AS creator_name FROM invitations i "
-        "LEFT JOIN users u ON u.id = i.created_by ORDER BY i.id DESC"
-    )
-    return render_template('auth/invites.html', invitations=rows)
+    _ensure_admin_schema_ready()
+    try:
+        rows = fetch_all(
+            "SELECT i.*, u.username AS creator_name FROM invitations i "
+            "LEFT JOIN users u ON u.id = i.created_by ORDER BY i.id DESC"
+        )
+        return render_template('auth/invites.html', invitations=rows)
+    except Exception as e:
+        flash(f'Не удалось открыть приглашения: {e}', 'error')
+        return redirect('/admin/users')
 
 
 @auth_bp.route('/admin/invites/create', methods=['POST'])
 @login_required
 @require_admin
 def admin_invite_create():
+    _ensure_admin_schema_ready()
     note = (request.form.get('note') or '').strip()[:500]
     days_raw = request.form.get('valid_days', '').strip()
     max_uses = 1
@@ -221,11 +244,15 @@ def admin_invite_create():
     created = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     exp_val = expires_at.strftime('%Y-%m-%d %H:%M:%S') if expires_at else None
 
-    execute(
-        "INSERT INTO invitations (token, created_at, created_by, expires_at, max_uses, used_count, note) "
-        "VALUES (?, ?, ?, ?, ?, 0, ?)",
-        (token, created, current_user.id, exp_val, max_uses, note),
-    )
+    try:
+        execute(
+            "INSERT INTO invitations (token, created_at, created_by, expires_at, max_uses, used_count, note) "
+            "VALUES (?, ?, ?, ?, ?, 0, ?)",
+            (token, created, current_user.id, exp_val, max_uses, note),
+        )
+    except Exception as e:
+        flash(f'Не удалось создать приглашение: {e}', 'error')
+        return redirect(url_for('auth.admin_invites'))
 
     flash(
         f'Новый ключ приглашения (одноразово покажите и отправьте): {token}',
@@ -238,8 +265,12 @@ def admin_invite_create():
 @login_required
 @require_admin
 def admin_invite_delete(inv_id):
-    execute("DELETE FROM invitations WHERE id = ?", (inv_id,))
-    flash('Приглашение удалено', 'success')
+    _ensure_admin_schema_ready()
+    try:
+        execute("DELETE FROM invitations WHERE id = ?", (inv_id,))
+        flash('Приглашение удалено', 'success')
+    except Exception as e:
+        flash(f'Не удалось удалить приглашение: {e}', 'error')
     return redirect(url_for('auth.admin_invites'))
 
 
