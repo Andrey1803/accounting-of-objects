@@ -82,7 +82,7 @@
                         </td>
                         <td>{{ i.note or '—' }}</td>
                         <td>{{ (i.created_at|string)[:16] if i.created_at else '—' }}</td>
-                        <td>{% if i.expires_at %}{{ i.expires_at|string|replace('T', ' ')[:16] }}{% else %}—{% endif %}</td>
+                        <td>{% if i.expires_at %}{{ ((i.expires_at|string)|replace('T', ' '))[:16] }}{% else %}—{% endif %}</td>
                         <td>{{ i.used_count }} / {{ i.max_uses }}</td>
                         <td>{{ i.creator_name or '—' }}</td>
                         <td>
