@@ -1819,6 +1819,15 @@
             window._pdfMatchedData = [];
             window._pdfUnmatchedData = [];
             window._pdfColumnsConfirmed = false;
+            window._pdfLastFile = null;
+            if (window._pdfReparseTimer) {
+                try { clearTimeout(window._pdfReparseTimer); } catch (e) {}
+                window._pdfReparseTimer = null;
+            }
+            var mapR = document.getElementById('pdfMapBuilderRetail');
+            var mapW = document.getElementById('pdfMapBuilderWholesale');
+            if (mapR) mapR.innerHTML = '';
+            if (mapW) mapW.innerHTML = '';
             resetPdfDropZones();
             clearPdfColumnOverrideFields();
             setPdfImportTab('retail');
@@ -1972,6 +1981,9 @@
             box.innerHTML =
                 '<div style="margin-top:10px;border:1px solid #dbe4ee;border-radius:10px;background:#f8fbff;padding:10px;">'
                 + '<div style="font-weight:700;margin-bottom:8px;">Визуальное сопоставление колонок</div>'
+                + '<div style="font-size:12px;color:#455a64;line-height:1.45;margin:-4px 0 10px;">'
+                + 'Когда вы меняете выпадающие списки в пункте <strong>3)</strong>, программа обновляет скрытые номера колонок и <strong>автоматически пересчитывает PDF</strong> (если файл уже загружен). Кнопка ниже нужна, чтобы просто перенести выбор в блок «Настройка колонок» без ожидания.'
+                + '</div>'
                 + '<div style="display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:10px;">'
                 + '<div><div style="font-size:12px;color:#546e7a;margin-bottom:6px;">1) Колонки PDF (что найдено)</div>' + sourceList + '</div>'
                 + '<div><div style="font-size:12px;color:#546e7a;margin-bottom:6px;">2) Поля сметы (что интегрировать)</div>' + targetList + '</div>'
@@ -1989,24 +2001,11 @@
             if (applyMapBtn) {
                 applyMapBtn.addEventListener('click', function() { applyPdfMapToColumns(mode); });
             }
+            wirePdfMappingSelectListeners(mode);
         }
         function applyPdfMapToColumns(mode) {
-            var suf = mode === 'wholesale' ? 'Wholesale' : 'Retail';
-            var mappings = {
-                name: 'pdfColName' + suf,
-                unit: 'pdfColUnit' + suf,
-                qty: 'pdfColQty' + suf,
-                retail: 'pdfColRetail' + suf,
-                purchase: 'pdfColPurchase' + suf
-            };
-            Object.keys(mappings).forEach(function(k) {
-                var enabled = document.getElementById('pdf-dst-' + mode + '-' + k);
-                if (enabled && !enabled.checked) return;
-                var sel = document.getElementById('pdf-map-' + mode + '-' + k);
-                var dst = document.getElementById(mappings[k]);
-                if (!sel || !dst) return;
-                dst.value = sel.value === '' ? '' : String(Number(sel.value) + 1);
-            });
+            syncPdfMapSelectionsToHiddenInputs(mode);
+            schedulePdfReparse(mode);
             window._pdfColumnsConfirmed = false;
             var applyBtn = document.getElementById('pdfApplySelectedBtn');
             var confirmBtn = document.getElementById('pdfConfirmColumnsBtn');
@@ -2025,39 +2024,35 @@
             document.getElementById('pdfImportModal').classList.remove('active');
         }
 
-        function handlePdfDrop(e, forcedMode) {
-            e.preventDefault();
-            e.stopPropagation();
-            const targetZone = e.currentTarget || e.target;
-            const dropZone = targetZone && targetZone.closest ? targetZone.closest('[data-pdf-drop-zone]') : document.getElementById('pdfDropZoneRetail');
-            if (!dropZone) return;
-            dropZone.classList.remove('dragover');
+        window._pdfLastFile = null;
+        window._pdfReparseTimer = null;
 
-            var file = null;
-            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
-                file = e.dataTransfer.files[0];
-            } else if (e.target && e.target.files && e.target.files.length) {
-                file = e.target.files[0];
-            }
-            if (e.target && e.target.type === 'file') {
-                try { e.target.value = ''; } catch (ignore) {}
-            }
-            if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
-                alert('Пожалуйста, выберите PDF файл');
-                return;
-            }
+        function _pdfDropInnerIdForMode(importMode) {
+            return importMode === 'wholesale' ? 'pdfDropWholesaleInner' : 'pdfDropRetailInner';
+        }
 
-            // Показываем загрузку только внутри зоны перетаскивания (поля колонок не трогаем)
-            var innerId = dropZone.id === 'pdfDropZoneWholesale' ? 'pdfDropWholesaleInner' : 'pdfDropRetailInner';
-            var innerEl = document.getElementById(innerId) || dropZone;
+        function _pdfDropZoneIdForMode(importMode) {
+            return importMode === 'wholesale' ? 'pdfDropZoneWholesale' : 'pdfDropZoneRetail';
+        }
+
+        function parsePdfWithFile(file, importMode, dropZone) {
+            if (!file || !importMode) return;
+            var dz = dropZone || document.getElementById(_pdfDropZoneIdForMode(importMode));
+            if (!dz) return;
+
+            window._pdfLastFile = {
+                file: file,
+                mode: importMode,
+                dropZoneId: dz.id || _pdfDropZoneIdForMode(importMode),
+            };
+
+            var innerId = dz.id === 'pdfDropZoneWholesale' ? 'pdfDropWholesaleInner' : 'pdfDropRetailInner';
+            var innerEl = document.getElementById(innerId) || dz;
             innerEl.innerHTML = '<div class="pdf-import-drop-loading"><div class="spinner"></div>Разбор PDF…</div>';
 
             const formData = new FormData();
             formData.append('file', file);
 
-            const importMode = (forcedMode === 'wholesale' || forcedMode === 'retail')
-                ? forcedMode
-                : (dropZone.getAttribute('data-import-mode') || 'retail');
             const suf = importMode === 'wholesale' ? 'Wholesale' : 'Retail';
             const manualName = (document.getElementById('pdfColName' + suf)?.value || '').trim();
             const manualUnit = (document.getElementById('pdfColUnit' + suf)?.value || '').trim();
@@ -2099,6 +2094,84 @@
                 showPdfImportResults(data);
             })
             .catch(function(err) { resetPdfDropZones(); alert('Ошибка загрузки: ' + err.message); });
+        }
+
+        function schedulePdfReparse(mode) {
+            if (!window._pdfLastFile || window._pdfLastFile.mode !== mode || !window._pdfLastFile.file) {
+                return;
+            }
+            if (window._pdfReparseTimer) clearTimeout(window._pdfReparseTimer);
+            window._pdfReparseTimer = setTimeout(function() {
+                window._pdfReparseTimer = null;
+                var dz = document.getElementById(window._pdfLastFile.dropZoneId) || document.getElementById(_pdfDropZoneIdForMode(mode));
+                parsePdfWithFile(window._pdfLastFile.file, mode, dz);
+            }, 450);
+        }
+
+        function syncPdfMapSelectionsToHiddenInputs(mode) {
+            var suf = mode === 'wholesale' ? 'Wholesale' : 'Retail';
+            var mappings = {
+                name: 'pdfColName' + suf,
+                unit: 'pdfColUnit' + suf,
+                qty: 'pdfColQty' + suf,
+                retail: 'pdfColRetail' + suf,
+                purchase: 'pdfColPurchase' + suf
+            };
+            Object.keys(mappings).forEach(function(k) {
+                var enabled = document.getElementById('pdf-dst-' + mode + '-' + k);
+                if (enabled && !enabled.checked) return;
+                var sel = document.getElementById('pdf-map-' + mode + '-' + k);
+                var dst = document.getElementById(mappings[k]);
+                if (!sel || !dst) return;
+                dst.value = sel.value === '' ? '' : String(Number(sel.value) + 1);
+            });
+        }
+
+        function wirePdfMappingSelectListeners(mode) {
+            ['name', 'unit', 'qty', 'retail', 'purchase'].forEach(function(k) {
+                var sel = document.getElementById('pdf-map-' + mode + '-' + k);
+                if (!sel) return;
+                sel.addEventListener('change', function() {
+                    syncPdfMapSelectionsToHiddenInputs(mode);
+                    schedulePdfReparse(mode);
+                });
+            });
+            ['name', 'unit', 'qty', 'retail', 'purchase'].forEach(function(k) {
+                var cb = document.getElementById('pdf-dst-' + mode + '-' + k);
+                if (!cb) return;
+                cb.addEventListener('change', function() {
+                    syncPdfMapSelectionsToHiddenInputs(mode);
+                    schedulePdfReparse(mode);
+                });
+            });
+        }
+
+        function handlePdfDrop(e, forcedMode) {
+            e.preventDefault();
+            e.stopPropagation();
+            const targetZone = e.currentTarget || e.target;
+            const dropZone = targetZone && targetZone.closest ? targetZone.closest('[data-pdf-drop-zone]') : document.getElementById('pdfDropZoneRetail');
+            if (!dropZone) return;
+            dropZone.classList.remove('dragover');
+
+            var file = null;
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+                file = e.dataTransfer.files[0];
+            } else if (e.target && e.target.files && e.target.files.length) {
+                file = e.target.files[0];
+            }
+            if (e.target && e.target.type === 'file') {
+                try { e.target.value = ''; } catch (ignore) {}
+            }
+            if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
+                alert('Пожалуйста, выберите PDF файл');
+                return;
+            }
+
+            const importMode = (forcedMode === 'wholesale' || forcedMode === 'retail')
+                ? forcedMode
+                : (dropZone.getAttribute('data-import-mode') || 'retail');
+            parsePdfWithFile(file, importMode, dropZone);
         }
 
         function showPdfImportResults(data) {
