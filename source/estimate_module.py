@@ -1742,6 +1742,20 @@ def api_parse_pdf():
                     else None,
                 })
 
+        # Для UI сопоставления колонок: реальная ширина таблицы часто больше, чем строка заголовка.
+        max_cols = 0
+        for r in all_rows:
+            if not r:
+                continue
+            max_cols = max(max_cols, len(r))
+        if header_layout and isinstance(header_layout, dict) and max_cols > 0:
+            cells = list(header_layout.get('header_cells') or [])
+            if len(cells) < max_cols:
+                for i in range(len(cells), max_cols):
+                    cells.append(f'Колонка {i + 1}')
+                header_layout = {**header_layout, 'header_cells': cells}
+            header_layout = {**header_layout, 'max_cols': max_cols}
+
         return jsonify({
             "import_mode": import_mode,
             "header_layout": header_layout,

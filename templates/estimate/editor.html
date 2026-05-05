@@ -1893,23 +1893,39 @@
             };
             try { localStorage.setItem(_pdfLayoutStorageKey(mode), JSON.stringify(cfg)); } catch (e) {}
         }
+        function _pdfMaxRowLenFromParseData(data) {
+            var maxLen = 0;
+            function scanRow(row) {
+                if (Array.isArray(row) && row.length > maxLen) maxLen = row.length;
+            }
+            try {
+                (data.matched || []).forEach(function(m) { scanRow(m.row); });
+                (data.unmatched || []).forEach(function(u) { scanRow(u.row); });
+            } catch (e) {}
+            return maxLen;
+        }
         function _pdfBuildDetectedColumns(data) {
             var hl = (data && data.header_layout && typeof data.header_layout === 'object') ? data.header_layout : {};
             var cells = Array.isArray(hl.header_cells) ? hl.header_cells : [];
             var cols = [];
+            var maxIdx = -1;
+            ['name_idx', 'unit_idx', 'qty_idx', 'retail_idx', 'purchase_idx'].forEach(function(k) {
+                var v = Number(hl[k]);
+                if (!Number.isNaN(v) && v >= 0) maxIdx = Math.max(maxIdx, v);
+            });
+            var needFromRows = _pdfMaxRowLenFromParseData(data);
+            var needFromHeader = Number(hl.max_cols);
+            if (!Number.isFinite(needFromHeader) || needFromHeader < 0) needFromHeader = 0;
             if (cells.length) {
                 cols = cells.map(function(cell, idx) {
                     var nm = String(cell || '').trim();
                     return { idx: idx, title: nm || ('Колонка ' + (idx + 1)) };
                 });
-            } else {
-                var maxIdx = -1;
-                ['name_idx', 'unit_idx', 'qty_idx', 'retail_idx', 'purchase_idx'].forEach(function(k) {
-                    var v = Number(hl[k]);
-                    if (!Number.isNaN(v) && v >= 0) maxIdx = Math.max(maxIdx, v);
-                });
-                var count = maxIdx >= 0 ? Math.max(maxIdx + 1, 6) : 6;
-                for (var i = 0; i < count; i++) cols.push({ idx: i, title: 'Колонка ' + (i + 1) });
+            }
+            var need = Math.max(cells.length, needFromHeader, needFromRows, (maxIdx >= 0 ? maxIdx + 1 : 0), 6);
+            while (cols.length < need) {
+                var j = cols.length;
+                cols.push({ idx: j, title: 'Колонка ' + (j + 1) });
             }
             return cols;
         }
@@ -1961,7 +1977,7 @@
                 + '<div><div style="font-size:12px;color:#546e7a;margin-bottom:6px;">2) Поля сметы (что интегрировать)</div>' + targetList + '</div>'
                 + '<div><div style="font-size:12px;color:#546e7a;margin-bottom:6px;">3) Карта интеграции в смету</div>'
                 + '<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3ebf3;border-radius:8px;overflow:hidden;">' + mapRows + '</table>'
-                + '<button type="button" style="margin-top:8px;background:#1e88e5;color:#fff;border:none;border-radius:8px;padding:8px 10px;cursor:pointer;" onclick="applyPdfMapToColumns(\'' + mode + '\')">Перенести карту в настройки колонок</button>'
+                + '<button type="button" id="pdfMapApply-' + mode + '" style="margin-top:8px;background:#1e88e5;color:#fff;border:none;border-radius:8px;padding:8px 10px;cursor:pointer;">Перенести карту в настройки колонок</button>'
                 + '</div></div></div>';
             targets.forEach(function(t) {
                 var sel = document.getElementById('pdf-map-' + mode + '-' + t[0]);
@@ -1969,6 +1985,10 @@
                 var v = initial[t[0]];
                 if (v !== '' && v != null) sel.value = String(v);
             });
+            var applyMapBtn = document.getElementById('pdfMapApply-' + mode);
+            if (applyMapBtn) {
+                applyMapBtn.addEventListener('click', function() { applyPdfMapToColumns(mode); });
+            }
         }
         function applyPdfMapToColumns(mode) {
             var suf = mode === 'wholesale' ? 'Wholesale' : 'Retail';
