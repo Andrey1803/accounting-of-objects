@@ -185,6 +185,14 @@
                         <a href="/estimate/catalog" class="user-dropdown-item">
                             <span>📦</span> Каталог
                         </a>
+                        {% if current_user.role == 'admin' %}
+                        <a href="/admin/users" class="user-dropdown-item">
+                            <span>🛡️</span> Админ-панель
+                        </a>
+                        <a href="/admin/invites" class="user-dropdown-item">
+                            <span>🎟️</span> Приглашения
+                        </a>
+                        {% endif %}
                         <div class="user-dropdown-item" onclick="openPriceSyncModal()">
                             <span>🔄</span> Синхронизация цен
                         </div>
