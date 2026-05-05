@@ -6,8 +6,11 @@ import bcrypt
 from datetime import datetime, timedelta
 import os
 import secrets
+import time
 
 auth_bp = Blueprint('auth', __name__)
+_ADMIN_SCHEMA_CHECK_AT = 0.0
+_ADMIN_SCHEMA_CHECK_INTERVAL_SEC = 300.0
 
 
 def _register_disabled():
@@ -45,6 +48,11 @@ def _ensure_admin_schema_ready():
     Страховка для прода: если миграции не применились после деплоя,
     поднимем нужные таблицы/колонки перед админ-операциями.
     """
+    global _ADMIN_SCHEMA_CHECK_AT
+    now_ts = time.time()
+    if (now_ts - _ADMIN_SCHEMA_CHECK_AT) < _ADMIN_SCHEMA_CHECK_INTERVAL_SEC:
+        return
+    _ADMIN_SCHEMA_CHECK_AT = now_ts
     try:
         init_db()
     except Exception:
