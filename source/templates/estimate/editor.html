@@ -1811,12 +1811,14 @@
             var pw = document.getElementById('pdfImportPanelWholesale');
             if (pr) pr.classList.toggle('active', !isWholesale);
             if (pw) pw.classList.toggle('active', isWholesale);
+            loadPdfLayoutProfile(mode);
         }
 
         function openPdfImport() {
             window._pdfImportMode = null;
             window._pdfMatchedData = [];
             window._pdfUnmatchedData = [];
+            window._pdfColumnsConfirmed = false;
             resetPdfDropZones();
             clearPdfColumnOverrideFields();
             setPdfImportTab('retail');
@@ -1855,6 +1857,41 @@
                     if (el) el.value = '';
                 });
             });
+        }
+        function _pdfLayoutStorageKey(mode) {
+            return 'pdf_layout_profile_' + (mode === 'wholesale' ? 'wholesale' : 'retail');
+        }
+        function loadPdfLayoutProfile(mode) {
+            try {
+                var raw = localStorage.getItem(_pdfLayoutStorageKey(mode));
+                if (!raw) return;
+                var cfg = JSON.parse(raw);
+                if (!cfg || typeof cfg !== 'object') return;
+                var suf = mode === 'wholesale' ? 'Wholesale' : 'Retail';
+                var set = function(id, val) {
+                    var el = document.getElementById(id);
+                    if (el && (val || val === 0)) el.value = String(val);
+                };
+                set('pdfColName' + suf, cfg.col_name);
+                set('pdfColUnit' + suf, cfg.col_unit);
+                set('pdfColQty' + suf, cfg.col_qty);
+                set('pdfColRetail' + suf, cfg.col_retail);
+                set('pdfColPurchase' + suf, cfg.col_purchase);
+            } catch (e) {}
+        }
+        function savePdfLayoutProfile(mode) {
+            var suf = mode === 'wholesale' ? 'Wholesale' : 'Retail';
+            var get = function(id) {
+                return (document.getElementById(id)?.value || '').trim();
+            };
+            var cfg = {
+                col_name: get('pdfColName' + suf),
+                col_unit: get('pdfColUnit' + suf),
+                col_qty: get('pdfColQty' + suf),
+                col_retail: get('pdfColRetail' + suf),
+                col_purchase: get('pdfColPurchase' + suf),
+            };
+            try { localStorage.setItem(_pdfLayoutStorageKey(mode), JSON.stringify(cfg)); } catch (e) {}
         }
 
         function closePdfImport() {
@@ -1939,6 +1976,7 @@
 
         function showPdfImportResults(data) {
             const resultsDiv = document.getElementById('pdfResults');
+            window._pdfColumnsConfirmed = false;
             window._pdfImportMode = data.import_mode === 'wholesale' ? 'wholesale' : 'retail';
             if (data.import_mode) setPdfImportTab(data.import_mode === 'wholesale' ? 'wholesale' : 'retail');
             if (data.header_layout && typeof data.header_layout === 'object') {
@@ -1949,6 +1987,7 @@
             const unmatched = data.unmatched || [];
 
             let html = '<div class="pdf-import-results-title">Результат разбора</div>';
+            html += '<div class="pdf-import-callout pdf-import-callout--warn"><strong>Шаг 1:</strong> проверьте колонки и нажмите <strong>«Подтвердить колонки»</strong>. <strong>Шаг 2:</strong> только после этого станет доступно применение в смету/каталог.</div>';
             html += '<div class="pdf-import-stats">';
             html += '<span class="pdf-import-stat">Строк в PDF: <b>' + (data.total_rows != null ? data.total_rows : '—') + '</b></span>';
             html += '<span class="pdf-import-stat">Совпало: <b style="color:#2e7d32">' + (data.matched_count != null ? data.matched_count : 0) + '</b></span>';
@@ -2044,7 +2083,8 @@
                 html += '<div class="pdf-import-actions">';
                 html += '<button type="button" onclick="selectAllMatches(true)">Выбрать все</button>';
                 html += '<button type="button" onclick="selectAllMatches(false)">Снять все</button>';
-                html += '<button type="button" class="pdf-import-btn-primary" onclick="importSelectedMatches()">Применить выбранное</button>';
+                html += '<button type="button" id="pdfConfirmColumnsBtn" style="background:#5e35b1;color:#fff;" onclick="confirmPdfColumns()">Подтвердить колонки</button>';
+                html += '<button type="button" id="pdfApplySelectedBtn" class="pdf-import-btn-primary" onclick="importSelectedMatches()" disabled title="Сначала подтвердите колонки">Применить выбранное</button>';
                 html += '</div>';
             }
 
@@ -2063,8 +2103,28 @@
             document.querySelectorAll('input[type="checkbox"][id^="pdf-unmatch-"]').forEach(cb => cb.checked = checked);
         }
 
+        function confirmPdfColumns() {
+            window._pdfColumnsConfirmed = true;
+            savePdfLayoutProfile(window._pdfImportMode || 'retail');
+            var applyBtn = document.getElementById('pdfApplySelectedBtn');
+            var confirmBtn = document.getElementById('pdfConfirmColumnsBtn');
+            if (applyBtn) {
+                applyBtn.disabled = false;
+                applyBtn.removeAttribute('title');
+            }
+            if (confirmBtn) {
+                confirmBtn.textContent = 'Колонки подтверждены';
+                confirmBtn.disabled = true;
+                confirmBtn.style.opacity = '0.85';
+            }
+        }
+
         async function importSelectedMatches() {
             if (!Array.isArray(window._pdfMatchedData) || !Array.isArray(window._pdfUnmatchedData)) return;
+            if (!window._pdfColumnsConfirmed) {
+                alert('Сначала нажмите «Подтвердить колонки», чтобы избежать ошибки распознавания.');
+                return;
+            }
 
             const importMode = (window._pdfImportMode === 'wholesale') ? 'wholesale' : 'retail';
 
