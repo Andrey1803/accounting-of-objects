@@ -40,7 +40,7 @@
                         <td style="font-weight:600">{{ u.username }}</td>
                         <td><span class="role-badge {{ 'role-admin' if u.role=='admin' else 'role-user' }}">{{ u.role }}</span></td>
                         <td>{{ u.email or '-' }}</td>
-                        <td>{{ u.created_at[:10] }}</td>
+                        <td>{{ (u.created_at|string)[:10] if u.created_at else '—' }}</td>
                         <td>
                             {% if u.id != 1 %}
                             <form action="/admin/users/{{ u.id }}/delete" method="POST" style="display:inline" onsubmit="return confirm('Удалить?')">
