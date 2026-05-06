@@ -2036,24 +2036,47 @@ def api_pdf_import_dual_materials():
             if not name or len(name) < 3:
                 continue
 
-            qty = _pdf_sanitize_qty(_pdf_extract_qty(row, False, retail_layout), 0, 0)
+            qty = None
+            if retail_layout and retail_layout.get('qty_idx') is not None:
+                q_idx = int(retail_layout.get('qty_idx'))
+                if 0 <= q_idx < len(row):
+                    qty = _to_float_ru(row[q_idx])
+            if qty is None and len(row) > 2:
+                # Страховка для частого формата счетов: количество в 3-й колонке.
+                qty = _to_float_ru(row[2])
+            if qty is None:
+                qty = _pdf_sanitize_qty(_pdf_extract_qty(row, False, retail_layout), 0, 0)
+            qty = float(qty or 0)
+            if qty <= 0:
+                qty = 1.0
+
             unit = _pdf_extract_unit(row, retail_layout)
-            retail_price = _pdf_extract_pdf_retail_unit_price(row, False, retail_layout)
+            if (not unit or str(unit).strip() == '') and retail_layout and retail_layout.get('unit_idx') is not None:
+                u_idx = int(retail_layout.get('unit_idx'))
+                if 0 <= u_idx < len(row):
+                    unit = str(row[u_idx] or '').strip()
+
+            retail_price = None
+            if retail_layout and retail_layout.get('retail_idx') is not None:
+                r_idx = int(retail_layout.get('retail_idx'))
+                if 0 <= r_idx < len(row):
+                    retail_price = _to_float_ru(row[r_idx])
+            if retail_price is None and len(row) > 4:
+                retail_price = _to_float_ru(row[4])
             if retail_price is None:
-                retail_price = _to_float_ru(row[4] if len(row) > 4 else None)
+                retail_price = _pdf_extract_pdf_retail_unit_price(row, False, retail_layout)
 
             wholesale_price = None
             w_idx = i + wholesale_data_row_offset
             if w_idx < len(wholesale_rows):
                 wrow = wholesale_rows[w_idx] or []
-                wholesale_layout = _pdf_table_layout_for_row(wrow, 'wholesale', wholesale_header_layout)
-                wholesale_price = _pdf_extract_pdf_unit_price_with_vat(wrow, False, wholesale_layout)
-                if wholesale_price is not None:
-                    wholesale_price = round(float(wholesale_price) * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4)
-                else:
-                    src = wrow[5] if len(wrow) > 5 else None
-                    p = _to_float_ru(src)
-                    wholesale_price = round(p * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4) if p is not None else None
+                # Для режима "2 PDF" берем опт строго из колонки цены (без эвристик),
+                # чтобы не перепутать с колонкой количества.
+                wholesale_src_idx = 5  # 6-я колонка (как согласовано)
+                src = wrow[wholesale_src_idx] if len(wrow) > wholesale_src_idx else None
+                p = _to_float_ru(src)
+                if p is not None:
+                    wholesale_price = round(p * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4)
 
             retail_price = float(retail_price or 0)
             wholesale_price = float(wholesale_price or 0)
