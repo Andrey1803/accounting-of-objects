@@ -1971,6 +1971,161 @@ def api_pdf_merge_retail_wholesale_sheet():
         logging.error(f"pdf_merge_retail_wholesale_sheet error: {e}\n{tb}")
         return jsonify({"error": str(e)}), 500
 
+
+@estimate_bp.route('/api/pdf-import-dual-materials', methods=['POST'])
+@login_required
+def api_pdf_import_dual_materials():
+    """
+    Импорт материалов из двух PDF (розница + опт):
+    - формирует единый список материалов,
+    - сверяет с каталогом,
+    - добавляет отсутствующие,
+    - добавляет материалы в смету (если передан estimate_id).
+    """
+    try:
+        retail_file = request.files.get('retail_file')
+        wholesale_file = request.files.get('wholesale_file')
+        if not retail_file or not wholesale_file:
+            return jsonify({"error": "Нужны два файла: retail_file и wholesale_file"}), 400
+        if not (retail_file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Файл розницы должен быть PDF"}), 400
+        if not (wholesale_file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Файл опта должен быть PDF"}), 400
+
+        estimate_id_raw = (request.form.get('estimate_id') or '').strip()
+        estimate_id = int(estimate_id_raw) if estimate_id_raw.isdigit() else None
+        if estimate_id is not None:
+            est = fetch_one("SELECT id FROM estimates WHERE id = ? AND user_id = ?", (estimate_id, current_user.id))
+            if not est:
+                return jsonify({"error": "Смета не найдена"}), 404
+
+        retail_rows = _pdf_extract_rows_for_sheet(retail_file)
+        wholesale_rows = _pdf_extract_rows_for_sheet(wholesale_file)
+        if not retail_rows:
+            return jsonify({"error": "Не удалось извлечь таблицу из PDF розницы"}), 400
+
+        retail_header_layout = _pdf_detect_header_layout(retail_rows, 'retail')
+        wholesale_header_layout = _pdf_detect_header_layout(wholesale_rows, 'wholesale') if wholesale_rows else None
+        wholesale_data_row_offset = 1
+
+        catalog_items = fetch_all(
+            "SELECT id, name, article, brand, category, item_type, retail_price, purchase_price, wholesale_price FROM catalog_materials WHERE user_id = ?",
+            (current_user.id,),
+        )
+        catalog_by_norm_name = {}
+        for it in catalog_items:
+            key = _pdf_normalize_name_for_index(it.get('name') or '')
+            if key and key not in catalog_by_norm_name:
+                catalog_by_norm_name[key] = it
+
+        materials = []
+        for i, row in enumerate(retail_rows):
+            if not row or all(not str(c or '').strip() for c in row):
+                continue
+            row_text = ' '.join(str(cell or '') for cell in row).strip()
+            if len(row_text) < 3:
+                continue
+            if _PDF_HEADER_START.search(row_text) or _PDF_TOTALS_ROW.search(row_text):
+                continue
+
+            retail_layout = _pdf_table_layout_for_row(row, 'retail', retail_header_layout)
+            if retail_layout:
+                name = str(row[retail_layout['name_idx']] or '').strip()
+            else:
+                name = _pdf_row_product_title(row_text)
+            if not name or len(name) < 3:
+                continue
+
+            qty = _pdf_sanitize_qty(_pdf_extract_qty(row, False, retail_layout), 0, 0)
+            unit = _pdf_extract_unit(row, retail_layout)
+            retail_price = _pdf_extract_pdf_retail_unit_price(row, False, retail_layout)
+            if retail_price is None:
+                retail_price = _to_float_ru(row[4] if len(row) > 4 else None)
+
+            wholesale_price = None
+            w_idx = i + wholesale_data_row_offset
+            if w_idx < len(wholesale_rows):
+                wrow = wholesale_rows[w_idx] or []
+                wholesale_layout = _pdf_table_layout_for_row(wrow, 'wholesale', wholesale_header_layout)
+                wholesale_price = _pdf_extract_pdf_unit_price_with_vat(wrow, False, wholesale_layout)
+                if wholesale_price is not None:
+                    wholesale_price = round(float(wholesale_price) * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4)
+                else:
+                    src = wrow[5] if len(wrow) > 5 else None
+                    p = _to_float_ru(src)
+                    wholesale_price = round(p * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4) if p is not None else None
+
+            retail_price = float(retail_price or 0)
+            wholesale_price = float(wholesale_price or 0)
+            if retail_price <= 0 and wholesale_price <= 0:
+                continue
+            if retail_price <= 0 and wholesale_price > 0:
+                retail_price = wholesale_price
+
+            materials.append({
+                'name': name,
+                'unit': unit or 'шт',
+                'qty': float(qty or 1),
+                'retail_price': round(retail_price, 4),
+                'wholesale_price': round(wholesale_price, 4),
+            })
+
+        if not materials:
+            return jsonify({"error": "Не удалось собрать материалы из двух PDF"}), 400
+
+        added_to_catalog = 0
+        updated_in_catalog = 0
+        added_to_estimate = 0
+
+        for m in materials:
+            norm_key = _pdf_normalize_name_for_index(m['name'])
+            existing = catalog_by_norm_name.get(norm_key) if norm_key else None
+            if existing:
+                execute(
+                    """UPDATE catalog_materials
+                       SET retail_price = ?, purchase_price = ?, wholesale_price = ?, unit = ?, use_count = COALESCE(use_count,0)+1
+                       WHERE id = ? AND user_id = ?""",
+                    (m['retail_price'], m['wholesale_price'], m['wholesale_price'], m['unit'], existing['id'], current_user.id),
+                )
+                catalog_id = existing['id']
+                updated_in_catalog += 1
+            else:
+                catalog_id = execute(
+                    """INSERT INTO catalog_materials
+                       (user_id, name, unit, category, article, brand, item_type, purchase_price, retail_price, wholesale_price, min_wholesale_qty, description, use_count)
+                       VALUES (?, ?, ?, '', '', '', 'material', ?, ?, ?, 10, '', 1)""",
+                    (current_user.id, m['name'], m['unit'], m['wholesale_price'], m['retail_price'], m['wholesale_price']),
+                    return_id=True,
+                )
+                added_to_catalog += 1
+                if norm_key:
+                    catalog_by_norm_name[norm_key] = {'id': catalog_id, 'name': m['name']}
+
+            if estimate_id is not None:
+                total = m['retail_price'] * m['qty']
+                profit = (m['retail_price'] - m['wholesale_price']) * m['qty']
+                execute(
+                    """INSERT INTO estimate_items
+                       (estimate_id, section, name, unit, quantity, price_type, price, purchase_price, wholesale_price, total, material_profit, sort_order)
+                       VALUES (?, 'material', ?, ?, ?, 'retail', ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order),0)+1 FROM estimate_items WHERE estimate_id=?))""",
+                    (estimate_id, m['name'], m['unit'], m['qty'], m['retail_price'], m['wholesale_price'], m['wholesale_price'], total, profit, estimate_id),
+                )
+                added_to_estimate += 1
+
+        return jsonify({
+            "ok": True,
+            "materials_count": len(materials),
+            "added_to_catalog": added_to_catalog,
+            "updated_in_catalog": updated_in_catalog,
+            "added_to_estimate": added_to_estimate,
+            "estimate_id": estimate_id,
+        })
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logging.error(f"pdf_import_dual_materials error: {e}\n{tb}")
+        return jsonify({"error": str(e)}), 500
+
 def _opt_config_path():
     import os
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), '.opt_config.json')
