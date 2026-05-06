@@ -1725,6 +1725,112 @@ def api_parse_pdf():
         logging.error(f"parse_pdf error: {e}\n{tb}")
         return jsonify({"error": str(e)}), 500
 
+
+@estimate_bp.route('/api/pdf-to-sheet', methods=['POST'])
+@login_required
+def api_pdf_to_sheet():
+    """Преобразовать PDF в полную Excel-таблицу (без урезания строк/колонок)."""
+    try:
+        import pdfplumber
+
+        if 'file' not in request.files:
+            return jsonify({"error": "Нет файла"}), 400
+
+        file = request.files['file']
+        if not file or not (file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Нужен PDF файл"}), 400
+
+        mode_raw = (request.form.get('mode') or request.args.get('mode') or 'retail').strip().lower()
+        import_mode = 'wholesale' if mode_raw in ('wholesale', 'opt', 'purchase', 'cost') else 'retail'
+
+        pdf_file = pdfplumber.open(io.BytesIO(file.read()))
+        full_text_chunks = []
+        all_rows = []
+        for page in pdf_file.pages:
+            text = page.extract_text()
+            if text:
+                full_text_chunks.append(text)
+            tables = page.extract_tables()
+            if tables:
+                for table in tables:
+                    for row in table:
+                        if row and any(cell for cell in row if cell):
+                            all_rows.append([str(c).strip() if c else '' for c in row])
+            elif text:
+                for line in text.split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = re.split(r'\t|\s{3,}', line)
+                    parsed = [p.strip() for p in parts if p.strip()]
+                    if parsed:
+                        all_rows.append(parsed)
+        pdf_file.close()
+
+        full_text = '\n'.join(full_text_chunks)
+        cart_rows = _pdf_parse_cart_ready_format(full_text)
+        from_cart_pdf = len(cart_rows) >= 1
+        if from_cart_pdf:
+            all_rows = cart_rows
+
+        if not all_rows:
+            return jsonify({"error": "Не удалось извлечь таблицу из PDF"}), 400
+
+        manual_header_layout = None if from_cart_pdf else _pdf_parse_manual_header_layout(request)
+        header_layout = manual_header_layout if manual_header_layout else (
+            None if from_cart_pdf else _pdf_detect_header_layout(all_rows, import_mode)
+        )
+
+        max_cols = 0
+        for row in all_rows:
+            if row:
+                max_cols = max(max_cols, len(row))
+        if max_cols <= 0:
+            return jsonify({"error": "В PDF нет табличных данных"}), 400
+
+        header_cells = []
+        src_cells = list((header_layout or {}).get('header_cells') or [])
+        for i in range(max_cols):
+            cell = src_cells[i] if i < len(src_cells) else ''
+            header_cells.append((str(cell).strip() if cell else '') or f'Колонка {i + 1}')
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Опт' if import_mode == 'wholesale' else 'Розница'
+
+        ws.append(header_cells)
+        for row in all_rows:
+            padded = list(row) + [''] * max(0, max_cols - len(row))
+            ws.append(padded[:max_cols])
+
+        # Лёгкое авто-растяжение колонок для удобного просмотра.
+        for col_idx in range(1, max_cols + 1):
+            max_len = len(str(header_cells[col_idx - 1] or ''))
+            for row_idx in range(2, ws.max_row + 1):
+                val = ws.cell(row=row_idx, column=col_idx).value
+                if val is None:
+                    continue
+                max_len = max(max_len, len(str(val)))
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max(max_len + 2, 10), 80)
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+
+        suffix = 'opt' if import_mode == 'wholesale' else 'retail'
+        filename = f'pdf_{suffix}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+        return send_file(
+            out,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logging.error(f"pdf_to_sheet error: {e}\n{tb}")
+        return jsonify({"error": str(e)}), 500
+
 def _opt_config_path():
     import os
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), '.opt_config.json')
