@@ -2271,9 +2271,19 @@
                         + ', обновлено в базе ' + (data.updated_in_catalog || 0)
                         + ', добавлено в смету ' + (data.added_to_estimate || 0) + '.';
                 }
-                await loadEstimate();
+
+                // В этом шаблоне нет loadEstimate(); обновляем список позиций напрямую.
+                try {
+                    const estRes = await fetch('/estimate/api/estimates/' + estimateId, {
+                        headers: { 'X-CSRF-Token': getCsrf() }
+                    });
+                    if (estRes.ok) {
+                        const estData = await estRes.json();
+                        if (Array.isArray(estData.items)) items = estData.items;
+                    }
+                } catch (ignore) {}
                 recalcTotals();
-                renderTable();
+                render();
             } catch (e) {
                 if (statusEl) statusEl.textContent = '';
                 alert('Ошибка импорта материалов: ' + (e && e.message ? e.message : e));
