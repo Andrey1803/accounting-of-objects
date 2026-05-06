@@ -1832,59 +1832,131 @@ def api_pdf_to_sheet():
         return jsonify({"error": str(e)}), 500
 
 
-@estimate_bp.route('/api/merge-retail-wholesale-sheets', methods=['POST'])
+def _pdf_extract_rows_for_sheet(uploaded_file):
+    import pdfplumber
+    pdf_file = pdfplumber.open(io.BytesIO(uploaded_file.read()))
+    full_text_chunks = []
+    all_rows = []
+    for page in pdf_file.pages:
+        text = page.extract_text()
+        if text:
+            full_text_chunks.append(text)
+        tables = page.extract_tables()
+        if tables:
+            for table in tables:
+                for row in table:
+                    if row and any(cell for cell in row if cell):
+                        all_rows.append([str(c).strip() if c else '' for c in row])
+        elif text:
+            for line in text.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                parts = re.split(r'\t|\s{3,}', line)
+                parsed = [p.strip() for p in parts if p.strip()]
+                if parsed:
+                    all_rows.append(parsed)
+    pdf_file.close()
+    full_text = '\n'.join(full_text_chunks)
+    cart_rows = _pdf_parse_cart_ready_format(full_text)
+    if len(cart_rows) >= 1:
+        return cart_rows
+    return all_rows
+
+
+def _to_float_ru(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    s = s.replace('\u00a0', ' ').replace(' ', '').replace(',', '.')
+    s = re.sub(r'[^0-9.\-]', '', s)
+    if not s:
+        return None
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+@estimate_bp.route('/api/pdf-merge-retail-wholesale-sheet', methods=['POST'])
 @login_required
-def api_merge_retail_wholesale_sheets():
+def api_pdf_merge_retail_wholesale_sheet():
     """
-    Объединить 2 Excel-таблицы:
-    - за основу берется розничная таблица,
-    - в 7-й колонке ставится заголовок "Опт",
-    - ниже подставляются значения из 6-й колонки оптовой таблицы с +20%.
+    Объединение двух PDF в одну таблицу:
+    - база: розничная таблица;
+    - 7-я колонка: заголовок "Опт";
+    - ниже: значения из 6-й колонки оптового PDF, увеличенные на 20%.
     """
     try:
         retail_file = request.files.get('retail_file')
         wholesale_file = request.files.get('wholesale_file')
         if not retail_file or not wholesale_file:
-            return jsonify({"error": "Нужны оба файла: розница и опт"}), 400
+            return jsonify({"error": "Нужны два файла: retail_file и wholesale_file"}), 400
+        if not (retail_file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Файл розницы должен быть PDF"}), 400
+        if not (wholesale_file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Файл опта должен быть PDF"}), 400
 
-        retail_name = (retail_file.filename or '').lower()
-        wholesale_name = (wholesale_file.filename or '').lower()
-        if not retail_name.endswith('.xlsx') or not wholesale_name.endswith('.xlsx'):
-            return jsonify({"error": "Оба файла должны быть в формате .xlsx"}), 400
+        retail_rows = _pdf_extract_rows_for_sheet(retail_file)
+        wholesale_rows = _pdf_extract_rows_for_sheet(wholesale_file)
+        if not retail_rows:
+            return jsonify({"error": "Не удалось извлечь таблицу из PDF розницы"}), 400
 
-        wb_retail = openpyxl.load_workbook(io.BytesIO(retail_file.read()))
-        wb_wholesale = openpyxl.load_workbook(io.BytesIO(wholesale_file.read()), data_only=True)
-        ws_retail = wb_retail.active
-        ws_wholesale = wb_wholesale.active
+        retail_mode = 'retail'
+        retail_header_layout = _pdf_detect_header_layout(retail_rows, retail_mode)
 
-        retail_last_row = ws_retail.max_row or 1
-        wholesale_last_row = ws_wholesale.max_row or 1
+        retail_max_cols = 0
+        for row in retail_rows:
+            if row:
+                retail_max_cols = max(retail_max_cols, len(row))
+        if retail_max_cols < 7:
+            retail_max_cols = 7
 
-        target_col = 7      # 7-я колонка в итоговой розничной таблице
-        source_col = 6      # 6-я колонка в оптовой таблице
-        vat_k = _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT
+        header_cells = []
+        src_cells = list((retail_header_layout or {}).get('header_cells') or [])
+        for i in range(retail_max_cols):
+            cell = src_cells[i] if i < len(src_cells) else ''
+            header_cells.append((str(cell).strip() if cell else '') or f'Колонка {i + 1}')
+        header_cells[6] = 'Опт'
 
-        ws_retail.cell(row=1, column=target_col, value='Опт')
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Розница+Опт'
+        ws.append(header_cells)
 
-        max_data_rows = max(retail_last_row, wholesale_last_row)
-        for row_idx in range(2, max_data_rows + 1):
-            source_val = ws_wholesale.cell(row=row_idx, column=source_col).value
-            out_val = None
-            if source_val is not None and str(source_val).strip() != '':
-                try:
-                    v = float(str(source_val).replace(' ', '').replace(',', '.'))
-                    out_val = round(v * vat_k, 4)
-                except Exception:
-                    out_val = source_val
-            ws_retail.cell(row=row_idx, column=target_col, value=out_val)
+        wholesale_col_index = 5  # 6-я колонка в терминах пользователя
+        for i, retail_row in enumerate(retail_rows):
+            row_out = list(retail_row) + [''] * max(0, retail_max_cols - len(retail_row))
+            row_out = row_out[:retail_max_cols]
 
-        # Чуть расширим 7-ю колонку для удобства просмотра.
-        ws_retail.column_dimensions[openpyxl.utils.get_column_letter(target_col)].width = 16
+            wholesale_src_val = ''
+            if i < len(wholesale_rows):
+                wrow = wholesale_rows[i] or []
+                if wholesale_col_index < len(wrow):
+                    wholesale_src_val = wrow[wholesale_col_index]
+            wholesale_num = _to_float_ru(wholesale_src_val)
+            if wholesale_num is not None:
+                row_out[6] = round(wholesale_num * 1.2, 4)
+            else:
+                row_out[6] = ''
+
+            ws.append(row_out)
+
+        for col_idx in range(1, retail_max_cols + 1):
+            max_len = len(str(header_cells[col_idx - 1] or ''))
+            for row_idx in range(2, ws.max_row + 1):
+                val = ws.cell(row=row_idx, column=col_idx).value
+                if val is None:
+                    continue
+                max_len = max(max_len, len(str(val)))
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max(max_len + 2, 10), 80)
 
         out = io.BytesIO()
-        wb_retail.save(out)
+        wb.save(out)
         out.seek(0)
-        filename = f'merged_retail_opt_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+        filename = f'pdf_merged_retail_opt_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
         return send_file(
             out,
             as_attachment=True,
@@ -1894,7 +1966,7 @@ def api_merge_retail_wholesale_sheets():
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        logging.error(f"merge_retail_wholesale_sheets error: {e}\n{tb}")
+        logging.error(f"pdf_merge_retail_wholesale_sheet error: {e}\n{tb}")
         return jsonify({"error": str(e)}), 500
 
 def _opt_config_path():
