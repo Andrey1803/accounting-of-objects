@@ -1831,6 +1831,72 @@ def api_pdf_to_sheet():
         logging.error(f"pdf_to_sheet error: {e}\n{tb}")
         return jsonify({"error": str(e)}), 500
 
+
+@estimate_bp.route('/api/merge-retail-wholesale-sheets', methods=['POST'])
+@login_required
+def api_merge_retail_wholesale_sheets():
+    """
+    Объединить 2 Excel-таблицы:
+    - за основу берется розничная таблица,
+    - в 7-й колонке ставится заголовок "Опт",
+    - ниже подставляются значения из 6-й колонки оптовой таблицы с +20%.
+    """
+    try:
+        retail_file = request.files.get('retail_file')
+        wholesale_file = request.files.get('wholesale_file')
+        if not retail_file or not wholesale_file:
+            return jsonify({"error": "Нужны оба файла: розница и опт"}), 400
+
+        retail_name = (retail_file.filename or '').lower()
+        wholesale_name = (wholesale_file.filename or '').lower()
+        if not retail_name.endswith('.xlsx') or not wholesale_name.endswith('.xlsx'):
+            return jsonify({"error": "Оба файла должны быть в формате .xlsx"}), 400
+
+        wb_retail = openpyxl.load_workbook(io.BytesIO(retail_file.read()))
+        wb_wholesale = openpyxl.load_workbook(io.BytesIO(wholesale_file.read()), data_only=True)
+        ws_retail = wb_retail.active
+        ws_wholesale = wb_wholesale.active
+
+        retail_last_row = ws_retail.max_row or 1
+        wholesale_last_row = ws_wholesale.max_row or 1
+
+        target_col = 7      # 7-я колонка в итоговой розничной таблице
+        source_col = 6      # 6-я колонка в оптовой таблице
+        vat_k = _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT
+
+        ws_retail.cell(row=1, column=target_col, value='Опт')
+
+        max_data_rows = max(retail_last_row, wholesale_last_row)
+        for row_idx in range(2, max_data_rows + 1):
+            source_val = ws_wholesale.cell(row=row_idx, column=source_col).value
+            out_val = None
+            if source_val is not None and str(source_val).strip() != '':
+                try:
+                    v = float(str(source_val).replace(' ', '').replace(',', '.'))
+                    out_val = round(v * vat_k, 4)
+                except Exception:
+                    out_val = source_val
+            ws_retail.cell(row=row_idx, column=target_col, value=out_val)
+
+        # Чуть расширим 7-ю колонку для удобства просмотра.
+        ws_retail.column_dimensions[openpyxl.utils.get_column_letter(target_col)].width = 16
+
+        out = io.BytesIO()
+        wb_retail.save(out)
+        out.seek(0)
+        filename = f'merged_retail_opt_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+        return send_file(
+            out,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logging.error(f"merge_retail_wholesale_sheets error: {e}\n{tb}")
+        return jsonify({"error": str(e)}), 500
+
 def _opt_config_path():
     import os
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), '.opt_config.json')
