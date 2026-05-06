@@ -1927,13 +1927,15 @@ def api_pdf_merge_retail_wholesale_sheet():
         ws.append(header_cells)
 
         wholesale_col_index = 5  # 6-я колонка в терминах пользователя
+        wholesale_data_row_offset = 1  # пропускаем строку-заголовок в оптовой таблице
         for i, retail_row in enumerate(retail_rows):
             row_out = list(retail_row) + [''] * max(0, retail_max_cols - len(retail_row))
             row_out = row_out[:retail_max_cols]
 
             wholesale_src_val = ''
-            if i < len(wholesale_rows):
-                wrow = wholesale_rows[i] or []
+            w_idx = i + wholesale_data_row_offset
+            if w_idx < len(wholesale_rows):
+                wrow = wholesale_rows[w_idx] or []
                 if wholesale_col_index < len(wrow):
                     wholesale_src_val = wrow[wholesale_col_index]
             wholesale_num = _to_float_ru(wholesale_src_val)
