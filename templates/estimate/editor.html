@@ -19,6 +19,10 @@
             --red: var(--color-danger);
         }
 
+        html, body {
+            /* Блокируем "назад/вперед" от горизонтального жеста в браузере */
+            overscroll-behavior-x: none;
+        }
         body { padding-bottom: 80px; }
 
         /* Заголовок секции (h2 вместо h3) */
@@ -157,17 +161,19 @@
         <div class="items-section">
             <div class="section-head" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
                 <h2 style="margin:0;">🔧 Материалы</h2>
-                <div style="display:flex;gap:8px;margin-left:auto;">
-                    <button type="button" class="btn btn-danger" onclick="deleteSelectedInSection('material')">🗑 Удалить</button>
-                    <button type="button" class="btn" style="background:var(--orange)" onclick="openSearch('material')">+ Добавить</button>
-                </div>
             </div>
             <table class="items-table"><thead><tr>
-                <th style="width:36px;text-align:center;" title="Выделить все"><input type="checkbox" aria-label="Выделить все материалы" onchange="toggleSectionSelectAll('material', this.checked)"></th>
+                <th style="width:36px;text-align:center;" title="Выделить все"><input id="mat-select-all" type="checkbox" aria-label="Выделить все материалы" onchange="toggleSectionSelectAll('material', this.checked)"></th>
+                <th style="width:48px;text-align:center;">№</th>
                 <th width="22%">Наименование</th><th width="8%">Ед.</th><th width="8%">Кол-во</th>
                 <th width="11%">Розница</th><th width="11%">Закуп</th><th width="10%">Маржа %</th><th width="12%">Сумма</th>
             </tr></thead><tbody id="mat-body"></tbody></table>
             <div id="mat-cards"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-danger" onclick="deleteSelectedInSection('material')">🗑 Удалить</button>
+                <button type="button" class="btn" style="background:var(--orange)" onclick="openSearch('material')">+ Добавить</button>
+                <button type="button" class="btn btn-secondary" onclick="toggleMaterialCheckpoint()">📍 Чекпойнт</button>
+            </div>
         </div>
 
         <div class="items-section">
@@ -180,6 +186,7 @@
             </div>
             <table class="items-table"><thead><tr>
                 <th style="width:36px;text-align:center;" title="Выделить все"><input type="checkbox" aria-label="Выделить все работы" onchange="toggleSectionSelectAll('work', this.checked)"></th>
+                <th style="width:48px;text-align:center;">№</th>
                 <th width="32%">Наименование</th><th width="10%">Ед.</th><th width="14%">Кол-во</th>
                 <th width="14%">Расценка</th><th width="14%">Сумма</th>
             </tr></thead><tbody id="work-body"></tbody></table>
@@ -878,6 +885,7 @@
                     : ('<td><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></td>');
                 return '<tr'+rowStyle+'>'+
                     '<td style="text-align:center;vertical-align:middle;"><input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'" aria-label="Выбрать строку"></td>'+
+                    '<td style="text-align:center;color:#546e7a;font-weight:600;">'+(idx + 1)+'</td>'+
                     '<td><input type="text" value="'+esc(item.name)+'" onchange="updateItem('+item.id+', \'name\', this.value)"></td>'+
                     '<td><select onchange="updateItem('+item.id+', \'unit\', this.value)">'+
                         ['шт','м','м²','м³','кг','т','л','компл'].map(u => '<option'+(item.unit===u?' selected':'')+'>'+esc(u)+'</option>').join('')+
@@ -927,6 +935,15 @@
             document.querySelectorAll('#' + bodyId + ' .est-row-cb, #' + cardId + ' .est-row-cb').forEach(function(cb) {
                 cb.checked = !!checked;
             });
+        }
+
+        function toggleMaterialCheckpoint() {
+            var rowChecks = Array.from(document.querySelectorAll('#mat-body .est-row-cb, #mat-cards .est-row-cb'));
+            if (!rowChecks.length) return;
+            var hasUnchecked = rowChecks.some(function(cb){ return !cb.checked; });
+            rowChecks.forEach(function(cb){ cb.checked = hasUnchecked; });
+            var head = document.getElementById('mat-select-all');
+            if (head) head.checked = hasUnchecked;
         }
 
         function getSelectedItemIdsInSection(section) {
