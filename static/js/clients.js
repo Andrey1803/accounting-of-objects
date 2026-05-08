@@ -31,9 +31,10 @@ var ClientsPage = (function(API, UI) {
 
         tbody.innerHTML = filtered.map(function(client) {
             var clientName = (client.name || '').trim();
+            var idSafe = String(client.id).replace(/'/g, "\\'");
             return '<tr>' +
                 '<td>' + API.esc(String(client.id)) + '</td>' +
-                '<td class="client-row" data-client-id="' + API.esc(String(client.id)) + '" style="text-align:left;font-weight:600;">' + API.esc(clientName) + '</td>' +
+                '<td class="client-row" data-client-id="' + API.esc(String(client.id)) + '" onclick="openClientHistoryById(\'' + idSafe + '\')" style="text-align:left;font-weight:600;">' + API.esc(clientName) + '</td>' +
                 '<td>' + API.esc(client.phone || '-') + '</td>' +
                 '<td>' + API.esc(client.email || '-') + '</td>' +
                 '<td style="text-align:left;">' + API.esc(client.address || '-') + '</td>' +
@@ -273,3 +274,4 @@ var ClientsPage = (function(API, UI) {
 window.openModal = function(id) { ClientsPage.openModal(id); };
 window.closeModal = function() { ClientsPage.closeModal(); };
 window.closeHistoryModal = function() { ClientsPage.closeHistoryModal(); };
+window.openClientHistoryById = function(id) { ClientsPage.openHistory(id); };
