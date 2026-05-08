@@ -30,9 +30,10 @@ var ClientsPage = (function(API, UI) {
         }
 
         tbody.innerHTML = filtered.map(function(client) {
+            var clientName = (client.name || '').trim();
             return '<tr>' +
                 '<td>' + API.esc(String(client.id)) + '</td>' +
-                '<td style="text-align:left;font-weight:600;">' + API.esc(client.name) + '</td>' +
+                '<td class="client-row" style="text-align:left;font-weight:600;" onclick="ClientsPage.openHistory(' + client.id + ')">' + API.esc(clientName) + '</td>' +
                 '<td>' + API.esc(client.phone || '-') + '</td>' +
                 '<td>' + API.esc(client.email || '-') + '</td>' +
                 '<td style="text-align:left;">' + API.esc(client.address || '-') + '</td>' +
@@ -42,6 +43,45 @@ var ClientsPage = (function(API, UI) {
                 '</td>' +
             '</tr>';
         }).join('');
+    }
+
+    function openHistory(id) {
+        var client = clients.find(function(x) { return x.id === id; });
+        if (!client) return;
+        var title = document.getElementById('history-title');
+        if (title) title.textContent = 'История клиента: ' + (client.name || ('#' + String(id)));
+        var list = document.getElementById('history-list');
+        if (!list) return;
+
+        var related = objects.filter(function(o) {
+            if (o.client_id != null && String(o.client_id) === String(id)) return true;
+            return String(o.client || '').trim() === String(client.name || '').trim();
+        }).sort(function(a, b) {
+            return String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
+        });
+
+        if (related.length === 0) {
+            list.innerHTML = '<div class="history-empty">По этому клиенту пока нет объектов.</div>';
+        } else {
+            list.innerHTML = related.map(function(o) {
+                var status = o.status || '-';
+                var dateStart = o.date_start || '-';
+                var dateEnd = o.date_end || '-';
+                var titleText = o.name || ('Объект #' + String(o.id));
+                return '<div class="history-item">' +
+                    '<div class="history-title">' + API.esc(titleText) + '</div>' +
+                    '<div class="history-meta">Статус: ' + API.esc(String(status)) + ' | Начало: ' + API.esc(String(dateStart)) + ' | Окончание: ' + API.esc(String(dateEnd)) + '</div>' +
+                '</div>';
+            }).join('');
+        }
+
+        var modal = document.getElementById('history-modal');
+        if (modal) modal.classList.add('active');
+    }
+
+    function closeHistoryModal() {
+        var modal = document.getElementById('history-modal');
+        if (modal) modal.classList.remove('active');
     }
 
     function loadData() {
@@ -195,6 +235,12 @@ var ClientsPage = (function(API, UI) {
                 if (e.target.id === 'modal') closeModal();
             });
         }
+        var historyModal = document.getElementById('history-modal');
+        if (historyModal) {
+            historyModal.addEventListener('click', function(e) {
+                if (e.target.id === 'history-modal') closeHistoryModal();
+            });
+        }
         loadData();
     });
 
@@ -203,6 +249,8 @@ var ClientsPage = (function(API, UI) {
         renderTable: renderTable,
         openModal: openModal,
         closeModal: closeModal,
+        openHistory: openHistory,
+        closeHistoryModal: closeHistoryModal,
         editClient: editClient,
         deleteClient: deleteClient,
         saveClient: saveClient
@@ -211,3 +259,4 @@ var ClientsPage = (function(API, UI) {
 
 window.openModal = function(id) { ClientsPage.openModal(id); };
 window.closeModal = function() { ClientsPage.closeModal(); };
+window.closeHistoryModal = function() { ClientsPage.closeHistoryModal(); };
