@@ -33,7 +33,7 @@ var ClientsPage = (function(API, UI) {
             var clientName = (client.name || '').trim();
             return '<tr>' +
                 '<td>' + API.esc(String(client.id)) + '</td>' +
-                '<td class="client-row" style="text-align:left;font-weight:600;" onclick="ClientsPage.openHistory(' + client.id + ')">' + API.esc(clientName) + '</td>' +
+                '<td class="client-row" data-client-id="' + API.esc(String(client.id)) + '" style="text-align:left;font-weight:600;">' + API.esc(clientName) + '</td>' +
                 '<td>' + API.esc(client.phone || '-') + '</td>' +
                 '<td>' + API.esc(client.email || '-') + '</td>' +
                 '<td style="text-align:left;">' + API.esc(client.address || '-') + '</td>' +
@@ -229,6 +229,18 @@ var ClientsPage = (function(API, UI) {
         if (form) form.addEventListener('submit', saveClient);
         var search = document.getElementById('search');
         if (search) search.addEventListener('input', renderTable);
+        var tableBody = document.getElementById('table-body');
+        if (tableBody) {
+            tableBody.addEventListener('click', function(e) {
+                var target = e.target;
+                if (!target || !(target instanceof Element)) return;
+                var cell = target.closest('.client-row');
+                if (!cell) return;
+                var id = cell.getAttribute('data-client-id') || '';
+                if (!id) return;
+                openHistory(id);
+            });
+        }
         var modal = document.getElementById('modal');
         if (modal) {
             modal.addEventListener('click', function(e) {
