@@ -55,8 +55,7 @@ var ClientsPage = (function(API, UI) {
         if (!list) return;
 
         var related = objects.filter(function(o) {
-            if (o.client_id != null && String(o.client_id) === String(id)) return true;
-            return String(o.client || '').trim() === String(client.name || '').trim();
+            return o.client_id != null && String(o.client_id) === String(id);
         }).sort(function(a, b) {
             return String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
         });
