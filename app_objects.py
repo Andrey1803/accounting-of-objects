@@ -3,8 +3,12 @@
 Автоматически адаптируется под SQLite (локально) или PostgreSQL (Railway).
 """
 import atexit
+import json
 import os
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 
@@ -566,6 +570,80 @@ def _integration_find_or_create_client(
     return cid, card_name
 
 
+def _dispatcher_api_base_url() -> str:
+    v = (os.environ.get('DISPATCHER_API_BASE_URL') or os.environ.get('DISPATCHER_API_URL') or '').strip().rstrip('/')
+    return v
+
+
+def _dispatcher_profile_by_phone(client_id: str, phone: str):
+    """
+    Прочитать профиль клиента из Диспетчера по телефону:
+    GET /v1/integration/object-accounting/clients/:clientId/customer-profiles/by-phone?phone=...
+    """
+    base_url = _dispatcher_api_base_url()
+    key = (os.environ.get('INTEGRATION_API_KEY') or '').strip()
+    digits = _normalize_phone_digits(phone)
+    if not base_url or not key or not client_id or not digits:
+        return None
+    url = (
+        f"{base_url}/v1/integration/object-accounting/clients/"
+        f"{urllib.parse.quote(str(client_id).strip(), safe='')}/customer-profiles/by-phone"
+        f"?phone={urllib.parse.quote(str(phone), safe='')}"
+    )
+    req = urllib.request.Request(
+        url=url,
+        headers={
+            'Authorization': f'Bearer {key}',
+            'Accept': 'application/json',
+        },
+        method='GET',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode('utf-8', errors='replace')
+            data = json.loads(body) if body else {}
+            profile = data.get('profile') if isinstance(data, dict) else None
+            return profile if isinstance(profile, dict) else None
+    except Exception:
+        logging.exception("integration: dispatcher profile GET failed")
+        return None
+
+
+def _dispatcher_upsert_profile(client_id: str, payload: dict):
+    """
+    Обновить профиль клиента в Диспетчере:
+    PUT /v1/integration/object-accounting/clients/:clientId/customer-profiles/by-phone
+    """
+    base_url = _dispatcher_api_base_url()
+    key = (os.environ.get('INTEGRATION_API_KEY') or '').strip()
+    if not base_url or not key or not client_id:
+        return
+    customer_phone = str(payload.get('customerPhone') or '').strip()
+    if not _normalize_phone_digits(customer_phone):
+        return
+    url = (
+        f"{base_url}/v1/integration/object-accounting/clients/"
+        f"{urllib.parse.quote(str(client_id).strip(), safe='')}/customer-profiles/by-phone"
+    )
+    body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    req = urllib.request.Request(
+        url=url,
+        data=body,
+        headers={
+            'Authorization': f'Bearer {key}',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        },
+        method='PUT',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            return
+    except Exception:
+        logging.exception("integration: dispatcher profile PUT failed")
+        return
+
+
 # Глобальный обработчик ошибок для API
 @app.errorhandler(500)
 def handle_500(e):
@@ -789,6 +867,7 @@ def integration_create_object_from_taskmgr():
         task_id = (data.get('task_id') or '').strip()
         if not task_id:
             return jsonify({'error': 'task_id is required'}), 400
+        business_client_id = str(data.get('business_client_id') or '').strip()
         reuse_client_card = _integration_should_reuse_client_card(data)
         advance_payload = _integration_parse_money(data.get('advance'))
         advance_delta_payload = _integration_parse_money(data.get('advance_delta'))
@@ -807,6 +886,12 @@ def integration_create_object_from_taskmgr():
             date_start_in = (data.get('date_start') or '').strip()
             phone = str(data.get('customer_phone') or '').strip()
             address = str(data.get('object_address') or '').strip()
+            if phone and business_client_id:
+                remote = _dispatcher_profile_by_phone(business_client_id, phone) or {}
+                if not contact_in:
+                    contact_in = str(remote.get('contactName') or '').strip()
+                if not address:
+                    address = str(remote.get('objectAddress') or '').strip()
             has_payload = bool(
                 contact_in
                 or company_in
@@ -844,6 +929,16 @@ def integration_create_object_from_taskmgr():
                 'UPDATE objects SET name=?, date_start=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
                 (name_new, date_start_new, client_name, client_id, advance_new, existing['id'], target_user_id),
             )
+            if business_client_id and phone:
+                _dispatcher_upsert_profile(
+                    business_client_id,
+                    {
+                        'customerPhone': phone,
+                        'contactName': client_name,
+                        'objectAddress': address,
+                        'startAt': date_start_new or None,
+                    },
+                )
             obj = fetch_one('SELECT * FROM objects WHERE id=? AND user_id=?', (existing['id'], target_user_id))
             return jsonify({'ok': True, 'idempotent': True, 'object': obj, 'synced': True}), 200
 
@@ -858,6 +953,13 @@ def integration_create_object_from_taskmgr():
         card_name = _integration_client_card_name(contact_in, company_in)
         phone = str(data.get('customer_phone') or '').strip()
         address = str(data.get('object_address') or '').strip()
+        if phone and business_client_id:
+            remote = _dispatcher_profile_by_phone(business_client_id, phone) or {}
+            if not contact_in:
+                contact_in = str(remote.get('contactName') or '').strip()
+            if not address:
+                address = str(remote.get('objectAddress') or '').strip()
+            card_name = _integration_client_card_name(contact_in, company_in)
         client_id, client_name = _integration_find_or_create_client(
             target_user_id, card_name, phone, address, reuse_existing=reuse_client_card
         )
@@ -897,6 +999,17 @@ def integration_create_object_from_taskmgr():
             return_id=True,
         )
         obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
+        if business_client_id and phone:
+            _dispatcher_upsert_profile(
+                business_client_id,
+                {
+                    'customerPhone': phone,
+                    'contactName': client_name,
+                    'objectAddress': address,
+                    'startAt': data.get('date_start'),
+                    'dueAt': data.get('date_end'),
+                },
+            )
         return jsonify({'ok': True, 'idempotent': False, 'object': obj}), 201
     except Exception as exc:
         logging.exception("integration: unhandled error in /api/integration/from-taskmgr/object")
