@@ -46,7 +46,7 @@ var ClientsPage = (function(API, UI) {
     }
 
     function openHistory(id) {
-        var client = clients.find(function(x) { return x.id === id; });
+        var client = clients.find(function(x) { return String(x.id) === String(id); });
         if (!client) return;
         var title = document.getElementById('history-title');
         if (title) title.textContent = 'История клиента: ' + (client.name || ('#' + String(id)));
