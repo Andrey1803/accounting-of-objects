@@ -233,7 +233,11 @@ var ClientsPage = (function(API, UI) {
         if (tableBody) {
             tableBody.addEventListener('click', function(e) {
                 var target = e.target;
-                if (!target || !(target instanceof Element)) return;
+                if (!target) return;
+                if (target.nodeType === 3 && target.parentElement) {
+                    target = target.parentElement;
+                }
+                if (!(target instanceof Element)) return;
                 var cell = target.closest('.client-row');
                 if (!cell) return;
                 var id = cell.getAttribute('data-client-id') || '';
