@@ -34,7 +34,7 @@ var ClientsPage = (function(API, UI) {
             var idSafe = String(client.id).replace(/'/g, "\\'");
             return '<tr>' +
                 '<td>' + API.esc(String(client.id)) + '</td>' +
-                '<td class="client-row" data-client-id="' + API.esc(String(client.id)) + '" onclick="openClientHistoryById(\'' + idSafe + '\')" style="text-align:left;font-weight:600;">' + API.esc(clientName) + '</td>' +
+                '<td class="client-row" data-client-id="' + API.esc(String(client.id)) + '" onmousedown="openClientHistoryById(\'' + idSafe + '\'); return false;" style="text-align:left;font-weight:600;">' + API.esc(clientName) + '</td>' +
                 '<td>' + API.esc(client.phone || '-') + '</td>' +
                 '<td>' + API.esc(client.email || '-') + '</td>' +
                 '<td style="text-align:left;">' + API.esc(client.address || '-') + '</td>' +
