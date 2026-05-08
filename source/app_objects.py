@@ -168,6 +168,7 @@ def ensure_db_initialized():
         if _db_init_state["ready"]:
             return
         init_db()
+        _backfill_object_client_links_once()
         _db_init_state["ready"] = True
         _start_startup_recalc_if_enabled()
         _log_integration_env_once()
@@ -450,6 +451,78 @@ def _object_client_fields_from_payload(user_id, data, existing=None):
         return (name, ex_cli)
 
     return (str(ex_name).strip(), ex_cli)
+
+
+def _backfill_object_client_links_once():
+    """
+    Дозаполняет старые objects.client_id и выравнивает objects.client по связанному clients.name.
+    Привязка выполняется только при однозначном совпадении имени клиента.
+    """
+    if getattr(app, "_object_client_backfill_done", False):
+        return
+    app._object_client_backfill_done = True
+    try:
+        users = fetch_all("SELECT id FROM users")
+        linked = 0
+        normalized = 0
+        ambiguous = 0
+        for u in users:
+            uid = u.get('id')
+            if uid is None:
+                continue
+            cards = fetch_all("SELECT id, name FROM clients WHERE user_id = ?", (uid,))
+            by_name = {}
+            for c in cards:
+                key = str(c.get('name') or '').strip().lower()
+                if not key:
+                    continue
+                by_name.setdefault(key, []).append(c)
+
+            # Объекты без client_id: ставим связь только если имя указывает на одного клиента.
+            wo_link = fetch_all(
+                "SELECT id, client FROM objects WHERE user_id = ? AND (client_id IS NULL OR client_id = 0) AND COALESCE(client, '') <> ''",
+                (uid,),
+            )
+            for o in wo_link:
+                key = str(o.get('client') or '').strip().lower()
+                if not key:
+                    continue
+                variants = by_name.get(key) or []
+                if len(variants) == 1:
+                    c = variants[0]
+                    execute(
+                        "UPDATE objects SET client_id = ?, client = ? WHERE id = ? AND user_id = ?",
+                        (c.get('id'), c.get('name'), o.get('id'), uid),
+                    )
+                    linked += 1
+                elif len(variants) > 1:
+                    ambiguous += 1
+
+            # Объекты со связью: текстовое поле client держим синхронно с карточкой клиента.
+            mismatched = fetch_all(
+                """
+                SELECT o.id AS object_id, c.name AS client_name
+                FROM objects o
+                JOIN clients c ON c.id = o.client_id AND c.user_id = o.user_id
+                WHERE o.user_id = ? AND COALESCE(o.client, '') <> COALESCE(c.name, '')
+                """,
+                (uid,),
+            )
+            for row in mismatched:
+                execute(
+                    "UPDATE objects SET client = ? WHERE id = ? AND user_id = ?",
+                    (row.get('client_name'), row.get('object_id'), uid),
+                )
+                normalized += 1
+
+        logging.info(
+            "object-client backfill: linked=%s normalized=%s ambiguous=%s",
+            linked,
+            normalized,
+            ambiguous,
+        )
+    except Exception:
+        logging.exception("object-client backfill failed")
 
 
 def _normalize_phone_digits(phone):
