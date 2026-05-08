@@ -229,22 +229,19 @@ var ClientsPage = (function(API, UI) {
         if (form) form.addEventListener('submit', saveClient);
         var search = document.getElementById('search');
         if (search) search.addEventListener('input', renderTable);
-        var tableBody = document.getElementById('table-body');
-        if (tableBody) {
-            tableBody.addEventListener('click', function(e) {
-                var target = e.target;
-                if (!target) return;
-                if (target.nodeType === 3 && target.parentElement) {
-                    target = target.parentElement;
-                }
-                if (!(target instanceof Element)) return;
-                var cell = target.closest('.client-row');
-                if (!cell) return;
-                var id = cell.getAttribute('data-client-id') || '';
-                if (!id) return;
-                openHistory(id);
-            });
-        }
+        document.addEventListener('click', function(e) {
+            var target = e.target;
+            if (!target) return;
+            if (target.nodeType === 3 && target.parentElement) {
+                target = target.parentElement;
+            }
+            if (!(target instanceof Element)) return;
+            var cell = target.closest('.client-row');
+            if (!cell) return;
+            var id = cell.getAttribute('data-client-id') || '';
+            if (!id) return;
+            openHistory(id);
+        }, true);
         var modal = document.getElementById('modal');
         if (modal) {
             modal.addEventListener('click', function(e) {
