@@ -248,6 +248,11 @@
                 <option>Ожидает старта</option><option>В работе</option><option>Приостановлен</option><option>Выполнен</option><option>Закрыт</option>
             </select>
             <select id="filter-client" autocomplete="off"><option value="">Все клиенты</option></select>
+            <select id="filter-regular-to" autocomplete="off">
+                <option value="">Все объекты</option>
+                <option value="regular">Только регулярное ТО</option>
+                <option value="overdue">ТО просрочено</option>
+            </select>
         </div>
         <div class="table-wrapper table-pan-viewport" title="Прокрутка колёсиком / тачем; мышью — зажмите и тяните по таблице">
             <table>
@@ -685,6 +690,8 @@
             const search = document.getElementById('filter-search').value.toLowerCase();
             const statusFilter = document.getElementById('filter-status').value;
             const clientFilter = document.getElementById('filter-client').value;
+            const regularToFilter = document.getElementById('filter-regular-to').value;
+            const todayIso = new Date().toISOString().split('T')[0];
             
             console.log('renderTable: objects count =', objects.length);
             
@@ -692,6 +699,13 @@
                 if (search && !obj.name.toLowerCase().includes(search)) return false;
                 if (statusFilter && obj.status !== statusFilter) return false;
                 if (!objectMatchesClientFilter(obj, clientFilter)) return false;
+                if (regularToFilter === 'regular' && !obj.is_regular_to) return false;
+                if (regularToFilter === 'overdue') {
+                    if (!obj.is_regular_to) return false;
+                    const nextDate = String(obj.next_to_date || '');
+                    if (!nextDate) return false;
+                    if (nextDate >= todayIso) return false;
+                }
                 return true;
             });
 
@@ -735,6 +749,23 @@
                     span.className = 'status status-' + obj.status.replace(/ /g, '-');
                     span.textContent = obj.status;
                     td7.appendChild(span);
+                    if (obj.is_regular_to) {
+                        const toMeta = document.createElement('div');
+                        toMeta.style.marginTop = '4px';
+                        toMeta.style.fontSize = '11px';
+                        toMeta.style.lineHeight = '1.25';
+                        const todayIso = new Date().toISOString().split('T')[0];
+                        const nextDateRaw = String(obj.next_to_date || '');
+                        const isOverdueTo = !!nextDateRaw && nextDateRaw < todayIso;
+                        toMeta.style.color = isOverdueTo ? '#C62828' : '#0D47A1';
+                        const nextDate = obj.next_to_date ? formatDate(obj.next_to_date) : '';
+                        toMeta.textContent = nextDate
+                            ? ((isOverdueTo ? '⛔ Просрочено ТО: ' : '🔁 ТО: ') + nextDate)
+                            : '🔁 Регулярное ТО';
+                        const note = String(obj.next_to_note || '').trim();
+                        if (note) toMeta.title = 'Заметка на следующее ТО: ' + note;
+                        td7.appendChild(toMeta);
+                    }
                 tr.appendChild(td7);
                 const td8 = document.createElement('td'); td8.textContent = formatMoney(obj.advance); tr.appendChild(td8);
                 const td9 = document.createElement('td'); td9.textContent = formatMoney(obj.salary); tr.appendChild(td9);
@@ -1658,6 +1689,9 @@
             renderTable();
         });
         document.getElementById('filter-client').addEventListener('change', function() {
+            renderTable();
+        });
+        document.getElementById('filter-regular-to').addEventListener('change', function() {
             renderTable();
         });
 
