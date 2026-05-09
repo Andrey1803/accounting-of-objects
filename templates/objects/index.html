@@ -324,6 +324,14 @@
                     <small id="salary-info" style="color:#666; display:block; margin-top:3px;"></small>
                 </div>
                 <div class="form-group"><label>Примечания</label><textarea id="notes" rows="2" placeholder="Дополнительная информация..."></textarea></div>
+                <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="is-regular-to">
+                    <label for="is-regular-to" style="margin:0;">Регулярное ТО</label>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Дата следующего ТО</label><input type="date" id="next-to-date"></div>
+                    <div class="form-group"><label>Заметка на следующее ТО</label><input type="text" id="next-to-note" placeholder="Например: проверить реле"></div>
+                </div>
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-primary">💾 Сохранить</button>
                     <button type="button" class="btn" style="background:#FF9800; color:white;" id="btnDuplicate" onclick="duplicateObject()" title="Создать копию объекта">📋 Дублировать</button>
@@ -803,6 +811,9 @@
                 document.getElementById('salary-allocation-mode').value = obj.salary_allocation_mode || 'all_workers';
                 syncSalaryAllocationUi();
                 document.getElementById('notes').value = obj.notes || '';
+                document.getElementById('is-regular-to').checked = !!obj.is_regular_to;
+                document.getElementById('next-to-date').value = obj.next_to_date || '';
+                document.getElementById('next-to-note').value = obj.next_to_note || '';
 
                 // Автозаполнение из сметы
                 loadEstimateData(obj.id, function(estTotals) {
@@ -976,7 +987,10 @@
                 advance: obj.advance || 0,
                 salary: obj.salary || 0,
                 salary_allocation_mode: obj.salary_allocation_mode || 'all_workers',
-                notes: obj.notes || ''
+                notes: obj.notes || '',
+                is_regular_to: !!obj.is_regular_to,
+                next_to_date: obj.next_to_date || '',
+                next_to_note: obj.next_to_note || ''
             };
 
             try {
@@ -1020,7 +1034,10 @@
                 advance: parseFloat(document.getElementById('advance').value) || 0,
                 salary: parseFloat(document.getElementById('salary').value) || 0,
                 salary_allocation_mode: document.getElementById('salary-allocation-mode').value,
-                notes: document.getElementById('notes').value
+                notes: document.getElementById('notes').value,
+                is_regular_to: document.getElementById('is-regular-to').checked,
+                next_to_date: document.getElementById('next-to-date').value,
+                next_to_note: document.getElementById('next-to-note').value
             };
 
             try {

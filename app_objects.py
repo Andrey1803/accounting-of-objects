@@ -885,12 +885,16 @@ def add_object():
     client_name, client_id = _object_client_fields_from_payload(current_user.id, data, None)
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     mode_ins = _norm_salary_allocation_mode(data.get('salary_allocation_mode'))
+    is_regular_to = 1 if data.get('is_regular_to') else 0
+    next_to_date = (data.get('next_to_date') or '').strip() or None
+    next_to_note = (data.get('next_to_note') or '').strip() or None
     oid = execute("""INSERT INTO objects 
-        (user_id, date_start, date_end, name, client, client_id, sum_work, expenses, status, advance, salary, notes, created_at, updated_at, salary_allocation_mode) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+        (user_id, date_start, date_end, name, client, client_id, sum_work, expenses, status, advance, salary, notes, is_regular_to, next_to_date, next_to_note, created_at, updated_at, salary_allocation_mode) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
         (current_user.id, data.get('date_start'), data.get('date_end'), name,
          client_name, client_id, data.get('sum_work', 0), data.get('expenses', 0), data.get('status'),
-         data.get('advance', 0), data.get('salary', 0), data.get('notes'), now, now, mode_ins), return_id=True)
+         data.get('advance', 0), data.get('salary', 0), data.get('notes'),
+         is_regular_to, next_to_date, next_to_note, now, now, mode_ins), return_id=True)
     obj = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (oid, current_user.id))
     return jsonify(obj), 201
 
@@ -1116,11 +1120,19 @@ def update_object(obj_id):
     mode_out = _norm_salary_allocation_mode(
         data['salary_allocation_mode'] if 'salary_allocation_mode' in data else ex.get('salary_allocation_mode'),
     )
+    def pick_bool01(key):
+        if key not in data:
+            return 1 if ex.get(key) else 0
+        return 1 if data.get(key) else 0
     execute("""UPDATE objects SET date_start=?, date_end=?, name=?, client=?, client_id=?, sum_work=?,
-           expenses=?, status=?, advance=?, salary=?, notes=?, salary_allocation_mode=?, updated_at=? WHERE id=? AND user_id=?""",
+           expenses=?, status=?, advance=?, salary=?, notes=?, is_regular_to=?, next_to_date=?, next_to_note=?, salary_allocation_mode=?, updated_at=? WHERE id=? AND user_id=?""",
         (pick('date_start'), pick('date_end'), name, client_name, client_id,
          pickf('sum_work'), pickf('expenses'), pick('status'), pickf('advance'),
-         pickf('salary'), pick('notes'), mode_out, now, obj_id, current_user.id))
+         pickf('salary'), pick('notes'),
+         pick_bool01('is_regular_to'),
+         pick('next_to_date'),
+         pick('next_to_note'),
+         mode_out, now, obj_id, current_user.id))
 
     if any(k in data for k in ('status', 'date_start', 'salary_allocation_mode')):
         recalc_object_salary(obj_id)
