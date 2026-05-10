@@ -802,7 +802,9 @@
                     btn2.onclick = () => openModal(obj.id);
                     td12.appendChild(btn2);
                     const btn3 = document.createElement('button');
-                    btn3.className = 'btn btn-danger'; btn3.title = 'Удалить'; btn3.textContent = '🗑️';
+                    btn3.className = 'btn btn-danger';
+                    btn3.title = 'Название объекта: ' + String(obj.name || '').trim();
+                    btn3.textContent = '🗑️';
                     btn3.onclick = () => deleteObject(obj.id);
                     td12.appendChild(btn3);
                 tr.appendChild(td12);
@@ -813,6 +815,23 @@
 
         function formatDate(dateStr) { if (!dateStr) return '-'; const parts = dateStr.split('-'); return `${parts[2]}.${parts[1]}.${parts[0]}`; }
         function formatMoney(val) { return Number(val).toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' BYN'; }
+
+        function deleteObjectConfirmMessage(id) {
+            const obj = objects.find(function (o) { return o.id === id; });
+            var msg = 'Удалить объект?\n\n';
+            if (obj) {
+                var name = String(obj.name || '').trim() || '(без названия)';
+                var client = String(obj.client || '').trim();
+                var notes = String(obj.notes || '').trim();
+                var notesShort = notes.length > 220 ? notes.slice(0, 220) + '…' : notes;
+                msg += 'Название объекта: ' + name + '\n';
+                if (client) msg += 'Клиент: ' + client + '\n';
+                if (notesShort) msg += 'Примечание: ' + notesShort + '\n';
+                if (obj.status) msg += 'Статус: ' + obj.status + '\n';
+            }
+            msg += '\nid записи: ' + id;
+            return msg;
+        }
 
         function syncSalaryAllocationUi() {
             var sel = document.getElementById('salary-allocation-mode');
@@ -1127,18 +1146,17 @@
         })();
 
         async function deleteObject(id) {
-            if (confirm('Удалить объект?')) {
+            if (!confirm(deleteObjectConfirmMessage(id))) return;
+            try {
+                await fetchCsrf(`/api/objects/${id}`, { method: 'DELETE' });
+                try { await OfflineDB.delete('objects', id); } catch(e) {}
+            } catch(e) {
                 try {
-                    await fetchCsrf(`/api/objects/${id}`, { method: 'DELETE' });
-                    try { await OfflineDB.delete('objects', id); } catch(e) {}
-                } catch(e) {
-                    try {
-                        await OfflineDB.addToQueue({ method: 'DELETE', url: `/api/objects/${id}` });
-                        await OfflineDB.delete('objects', id);
-                    } catch(e2) { alert('Ошибка удаления'); return; }
-                }
-                loadData(currentPage);
+                    await OfflineDB.addToQueue({ method: 'DELETE', url: `/api/objects/${id}` });
+                    await OfflineDB.delete('objects', id);
+                } catch(e2) { alert('Ошибка удаления'); return; }
             }
+            loadData(currentPage);
         }
 
         // ============================
