@@ -615,6 +615,30 @@
             });
         }
 
+        /** Deep link с диспетчера: /?openObject=123 — открыть модалку объекта после загрузки списка. */
+        function tryOpenObjectFromQuery() {
+            try {
+                var params = new URLSearchParams(window.location.search || '');
+                var raw = params.get('openObject') || params.get('object');
+                if (!raw) return;
+                var id = parseInt(String(raw).trim(), 10);
+                if (!Number.isFinite(id) || id <= 0) return;
+                var found = objects.some(function (o) { return Number(o.id) === id; });
+                if (!found) return;
+                params.delete('openObject');
+                params.delete('object');
+                var qs = params.toString();
+                var path = window.location.pathname || '/';
+                if (window.history && typeof window.history.replaceState === 'function') {
+                    window.history.replaceState({}, '', path + (qs ? ('?' + qs) : ''));
+                }
+                openModal(id);
+            } catch (e) {
+                console.warn('openObject:', e);
+            }
+        }
+        }
+
         async function loadData(page = 1) {
             try {
                 console.log('loadData: starting, page =', page);
@@ -672,6 +696,7 @@
                 renderTable();
                 renderPagination(data);
                 updateOnlineStatus();
+                tryOpenObjectFromQuery();
                 console.log('loadData: finished');
             } catch (e) {
                 console.error('loadData error:', e);
@@ -700,6 +725,7 @@
                     renderPagination({ total: total, page: 1, per_page: 50, total_pages: 1 });
                     console.log('Loaded from cache:', objects.length, 'objects');
                     updateOnlineStatus();
+                    tryOpenObjectFromQuery();
                 } catch(e2) {
                     console.error('Cache load error:', e2);
                     var tbody = document.getElementById('table-body');
