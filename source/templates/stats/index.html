@@ -8,13 +8,41 @@
     <link rel="stylesheet" href="/static/css/base.css?v=1">
     <link rel="stylesheet" href="/static/css/components.css?v=1">
     <style>
-        /* Page-specific styles */
         .header { background: #2E75B6; }
-        .chart-box { height: 250px; display: flex; align-items: flex-end; gap: 6px; overflow-x: auto; padding: 10px 0; }
-        .bar-col { display: flex; flex-direction: column; align-items: center; flex: 0 0 50px; }
-        .bar { width: 20px; border-radius: 3px 3px 0 0; }
-        .bar-r { background: #2E75B6; } .bar-p { background: #4CAF50; }
-        .bar-label { font-size: 10px; color: #888; margin-top: 4px; text-align: center; }
+        .chart-section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.5rem; }
+        .chart-mode-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+        .chart-mode-tab {
+            border: 1px solid #ccc;
+            background: #f8f9fa;
+            color: #333;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .chart-mode-tab:hover { background: #eef4fb; border-color: #2E75B6; }
+        .chart-mode-tab.active { background: #2E75B6; color: #fff; border-color: #2E75B6; font-weight: 600; }
+        .chart-box { min-height: 260px; display: flex; align-items: flex-end; gap: 8px; overflow-x: auto; padding: 10px 0 4px; }
+        .bar-col { display: flex; flex-direction: column; align-items: center; flex: 0 0 auto; min-width: 72px; max-width: 100px; }
+        .bar-stack { display: flex; gap: 3px; align-items: flex-end; height: 200px; }
+        .bar { width: 18px; border-radius: 3px 3px 0 0; min-height: 2px; }
+        .bar-wide { width: 28px; }
+        .bar-r { background: #2E75B6; }
+        .bar-p { background: #4CAF50; }
+        .bar-e { background: #FF9800; }
+        .bar-label { font-size: 11px; color: #444; margin-top: 6px; text-align: center; font-weight: 600; line-height: 1.2; }
+        .bar-sums { font-size: 10px; color: #333; text-align: center; margin-top: 4px; line-height: 1.35; width: 100%; word-break: break-word; }
+        .bar-sums .sr { color: #1E5A8E; font-weight: 600; }
+        .bar-sums .sp { color: #2e7d32; font-weight: 600; }
+        .chart-line-wrap { width: 100%; overflow-x: auto; padding: 8px 0; }
+        .chart-line-wrap svg { display: block; min-width: 320px; margin: 0 auto; }
+        .chart-legend-mini { display: flex; gap: 14px; justify-content: center; margin-top: 8px; font-size: 12px; flex-wrap: wrap; }
+        .card h3 { font-size: 0.82rem; color: #666; margin: 0 0 0.35rem; font-weight: 600; }
+        .card .val.blue { color: #2E75B6; }
+        .card .val.green { color: #2e7d32; }
+        .card .val.orange { color: #e65100; }
+        .card .val.purple { color: #7b1fa2; }
         .status-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; margin: 3px; }
         .st-Запланирован, .st-Ожидает-старта { background: #FFEB9C; color: #666; } .st-В-работе { background: #BDD7EE; color: #1E5A8E; }
         .st-Приостановлен { background: #FFC7CE; color: #9C0006; } .st-Завершён, .st-Выполнен { background: #C6EFCE; color: #006100; } .st-Оплачен, .st-Закрыт { background: #E2EFDA; color: #333; }
@@ -30,17 +58,26 @@
     </div>
     <div id="loading" class="loading">Загрузка...</div>
     <div id="content" style="display:none;">
-        <div class="grid" id="metrics"></div>
+        <div class="grid metrics" id="metrics"></div>
         <div class="section">
             <h2>Статусы</h2>
             <div id="statuses"></div>
         </div>
         <div class="section">
-            <h2>Выручка и прибыль по месяцам</h2>
+            <div class="chart-section-head">
+                <h2 style="margin:0;">Выручка и прибыль по месяцам</h2>
+                <div class="chart-mode-tabs" role="tablist" aria-label="Тип графика">
+                    <button type="button" class="chart-mode-tab active" data-mode="both" role="tab" aria-selected="true">Столбцы: выручка + прибыль</button>
+                    <button type="button" class="chart-mode-tab" data-mode="revenue" role="tab" aria-selected="false">Выручка</button>
+                    <button type="button" class="chart-mode-tab" data-mode="profit" role="tab" aria-selected="false">Прибыль</button>
+                    <button type="button" class="chart-mode-tab" data-mode="expenses" role="tab" aria-selected="false">Расходы</button>
+                    <button type="button" class="chart-mode-tab" data-mode="trend" role="tab" aria-selected="false">Линии (В и П)</button>
+                </div>
+            </div>
             <div class="chart-box" id="chart"></div>
-            <div style="display:flex;gap:15px;justify-content:center;margin-top:5px;">
-                <span style="font-size:11px;color:#2E75B6;">■ Выручка</span>
-                <span style="font-size:11px;color:#4CAF50;">■ Прибыль</span>
+            <div class="chart-legend-mini" id="chart-legend">
+                <span style="color:#2E75B6;font-weight:600;">■ Выручка</span>
+                <span style="color:#4CAF50;font-weight:600;">■ Прибыль</span>
             </div>
         </div>
         <div class="two-col">
@@ -50,7 +87,13 @@
     </div>
     <script>
         function money(v) {
-            return Number(v || 0).toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' BYN';
+            return Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' BYN';
+        }
+        function moneyShort(v) {
+            var n = Number(v || 0);
+            if (Math.abs(n) >= 1000000) return (n / 1000000).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' млн';
+            if (Math.abs(n) >= 1000) return (n / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' тыс.';
+            return n.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
         }
 
         function esc(s) {
@@ -60,22 +103,243 @@
             return d.innerHTML;
         }
 
+        function monthLabelRu(ym) {
+            if (!ym || ym.length < 7) return ym || '';
+            var parts = ym.split('-');
+            var mo = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+            var idx = parseInt(parts[1], 10) - 1;
+            if (idx >= 0 && idx < 12) return mo[idx] + ' ' + parts[0];
+            return ym.substring(5) + '.' + parts[0];
+        }
+
+        var chartMode = 'both';
+        var lastTrend = {};
+
+        function setChartMode(mode) {
+            chartMode = mode;
+            var tabs = document.querySelectorAll('.chart-mode-tab');
+            for (var t = 0; t < tabs.length; t++) {
+                var b = tabs[t];
+                var on = b.getAttribute('data-mode') === mode;
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-selected', on ? 'true' : 'false');
+            }
+            var leg = document.getElementById('chart-legend');
+            if (mode === 'revenue') {
+                leg.innerHTML = '<span style="color:#2E75B6;font-weight:600;">■ Выручка по месяцам</span>';
+            } else if (mode === 'profit') {
+                leg.innerHTML = '<span style="color:#4CAF50;font-weight:600;">■ Прибыль по месяцам</span>';
+            } else if (mode === 'expenses') {
+                leg.innerHTML = '<span style="color:#FF9800;font-weight:600;">■ Расходы (включ. зарплата в формуле прибыли)</span>';
+            } else if (mode === 'trend') {
+                leg.innerHTML = '<span style="color:#2E75B6;font-weight:600;">— Выручка</span> <span style="color:#4CAF50;font-weight:600;">— Прибыль</span>';
+            } else {
+                leg.innerHTML = '<span style="color:#2E75B6;font-weight:600;">■ Выручка</span> <span style="color:#4CAF50;font-weight:600;">■ Прибыль</span>';
+            }
+            renderChart(lastTrend);
+        }
+
+        function renderChart(trend) {
+            lastTrend = trend || {};
+            var chart = document.getElementById('chart');
+            chart.innerHTML = '';
+            chart.className = chartMode === 'trend' ? 'chart-line-wrap' : 'chart-box';
+            var months = Object.keys(lastTrend).sort();
+            if (months.length === 0) {
+                chart.className = 'chart-box';
+                chart.innerHTML = '<div style="margin:auto;color:#999;padding:1rem;">Нет данных по месяцам (нужны даты у объектов)</div>';
+                return;
+            }
+
+            var maxV = 1;
+            var mi;
+            for (mi = 0; mi < months.length; mi++) {
+                var row = lastTrend[months[mi]] || {};
+                var r = row.revenue || 0;
+                var p = row.profit || 0;
+                var e = row.expenses || 0;
+                if (chartMode === 'revenue' && r > maxV) maxV = r;
+                else if (chartMode === 'profit' && p > maxV) maxV = p;
+                else if (chartMode === 'expenses' && e > maxV) maxV = e;
+                else if (chartMode === 'both' || chartMode === 'trend') {
+                    if (r > maxV) maxV = r;
+                    if (p > maxV) maxV = p;
+                }
+            }
+
+            if (chartMode === 'trend') {
+                var w = Math.max(400, months.length * 56);
+                var h = 220;
+                var padL = 44, padR = 12, padT = 16, padB = 36;
+                var iw = w - padL - padR;
+                var ih = h - padT - padB;
+                var n = months.length;
+                function xAt(i) {
+                    if (n <= 1) return padL + iw / 2;
+                    return padL + (i / (n - 1)) * iw;
+                }
+                function yAt(val) {
+                    var v = Number(val) || 0;
+                    return padT + ih - (v / maxV) * ih;
+                }
+                var ptsR = [];
+                var ptsP = [];
+                for (var ti = 0; ti < n; ti++) {
+                    var m = months[ti];
+                    var tr = lastTrend[m] || {};
+                    ptsR.push(xAt(ti) + ',' + yAt(tr.revenue || 0));
+                    ptsP.push(xAt(ti) + ',' + yAt(tr.profit || 0));
+                }
+                var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+                svg.setAttribute('width', '100%');
+                svg.setAttribute('height', String(h));
+                var axis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                axis.setAttribute('x1', String(padL));
+                axis.setAttribute('y1', String(padT + ih));
+                axis.setAttribute('x2', String(w - padR));
+                axis.setAttribute('y2', String(padT + ih));
+                axis.setAttribute('stroke', '#ccc');
+                svg.appendChild(axis);
+                var pr = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+                pr.setAttribute('fill', 'none');
+                pr.setAttribute('stroke', '#2E75B6');
+                pr.setAttribute('stroke-width', '2.5');
+                pr.setAttribute('points', ptsR.join(' '));
+                svg.appendChild(pr);
+                var pp = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+                pp.setAttribute('fill', 'none');
+                pp.setAttribute('stroke', '#4CAF50');
+                pp.setAttribute('stroke-width', '2.5');
+                pp.setAttribute('points', ptsP.join(' '));
+                svg.appendChild(pp);
+                for (var li = 0; li < n; li++) {
+                    var m2 = months[li];
+                    var tr2 = lastTrend[m2] || {};
+                    var cx = xAt(li);
+                    var cyR = yAt(tr2.revenue || 0);
+                    var cyP = yAt(tr2.profit || 0);
+                    var c1 = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    c1.setAttribute('cx', String(cx));
+                    c1.setAttribute('cy', String(cyR));
+                    c1.setAttribute('r', '4');
+                    c1.setAttribute('fill', '#2E75B6');
+                    var t1 = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                    t1.textContent = monthLabelRu(m2) + ': выручка ' + money(tr2.revenue);
+                    c1.appendChild(t1);
+                    svg.appendChild(c1);
+                    var c2 = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    c2.setAttribute('cx', String(cx));
+                    c2.setAttribute('cy', String(cyP));
+                    c2.setAttribute('r', '4');
+                    c2.setAttribute('fill', '#4CAF50');
+                    var t2 = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                    t2.textContent = monthLabelRu(m2) + ': прибыль ' + money(tr2.profit);
+                    c2.appendChild(t2);
+                    svg.appendChild(c2);
+                    var tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    tx.setAttribute('x', String(cx));
+                    tx.setAttribute('y', String(h - 8));
+                    tx.setAttribute('text-anchor', 'middle');
+                    tx.setAttribute('font-size', '10');
+                    tx.setAttribute('fill', '#555');
+                    tx.textContent = monthLabelRu(m2);
+                    svg.appendChild(tx);
+                }
+                var cap = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                cap.setAttribute('x', '8');
+                cap.setAttribute('y', String(padT + 8));
+                cap.setAttribute('font-size', '11');
+                cap.setAttribute('fill', '#666');
+                cap.textContent = 'max ' + moneyShort(maxV) + ' BYN';
+                svg.appendChild(cap);
+                chart.appendChild(svg);
+                var tbl = document.createElement('div');
+                tbl.style.overflowX = 'auto';
+                tbl.style.marginTop = '8px';
+                var tb = '<table class="dataTable" style="font-size:12px;width:100%;min-width:280px;"><thead><tr><th>Месяц</th><th>Выручка</th><th>Прибыль</th></tr></thead><tbody>';
+                for (var ri = 0; ri < months.length; ri++) {
+                    var rm = months[ri];
+                    var rr = lastTrend[rm] || {};
+                    tb += '<tr><td>' + esc(monthLabelRu(rm)) + '</td><td style="font-weight:600;color:#1E5A8E">' + esc(money(rr.revenue)) + '</td><td style="font-weight:600;color:#2e7d32">' + esc(money(rr.profit)) + '</td></tr>';
+                }
+                tb += '</tbody></table>';
+                tbl.innerHTML = tb;
+                chart.appendChild(tbl);
+                return;
+            }
+
+            for (var mj = 0; mj < months.length; mj++) {
+                var mm = months[mj];
+                var trow = lastTrend[mm] || {};
+                var rev = trow.revenue || 0;
+                var prof = trow.profit || 0;
+                var exp = trow.expenses || 0;
+                var col = document.createElement('div');
+                col.className = 'bar-col';
+                var bars = document.createElement('div');
+                bars.className = 'bar-stack';
+                if (chartMode === 'both') {
+                    var b1 = document.createElement('div');
+                    b1.className = 'bar bar-r';
+                    b1.style.height = Math.max((rev / maxV) * 180, 3) + 'px';
+                    b1.title = 'Выручка: ' + money(rev);
+                    var b2 = document.createElement('div');
+                    b2.className = 'bar bar-p';
+                    b2.style.height = Math.max((prof / maxV) * 180, 3) + 'px';
+                    b2.title = 'Прибыль: ' + money(prof);
+                    bars.appendChild(b1);
+                    bars.appendChild(b2);
+                } else if (chartMode === 'revenue') {
+                    var br = document.createElement('div');
+                    br.className = 'bar bar-r bar-wide';
+                    br.style.height = Math.max((rev / maxV) * 180, 3) + 'px';
+                    br.title = money(rev);
+                    bars.appendChild(br);
+                } else if (chartMode === 'profit') {
+                    var bp = document.createElement('div');
+                    bp.className = 'bar bar-p bar-wide';
+                    bp.style.height = Math.max((prof / maxV) * 180, 3) + 'px';
+                    bp.title = money(prof);
+                    bars.appendChild(bp);
+                } else if (chartMode === 'expenses') {
+                    var be = document.createElement('div');
+                    be.className = 'bar bar-e bar-wide';
+                    be.style.height = Math.max((exp / maxV) * 180, 3) + 'px';
+                    be.title = 'Расходы: ' + money(exp);
+                    bars.appendChild(be);
+                }
+                col.appendChild(bars);
+                var lbl = document.createElement('div');
+                lbl.className = 'bar-label';
+                lbl.textContent = monthLabelRu(mm);
+                col.appendChild(lbl);
+                var sums = document.createElement('div');
+                sums.className = 'bar-sums';
+                if (chartMode === 'both') {
+                    sums.innerHTML = '<div class="sr">' + esc(moneyShort(rev)) + '</div><div class="sp">' + esc(moneyShort(prof)) + '</div><div style="color:#888;font-size:9px;margin-top:2px">' + esc(money(rev)) + '</div><div style="color:#888;font-size:9px">' + esc(money(prof)) + '</div>';
+                } else if (chartMode === 'revenue') {
+                    sums.innerHTML = '<div class="sr">' + esc(money(rev)) + '</div>';
+                } else if (chartMode === 'profit') {
+                    sums.innerHTML = '<div class="sp">' + esc(money(prof)) + '</div>';
+                } else if (chartMode === 'expenses') {
+                    sums.innerHTML = '<div style="color:#e65100;font-weight:600">' + esc(money(exp)) + '</div>';
+                }
+                col.appendChild(sums);
+                chart.appendChild(col);
+            }
+        }
+
         function load() {
-            console.log('Stats: loading...');
             fetch('/api/stats/detailed')
-                .then(function(r) {
-                    console.log('Stats: status', r.status);
-                    if (!r.ok) {
-                        throw new Error('HTTP ' + r.status);
-                    }
+                .then(function (r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
                     return r.json();
                 })
-                .then(function(data) {
-                    console.log('Stats: data received');
+                .then(function (data) {
                     renderPage(data);
                 })
-                .catch(function(err) {
-                    console.error('Stats error:', err);
+                .catch(function (err) {
                     document.getElementById('loading').textContent = 'Ошибка: ' + err.message;
                 });
         }
@@ -100,28 +364,26 @@
             var totalObj = data.year.count || 0;
             var margin = totalRev > 0 ? ((totalProf / totalRev) * 100).toFixed(1) : 0;
 
-            // Показатели
             var mDiv = document.getElementById('metrics');
             mDiv.innerHTML = '';
             var items = [
-                {lbl:'Всего', val:totalObj, cls:'blue'},
-                {lbl:'За месяц', val:data.month.count||0, cls:'purple'},
-                {lbl:'Выручка', val:money(totalRev), cls:'blue'},
-                {lbl:'Прибыль', val:money(totalProf), cls:'green'},
-                {lbl:'Прибыль мат.', val:money(totalMatProf), cls:'orange'},
-                {lbl:'Маржа', val:margin+'%', cls: margin>=30?'green':'orange'},
-                {lbl:'Ср. чек', val:money(avgCheck), cls:'orange'},
-                {lbl:'Клиентов', val:clients.length, cls:'blue'}
+                { lbl: 'Всего', val: totalObj, cls: 'blue' },
+                { lbl: 'За месяц', val: data.month.count || 0, cls: 'purple' },
+                { lbl: 'Выручка', val: money(totalRev), cls: 'blue' },
+                { lbl: 'Прибыль', val: money(totalProf), cls: 'green' },
+                { lbl: 'Прибыль мат.', val: money(totalMatProf), cls: 'orange' },
+                { lbl: 'Маржа', val: margin + '%', cls: margin >= 30 ? 'green' : 'orange' },
+                { lbl: 'Ср. чек', val: money(avgCheck), cls: 'orange' },
+                { lbl: 'Клиентов', val: clients.length, cls: 'blue' }
             ];
             for (var j = 0; j < items.length; j++) {
                 var it = items[j];
                 var card = document.createElement('div');
                 card.className = 'card';
-                card.innerHTML = '<h3>' + it.lbl + '</h3><div class="val ' + it.cls + '">' + it.val + '</div>';
+                card.innerHTML = '<h3>' + esc(it.lbl) + '</h3><div class="val ' + esc(it.cls) + '">' + it.val + '</div>';
                 mDiv.appendChild(card);
             }
 
-            // Статусы
             var stDiv = document.getElementById('statuses');
             stDiv.innerHTML = '';
             var stKeys = Object.keys(statuses);
@@ -133,46 +395,9 @@
                 stDiv.appendChild(sp);
             }
 
-            // График
-            var chart = document.getElementById('chart');
-            chart.innerHTML = '';
-            var months = Object.keys(trend).sort();
-            if (months.length === 0) {
-                chart.innerHTML = '<div style="margin:auto;color:#999;">Нет данных</div>';
-            } else {
-                var maxV = 1;
-                for (var mi = 0; mi < months.length; mi++) {
-                    var r = trend[months[mi]].revenue || 0;
-                    var p = trend[months[mi]].profit || 0;
-                    if (r > maxV) maxV = r;
-                    if (p > maxV) maxV = p;
-                }
-                for (var mj = 0; mj < months.length; mj++) {
-                    var m = months[mj];
-                    var rev = trend[m].revenue || 0;
-                    var prof = trend[m].profit || 0;
-                    var col = document.createElement('div');
-                    col.className = 'bar-col';
-                    var bars = document.createElement('div');
-                    bars.style.cssText = 'display:flex;gap:2px;align-items:flex-end;height:200px;';
-                    var b1 = document.createElement('div');
-                    b1.className = 'bar bar-r';
-                    b1.style.height = Math.max((rev / maxV) * 180, 3) + 'px';
-                    var b2 = document.createElement('div');
-                    b2.className = 'bar bar-p';
-                    b2.style.height = Math.max((prof / maxV) * 180, 3) + 'px';
-                    bars.appendChild(b1);
-                    bars.appendChild(b2);
-                    col.appendChild(bars);
-                    var lbl = document.createElement('div');
-                    lbl.className = 'bar-label';
-                    lbl.textContent = m.substring(5);
-                    col.appendChild(lbl);
-                    chart.appendChild(col);
-                }
-            }
+            lastTrend = trend;
+            renderChart(trend);
 
-            // Топ клиентов
             var clDiv = document.getElementById('clients');
             clDiv.innerHTML = '';
             if (clients.length === 0) {
@@ -187,7 +412,6 @@
                 }
             }
 
-            // Должники
             var dbDiv = document.getElementById('debtors');
             dbDiv.innerHTML = '';
             if (debtors.length === 0) {
@@ -205,6 +429,13 @@
             document.getElementById('loading').style.display = 'none';
             document.getElementById('content').style.display = 'block';
         }
+
+        document.querySelectorAll('.chart-mode-tab').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var mode = btn.getAttribute('data-mode');
+                if (mode) setChartMode(mode);
+            });
+        });
 
         load();
     </script>
