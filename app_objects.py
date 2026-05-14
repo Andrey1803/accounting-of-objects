@@ -999,6 +999,7 @@ def add_object():
          client_name, client_id, data.get('sum_work', 0), data.get('expenses', 0), data.get('status'),
          data.get('advance', 0), data.get('salary', 0), data.get('notes'),
          is_regular_to, next_to_date, next_to_note, now, now, mode_ins), return_id=True)
+    _recalc_salaries_for_user_id(current_user.id)
     obj = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (oid, current_user.id))
     return jsonify(obj), 201
 
@@ -1127,7 +1128,7 @@ def integration_create_object_from_taskmgr():
                     },
                 )
             try:
-                recalc_object_salary(existing['id'], user_id=target_user_id)
+                _recalc_salaries_for_user_id(target_user_id)
             except Exception:
                 pass
             obj = fetch_one('SELECT * FROM objects WHERE id=? AND user_id=?', (existing['id'], target_user_id))
@@ -1191,6 +1192,10 @@ def integration_create_object_from_taskmgr():
             ),
             return_id=True,
         )
+        try:
+            _recalc_salaries_for_user_id(target_user_id)
+        except Exception:
+            pass
         obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
         if business_client_id and phone:
             _dispatcher_upsert_profile(
@@ -1264,7 +1269,7 @@ def update_object(obj_id):
          mode_out, now, obj_id, current_user.id))
 
     if any(k in data for k in ('status', 'date_start', 'date_end', 'work_dates', 'salary_allocation_mode')):
-        recalc_object_salary(obj_id)
+        _recalc_salaries_for_user_id(current_user.id)
 
     row = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id))
     return jsonify(dict(row) if row else {"ok": True})
@@ -1286,6 +1291,7 @@ def delete_object(obj_id):
 
     # Выполняем всё в одной транзакции
     execute_many(queries)
+    _recalc_salaries_for_user_id(current_user.id)
     return jsonify({"ok": True})
 
 # ============================
@@ -1307,6 +1313,7 @@ def add_worker():
         VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (current_user.id, data.get('full_name', ''), data.get('phone', ''),
          data.get('daily_rate', 300), data.get('hire_date', ''), data.get('notes', ''), 1), return_id=True)
+    _recalc_salaries_for_user_id(current_user.id)
     return jsonify(fetch_one("SELECT * FROM workers WHERE id = ? AND user_id = ?", (wid, current_user.id))), 201
 
 @app.route('/api/workers/<int:worker_id>', methods=['PUT'])
@@ -1322,6 +1329,7 @@ def update_worker(worker_id):
     w = fetch_one("SELECT * FROM workers WHERE id = ? AND user_id = ?", (worker_id, current_user.id))
     if not w:
         return jsonify({"error": "Не найдено"}), 404
+    _recalc_salaries_for_user_id(current_user.id)
     return jsonify(w)
 
 @app.route('/api/workers/<int:worker_id>', methods=['DELETE'])
@@ -1332,6 +1340,7 @@ def delete_worker(worker_id):
     execute("DELETE FROM worker_account_entries WHERE worker_id = ? AND user_id = ?", (worker_id, current_user.id))
     execute("DELETE FROM worker_assignments WHERE worker_id = ? AND user_id = ?", (worker_id, current_user.id))
     execute("DELETE FROM workers WHERE id = ? AND user_id = ?", (worker_id, current_user.id))
+    _recalc_salaries_for_user_id(current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1539,6 +1548,26 @@ def remove_object_worker(obj_id, assignment_id):
     recalc_object_salary(obj_id)
     return jsonify({"ok": True})
 
+def _recalc_salaries_for_user_id(uid):
+    """Пересчитать objects.salary у всех объектов пользователя с одним calendar_counts.
+
+    Делитель по дням общий для всех объектов; при изменении дат/статуса одного объекта
+    нужно пересчитать всех, иначе у соседей остаётся устаревшая доля.
+
+    Режим manual не трогаем (recalc_object_salary выходит без UPDATE); предварительный
+    UPDATE salary=0 по всем объектам не выполняем — он затирал ручные суммы.
+    """
+    if not uid:
+        return 0
+    all_objs = fetch_all("SELECT id FROM objects WHERE user_id = ?", (uid,))
+    if not all_objs:
+        return 0
+    counts = _build_salary_calendar_counts(uid)
+    for obj in all_objs:
+        recalc_object_salary(obj['id'], uid, calendar_counts=counts)
+    return len(all_objs)
+
+
 @app.route('/api/objects/recalc-all-salaries', methods=['POST'])
 @login_required
 @require_csrf
@@ -1546,46 +1575,18 @@ def recalc_all_salaries():
     """Пересчитать зарплаты ВСЕХ объектов пользователя по новой логике."""
     try:
         uid = current_user.id
-
-        all_objs = fetch_all("SELECT id FROM objects WHERE user_id = ?", (uid,))
-
-        for obj in all_objs:
-            execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj['id'], uid))
-
-        counts = _build_salary_calendar_counts(uid)
-        for obj in all_objs:
-            recalc_object_salary(obj['id'], uid, calendar_counts=counts)
-
-        return jsonify({"ok": True, "objects_recalc": len(all_objs)})
+        n = _recalc_salaries_for_user_id(uid)
+        return jsonify({"ok": True, "objects_recalc": n})
     except Exception as e:
         import logging, traceback
         logging.error(f"recalc_all_salaries error: {e}\n{traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
 
 def recalc_objects_for_dates(dates):
-    """Пересчитать зарплаты объектов, у которых есть выезд в одну из указанных календарных дат."""
+    """Пересчитать зарплаты при затронутых календарных датах (делитель n меняется у всех на эти дни)."""
     if not dates:
         return
-    uid = current_user.id
-
-    valid_statuses = OBJECT_STATUSES_SALARY
-    date_set = {str(d)[:10] for d in dates}
-
-    rows = fetch_all(
-        "SELECT id, work_dates, date_start, date_end, status FROM objects WHERE user_id = ?",
-        (uid,),
-    )
-    affected = set()
-    for r in rows:
-        if r.get('status') not in valid_statuses:
-            continue
-        for d in object_work_days_from_row(r):
-            if d in date_set:
-                affected.add(r['id'])
-
-    counts = _build_salary_calendar_counts(uid)
-    for oid in affected:
-        recalc_object_salary(oid, uid, calendar_counts=counts)
+    _recalc_salaries_for_user_id(current_user.id)
 
 def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
     """Пересчитать поле objects.salary: сумма по каждому дню из work_dates (доля бригады на этот день).
@@ -1986,10 +1987,7 @@ def get_report():
 def _recalc_all_salaries_on_startup():
     """Пересчитать зарплаты при старте — отдельно для каждого user_id (мультиарендность)."""
     try:
-        from database import fetch_all, execute
-
-        valid_statuses = OBJECT_STATUSES_SALARY
-        placeholders = ','.join(['?' for _ in valid_statuses])
+        from database import fetch_all
 
         uid_rows = fetch_all(
             "SELECT user_id FROM objects WHERE user_id IS NOT NULL "
@@ -1998,38 +1996,20 @@ def _recalc_all_salaries_on_startup():
         uids = sorted({r['user_id'] for r in uid_rows if r.get('user_id') is not None})
 
         for uid in uids:
-            objs = fetch_all(
-                f"""SELECT id, status FROM objects
-                    WHERE user_id = ? AND status IN ({placeholders})""",
-                [uid] + list(valid_statuses),
-            )
-            counts = _build_salary_calendar_counts(uid)
-
+            n = _recalc_salaries_for_user_id(uid)
             workers = fetch_all(
                 "SELECT daily_rate FROM workers WHERE is_active = 1 AND user_id = ?",
                 (uid,),
             )
             total_rate = sum(float(w['daily_rate'] or 0) for w in workers) if workers else 0
-
+            if n <= 0:
+                continue
             if total_rate > 0:
-                for o in objs:
-                    recalc_object_salary(o['id'], user_id=uid, calendar_counts=counts)
-                print(f"[OK] user {uid}: пересчитаны зарплаты {len(objs)} активных объектов, Σ ставок {total_rate}/день")
+                print(f"[OK] user {uid}: пересчитаны зарплаты по {n} объектам, Σ ставок {total_rate}/день")
             else:
-                for o in objs:
-                    execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (o['id'], uid))
-                if objs:
-                    print(f"[WARN] user {uid}: нет активных рабочих — обнулены зарплаты активных объектов")
-
-            inactive = fetch_all(
-                f"""SELECT id FROM objects
-                    WHERE user_id = ? AND status NOT IN ({placeholders})""",
-                [uid] + list(valid_statuses),
-            )
-            for obj in inactive:
-                execute(
-                    "UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?",
-                    (obj['id'], uid),
+                print(
+                    f"[WARN] user {uid}: нет активных рабочих — автозарплаты пересчитаны по {n} объектам "
+                    f"(ручной режим salary не меняется)"
                 )
     except Exception as e:
         print(f"[WARN] Ошибка пересчёта зарплат: {e}")

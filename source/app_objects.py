@@ -28,7 +28,7 @@ _load_local_dotenv()
 import logging
 import secrets
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_file
 from flask_login import LoginManager, login_required, current_user, logout_user
 
@@ -303,6 +303,109 @@ def _norm_salary_allocation_mode(raw, fallback=SALARY_ALLOCATION_ALL_WORKERS):
     if s in (SALARY_ALLOCATION_ALL_WORKERS, SALARY_ALLOCATION_ASSIGNED_WORKERS, SALARY_ALLOCATION_MANUAL):
         return s
     return fallback
+
+
+def _parse_iso_date_ymd(s):
+    if not s:
+        return None
+    s = str(s).strip()[:10]
+    if len(s) < 10:
+        return None
+    try:
+        datetime.strptime(s, '%Y-%m-%d')
+        return s
+    except ValueError:
+        return None
+
+
+def _expand_date_range_inclusive(date_start, date_end):
+    """Список YYYY-MM-DD от date_start до date_end включительно (если одна дата — один день)."""
+    a = _parse_iso_date_ymd(date_start)
+    b = _parse_iso_date_ymd(date_end) or a
+    if not a:
+        return []
+    if not b or b < a:
+        b = a
+    out = []
+    cur = datetime.strptime(a, '%Y-%m-%d')
+    end = datetime.strptime(b, '%Y-%m-%d')
+    while cur <= end:
+        out.append(cur.strftime('%Y-%m-%d'))
+        cur += timedelta(days=1)
+    return out
+
+
+def object_work_days_from_row(row):
+    """Календарные дни работ на объекте (YYYY-MM-DD), отсортированы и уникальны."""
+    if not row:
+        return []
+    raw = row.get('work_dates')
+    if raw is not None and str(raw).strip() not in ('', '[]', 'null'):
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                days = []
+                for x in parsed:
+                    d = _parse_iso_date_ymd(x)
+                    if d:
+                        days.append(d)
+                if days:
+                    return sorted(set(days))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+    return _expand_date_range_inclusive(row.get('date_start'), row.get('date_end'))
+
+
+def _serialize_work_dates(days):
+    return json.dumps(sorted(set(days)), ensure_ascii=False)
+
+
+def _resolve_work_dates_bounds_for_save(data, existing=None):
+    """
+    Из тела запроса data и (для PUT) existing: список дней, JSON, date_start, date_end (min/max).
+    Если передан work_dates — он главный; иначе разворачиваем date_start/date_end.
+    """
+    existing = existing or {}
+    if 'work_dates' in data and data['work_dates'] is not None:
+        wd = data['work_dates']
+        if isinstance(wd, str):
+            try:
+                wd = json.loads(wd.strip() or '[]')
+            except json.JSONDecodeError:
+                wd = []
+        if not isinstance(wd, list):
+            wd = []
+        days = []
+        for x in wd:
+            d = _parse_iso_date_ymd(x)
+            if d:
+                days.append(d)
+        days = sorted(set(days))
+        if days:
+            return days, _serialize_work_dates(days), days[0], days[-1]
+    ds = data.get('date_start') if 'date_start' in data else existing.get('date_start')
+    de = data.get('date_end') if 'date_end' in data else existing.get('date_end')
+    days = _expand_date_range_inclusive(ds, de)
+    if days:
+        return days, _serialize_work_dates(days), days[0], days[-1]
+    return [], '[]', None, None
+
+
+def _build_salary_calendar_counts(uid):
+    """Для каждой календарной даты — сколько объектов (со статусами из OBJECT_STATUSES_SALARY) в эту день."""
+    from collections import defaultdict
+
+    rows = fetch_all(
+        "SELECT id, work_dates, date_start, date_end, status FROM objects WHERE user_id = ?",
+        (uid,),
+    )
+    cnt = defaultdict(int)
+    for r in rows:
+        if r.get('status') not in OBJECT_STATUSES_SALARY:
+            continue
+        for d in object_work_days_from_row(r):
+            cnt[d] += 1
+    return cnt
 
 
 # Подотчёт рабочих: выручка у клиента, расходы, сдача
@@ -888,13 +991,15 @@ def add_object():
     is_regular_to = 1 if data.get('is_regular_to') else 0
     next_to_date = (data.get('next_to_date') or '').strip() or None
     next_to_note = (data.get('next_to_note') or '').strip() or None
+    _days, work_dates_json, ds_b, de_b = _resolve_work_dates_bounds_for_save(data, None)
     oid = execute("""INSERT INTO objects 
-        (user_id, date_start, date_end, name, client, client_id, sum_work, expenses, status, advance, salary, notes, is_regular_to, next_to_date, next_to_note, created_at, updated_at, salary_allocation_mode) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
-        (current_user.id, data.get('date_start'), data.get('date_end'), name,
+        (user_id, date_start, date_end, work_dates, name, client, client_id, sum_work, expenses, status, advance, salary, notes, is_regular_to, next_to_date, next_to_note, created_at, updated_at, salary_allocation_mode) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+        (current_user.id, ds_b, de_b, work_dates_json, name,
          client_name, client_id, data.get('sum_work', 0), data.get('expenses', 0), data.get('status'),
          data.get('advance', 0), data.get('salary', 0), data.get('notes'),
          is_regular_to, next_to_date, next_to_note, now, now, mode_ins), return_id=True)
+    _recalc_salaries_for_user_id(current_user.id)
     obj = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (oid, current_user.id))
     return jsonify(obj), 201
 
@@ -966,6 +1071,8 @@ def integration_create_object_from_taskmgr():
                 or phone
                 or address
                 or date_start_in
+                or (data.get('date_end') or '').strip()
+                or ('work_dates' in data and data.get('work_dates') is not None)
                 or advance_payload is not None
                 or advance_delta_payload is not None
             )
@@ -979,7 +1086,19 @@ def integration_create_object_from_taskmgr():
             if not has_payload and not mismatch:
                 return jsonify({'ok': True, 'idempotent': True, 'object': existing}), 200
             name_new = (data.get('name') or '').strip() or (existing.get('name') or '')
-            date_start_new = date_start_in or (existing.get('date_start') or None)
+            integ_dates = {}
+            if 'work_dates' in data and data.get('work_dates') is not None:
+                integ_dates['work_dates'] = data['work_dates']
+            if date_start_in:
+                integ_dates['date_start'] = date_start_in
+            elif existing.get('date_start'):
+                integ_dates['date_start'] = existing.get('date_start')
+            de_in = (data.get('date_end') or '').strip()
+            if de_in:
+                integ_dates['date_end'] = de_in
+            elif existing.get('date_end'):
+                integ_dates['date_end'] = existing.get('date_end')
+            _wdays, work_dates_json, ds_b, de_b = _resolve_work_dates_bounds_for_save(integ_dates, existing)
             if advance_delta_payload is not None:
                 try:
                     base_adv = float(existing.get('advance') or 0)
@@ -994,8 +1113,8 @@ def integration_create_object_from_taskmgr():
                 except (TypeError, ValueError):
                     advance_new = 0.0
             execute(
-                'UPDATE objects SET name=?, date_start=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
-                (name_new, date_start_new, client_name, client_id, advance_new, existing['id'], target_user_id),
+                'UPDATE objects SET name=?, date_start=?, date_end=?, work_dates=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
+                (name_new, ds_b, de_b, work_dates_json, client_name, client_id, advance_new, existing['id'], target_user_id),
             )
             if business_client_id and phone:
                 _dispatcher_upsert_profile(
@@ -1004,9 +1123,14 @@ def integration_create_object_from_taskmgr():
                         'customerPhone': phone,
                         'contactName': client_name,
                         'objectAddress': address,
-                        'startAt': date_start_new or None,
+                        'startAt': ds_b or None,
+                        'dueAt': de_b or None,
                     },
                 )
+            try:
+                _recalc_salaries_for_user_id(target_user_id)
+            except Exception:
+                pass
             obj = fetch_one('SELECT * FROM objects WHERE id=? AND user_id=?', (existing['id'], target_user_id))
             return jsonify({'ok': True, 'idempotent': True, 'object': obj, 'synced': True}), 200
 
@@ -1043,14 +1167,16 @@ def integration_create_object_from_taskmgr():
         notes = f'{extra_notes}\n{line}'.strip() if extra_notes else line
 
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        _wdays_i, work_dates_json_i, ds_i, de_i = _resolve_work_dates_bounds_for_save(data, None)
         oid = execute(
             """INSERT INTO objects
-            (user_id, date_start, date_end, name, client, client_id, sum_work, expenses, status, advance, salary, notes, created_at, updated_at, integration_source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, date_start, date_end, work_dates, name, client, client_id, sum_work, expenses, status, advance, salary, notes, created_at, updated_at, integration_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 target_user_id,
-                data.get('date_start'),
-                data.get('date_end'),
+                ds_i,
+                de_i,
+                work_dates_json_i,
                 name,
                 client_name,
                 client_id,
@@ -1066,6 +1192,10 @@ def integration_create_object_from_taskmgr():
             ),
             return_id=True,
         )
+        try:
+            _recalc_salaries_for_user_id(target_user_id)
+        except Exception:
+            pass
         obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
         if business_client_id and phone:
             _dispatcher_upsert_profile(
@@ -1074,8 +1204,8 @@ def integration_create_object_from_taskmgr():
                     'customerPhone': phone,
                     'contactName': client_name,
                     'objectAddress': address,
-                    'startAt': data.get('date_start'),
-                    'dueAt': data.get('date_end'),
+                    'startAt': ds_i,
+                    'dueAt': de_i,
                 },
             )
         return jsonify({'ok': True, 'idempotent': False, 'object': obj}), 201
@@ -1124,9 +1254,13 @@ def update_object(obj_id):
         if key not in data:
             return 1 if ex.get(key) else 0
         return 1 if data.get(key) else 0
-    execute("""UPDATE objects SET date_start=?, date_end=?, name=?, client=?, client_id=?, sum_work=?,
+
+    date_payload = {k: data[k] for k in ('work_dates', 'date_start', 'date_end') if k in data}
+    _days, work_dates_json, ds_b, de_b = _resolve_work_dates_bounds_for_save(date_payload, ex)
+
+    execute("""UPDATE objects SET date_start=?, date_end=?, work_dates=?, name=?, client=?, client_id=?, sum_work=?,
            expenses=?, status=?, advance=?, salary=?, notes=?, is_regular_to=?, next_to_date=?, next_to_note=?, salary_allocation_mode=?, updated_at=? WHERE id=? AND user_id=?""",
-        (pick('date_start'), pick('date_end'), name, client_name, client_id,
+        (ds_b, de_b, work_dates_json, name, client_name, client_id,
          pickf('sum_work'), pickf('expenses'), pick('status'), pickf('advance'),
          pickf('salary'), pick('notes'),
          pick_bool01('is_regular_to'),
@@ -1134,8 +1268,8 @@ def update_object(obj_id):
          pick('next_to_note'),
          mode_out, now, obj_id, current_user.id))
 
-    if any(k in data for k in ('status', 'date_start', 'salary_allocation_mode')):
-        recalc_object_salary(obj_id)
+    if any(k in data for k in ('status', 'date_start', 'date_end', 'work_dates', 'salary_allocation_mode')):
+        _recalc_salaries_for_user_id(current_user.id)
 
     row = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id))
     return jsonify(dict(row) if row else {"ok": True})
@@ -1157,6 +1291,7 @@ def delete_object(obj_id):
 
     # Выполняем всё в одной транзакции
     execute_many(queries)
+    _recalc_salaries_for_user_id(current_user.id)
     return jsonify({"ok": True})
 
 # ============================
@@ -1178,6 +1313,7 @@ def add_worker():
         VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (current_user.id, data.get('full_name', ''), data.get('phone', ''),
          data.get('daily_rate', 300), data.get('hire_date', ''), data.get('notes', ''), 1), return_id=True)
+    _recalc_salaries_for_user_id(current_user.id)
     return jsonify(fetch_one("SELECT * FROM workers WHERE id = ? AND user_id = ?", (wid, current_user.id))), 201
 
 @app.route('/api/workers/<int:worker_id>', methods=['PUT'])
@@ -1193,6 +1329,7 @@ def update_worker(worker_id):
     w = fetch_one("SELECT * FROM workers WHERE id = ? AND user_id = ?", (worker_id, current_user.id))
     if not w:
         return jsonify({"error": "Не найдено"}), 404
+    _recalc_salaries_for_user_id(current_user.id)
     return jsonify(w)
 
 @app.route('/api/workers/<int:worker_id>', methods=['DELETE'])
@@ -1203,6 +1340,7 @@ def delete_worker(worker_id):
     execute("DELETE FROM worker_account_entries WHERE worker_id = ? AND user_id = ?", (worker_id, current_user.id))
     execute("DELETE FROM worker_assignments WHERE worker_id = ? AND user_id = ?", (worker_id, current_user.id))
     execute("DELETE FROM workers WHERE id = ? AND user_id = ?", (worker_id, current_user.id))
+    _recalc_salaries_for_user_id(current_user.id)
     return jsonify({"ok": True})
 
 
@@ -1410,6 +1548,26 @@ def remove_object_worker(obj_id, assignment_id):
     recalc_object_salary(obj_id)
     return jsonify({"ok": True})
 
+def _recalc_salaries_for_user_id(uid):
+    """Пересчитать objects.salary у всех объектов пользователя с одним calendar_counts.
+
+    Делитель по дням общий для всех объектов; при изменении дат/статуса одного объекта
+    нужно пересчитать всех, иначе у соседей остаётся устаревшая доля.
+
+    Режим manual не трогаем (recalc_object_salary выходит без UPDATE); предварительный
+    UPDATE salary=0 по всем объектам не выполняем — он затирал ручные суммы.
+    """
+    if not uid:
+        return 0
+    all_objs = fetch_all("SELECT id FROM objects WHERE user_id = ?", (uid,))
+    if not all_objs:
+        return 0
+    counts = _build_salary_calendar_counts(uid)
+    for obj in all_objs:
+        recalc_object_salary(obj['id'], uid, calendar_counts=counts)
+    return len(all_objs)
+
+
 @app.route('/api/objects/recalc-all-salaries', methods=['POST'])
 @login_required
 @require_csrf
@@ -1417,60 +1575,29 @@ def recalc_all_salaries():
     """Пересчитать зарплаты ВСЕХ объектов пользователя по новой логике."""
     try:
         uid = current_user.id
-
-        # Находим все уникальные date_start объектов
-        all_dates = fetch_all(
-            "SELECT DISTINCT date_start FROM objects WHERE user_id = ? AND date_start != ''",
-            (uid,)
-        )
-        dates = [d['date_start'][:10] for d in all_dates]
-
-        # Находим все объекты пользователя
-        all_objs = fetch_all("SELECT id FROM objects WHERE user_id = ?", (uid,))
-
-        # Сначала обнуляем все зарплаты
-        for obj in all_objs:
-            execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj['id'], uid))
-
-        # Пересчитываем по датам date_start
-        for date in dates:
-            recalc_objects_for_dates([date])
-
-        return jsonify({"ok": True, "dates_processed": len(dates), "objects_recalc": len(all_objs)})
+        n = _recalc_salaries_for_user_id(uid)
+        return jsonify({"ok": True, "objects_recalc": n})
     except Exception as e:
         import logging, traceback
         logging.error(f"recalc_all_salaries error: {e}\n{traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
 
 def recalc_objects_for_dates(dates):
-    """Пересчитать зарплаты объектов за указанные даты.
-    Формула: (Σ daily_rate всех активных рабочих) / кол-во активных объектов за день.
-    """
+    """Пересчитать зарплаты при затронутых календарных датах (делитель n меняется у всех на эти дни)."""
     if not dates:
         return
-    uid = current_user.id
+    _recalc_salaries_for_user_id(current_user.id)
 
-    valid_statuses = OBJECT_STATUSES_SALARY
-    placeholders = ','.join(['?' for _ in dates])
-    placeholders2 = ','.join(['?' for _ in valid_statuses])
-
-    affected_objs = fetch_all(
-        f"SELECT id FROM objects WHERE user_id = ? AND date_start IN ({placeholders}) AND status IN ({placeholders2})",
-        [uid] + list(dates) + list(valid_statuses)
-    )
-
-    for obj in affected_objs:
-        recalc_object_salary(obj['id'])
-
-def recalc_object_salary(obj_id, user_id=None):
-    """Пересчитать поле objects.salary (затраты на рабочих по объекту за день).
+def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
+    """Пересчитать поле objects.salary: сумма по каждому дню из work_dates (доля бригады на этот день).
 
     Режим salary_allocation_mode:
-      all_workers — (Σ daily_rate всех активных рабочих) / число объектов за этот день;
-      assigned_workers — (Σ daily_rate только рабочих с назначением на этот объект) / число объектов за день;
-      manual — не менять salary (исключение: выезд руководителя, одна фактическая бригада и т.п.).
+      all_workers — для каждого дня выезда: (Σ daily_rate всех активных рабочих) / число объектов в этот день;
+      assigned_workers — то же, но Σ только по рабочим с назначением на объект;
+      manual — не менять salary.
 
     user_id: для фонового пересчёта при старте (без контекста Flask current_user).
+    calendar_counts: опционально словарь дата -> число объектов (один раз на пакет пересчётов).
     """
     try:
         uid = user_id
@@ -1481,10 +1608,15 @@ def recalc_object_salary(obj_id, user_id=None):
             uid = current_user.id
 
         obj = fetch_one(
-            "SELECT id, date_start, status, salary_allocation_mode FROM objects WHERE id = ? AND user_id = ?",
+            "SELECT id, work_dates, date_start, date_end, status, salary_allocation_mode FROM objects WHERE id = ? AND user_id = ?",
             (obj_id, uid),
         )
-        if not obj or not obj.get('date_start'):
+        if not obj:
+            return
+
+        work_days = object_work_days_from_row(obj)
+        if not work_days:
+            execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
         valid_statuses = OBJECT_STATUSES_SALARY
@@ -1496,16 +1628,8 @@ def recalc_object_salary(obj_id, user_id=None):
         if mode == SALARY_ALLOCATION_MANUAL:
             return
 
-        obj_date = obj['date_start'][:10]
-
-        placeholders = ','.join(['?' for _ in valid_statuses])
-        objects_same_day = fetch_all(
-            f"SELECT id FROM objects WHERE user_id = ? AND date_start LIKE ? AND status IN ({placeholders})",
-            [uid, obj_date + '%'] + list(valid_statuses),
-        )
-        num_objects = len(objects_same_day)
-        if num_objects == 0:
-            return
+        if calendar_counts is None:
+            calendar_counts = _build_salary_calendar_counts(uid)
 
         if mode == SALARY_ALLOCATION_ASSIGNED_WORKERS:
             rows = fetch_all(
@@ -1532,11 +1656,16 @@ def recalc_object_salary(obj_id, user_id=None):
             execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
-        salary_per_object = total_daily_rate / num_objects
+        total_salary = 0.0
+        for d in work_days:
+            n = int(calendar_counts.get(d, 0))
+            if n <= 0:
+                continue
+            total_salary += total_daily_rate / n
 
         execute(
             "UPDATE objects SET salary = ? WHERE id = ? AND user_id = ?",
-            (round(salary_per_object, 2), obj_id, uid),
+            (round(total_salary, 2), obj_id, uid),
         )
     except Exception as e:
         import logging
@@ -1679,8 +1808,10 @@ def get_detailed_stats():
     # Выручка по месяцам — ОДИН проход, без дополнительных запросов
     months = {}
     for obj in objects_with_est:
-        if obj['date_start'] and len(obj['date_start']) >= 7:
-            m = obj['date_start'][:7]
+        days = object_work_days_from_row(obj)
+        anchor = (days[0] if days else (obj.get('date_start') or '')[:10])
+        if anchor and len(anchor) >= 7:
+            m = anchor[:7]
             if m not in months:
                 months[m] = {'revenue': 0, 'profit': 0, 'expenses': 0, 'salary': 0, 'material_profit': 0}
 
@@ -1705,10 +1836,16 @@ def get_detailed_stats():
     today_str = now.strftime('%Y-%m-%d')
     month_str = now.strftime('%Y-%m')
     year_str = now.strftime('%Y')
-    
-    today_count = sum(1 for o in objects_with_est if o.get('date_start', '').startswith(today_str))
-    month_count = sum(1 for o in objects_with_est if o.get('date_start', '').startswith(month_str))
-    year_count = sum(1 for o in objects_with_est if o.get('date_start', '').startswith(year_str))
+
+    def _obj_touched_calendar_prefix(o, prefix):
+        for d in object_work_days_from_row(o):
+            if d.startswith(prefix):
+                return True
+        return False
+
+    today_count = sum(1 for o in objects_with_est if _obj_touched_calendar_prefix(o, today_str))
+    month_count = sum(1 for o in objects_with_est if _obj_touched_calendar_prefix(o, month_str))
+    year_count = sum(1 for o in objects_with_est if _obj_touched_calendar_prefix(o, year_str))
 
     # Топ должников
     debtors = {}
@@ -1798,11 +1935,11 @@ def get_report():
     params = [current_user.id]
 
     if start:
-        base += " AND o.date_start >= ?"
-        params.append(start)
+        base += " AND date(COALESCE(NULLIF(TRIM(o.date_end), ''), o.date_start)) >= date(?)"
+        params.append(start[:10])
     if end:
-        base += " AND o.date_start <= ?"
-        params.append(end + ' 23:59:59')
+        base += " AND date(o.date_start) <= date(?)"
+        params.append(end[:10])
 
     base += " GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER
     objects = fetch_all(base, tuple(params))
@@ -1850,12 +1987,7 @@ def get_report():
 def _recalc_all_salaries_on_startup():
     """Пересчитать зарплаты при старте — отдельно для каждого user_id (мультиарендность)."""
     try:
-        from collections import defaultdict
-        from database import fetch_all, execute
-
-        valid_statuses = OBJECT_STATUSES_SALARY
-        placeholders = ','.join(['?' for _ in valid_statuses])
-        placeholders2 = ','.join(['?' for _ in valid_statuses])
+        from database import fetch_all
 
         uid_rows = fetch_all(
             "SELECT user_id FROM objects WHERE user_id IS NOT NULL "
@@ -1864,42 +1996,20 @@ def _recalc_all_salaries_on_startup():
         uids = sorted({r['user_id'] for r in uid_rows if r.get('user_id') is not None})
 
         for uid in uids:
-            objs = fetch_all(
-                f"""SELECT id, date_start FROM objects
-                    WHERE user_id = ? AND date_start != '' AND status IN ({placeholders})""",
-                [uid] + list(valid_statuses),
-            )
-            by_date = defaultdict(list)
-            for o in objs:
-                d = o['date_start'][:10]
-                by_date[d].append(o['id'])
-
+            n = _recalc_salaries_for_user_id(uid)
             workers = fetch_all(
                 "SELECT daily_rate FROM workers WHERE is_active = 1 AND user_id = ?",
                 (uid,),
             )
-            total_rate = sum(w['daily_rate'] for w in workers) if workers else 0
-
+            total_rate = sum(float(w['daily_rate'] or 0) for w in workers) if workers else 0
+            if n <= 0:
+                continue
             if total_rate > 0:
-                for _date, ids in by_date.items():
-                    for oid in ids:
-                        recalc_object_salary(oid, user_id=uid)
-                print(f"[OK] user {uid}: пересчитаны зарплаты {len(objs)} активных объектов, Σ ставок {total_rate}/день")
+                print(f"[OK] user {uid}: пересчитаны зарплаты по {n} объектам, Σ ставок {total_rate}/день")
             else:
-                for o in objs:
-                    execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (o['id'], uid))
-                if objs:
-                    print(f"[WARN] user {uid}: нет активных рабочих — обнулены зарплаты активных объектов")
-
-            inactive = fetch_all(
-                f"""SELECT id FROM objects
-                    WHERE user_id = ? AND status NOT IN ({placeholders2})""",
-                [uid] + list(valid_statuses),
-            )
-            for obj in inactive:
-                execute(
-                    "UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?",
-                    (obj['id'], uid),
+                print(
+                    f"[WARN] user {uid}: нет активных рабочих — автозарплаты пересчитаны по {n} объектам "
+                    f"(ручной режим salary не меняется)"
                 )
     except Exception as e:
         print(f"[WARN] Ошибка пересчёта зарплат: {e}")

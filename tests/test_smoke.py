@@ -3,9 +3,9 @@ import os
 import sys
 import tempfile
 
-# Корень проекта = родитель папки tests
+# Корень проекта = родитель папки tests (как на Railway: `app_objects` из корня репозитория).
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(ROOT, "source"))
+sys.path.insert(0, ROOT)
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-smoke-only")
 _db = os.path.join(tempfile.gettempdir(), "oa_smoke_test.db")
