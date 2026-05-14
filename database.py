@@ -349,6 +349,74 @@ def _pg_exec_ddl(cur, conn, statements):
     conn.commit()
 
 
+def _backfill_objects_work_dates(conn):
+    """Заполнить work_dates из date_start/date_end, если дни ещё не заданы (миграция со старого «от — до»)."""
+    import json
+    from datetime import datetime, timedelta
+
+    def parse_iso(s):
+        if not s:
+            return None
+        s = str(s).strip()[:10]
+        if len(s) < 10:
+            return None
+        try:
+            datetime.strptime(s, '%Y-%m-%d')
+            return s
+        except ValueError:
+            return None
+
+    def expand(ds, de):
+        a = parse_iso(ds)
+        b = parse_iso(de) or a
+        if not a:
+            return []
+        if not b or b < a:
+            b = a
+        out = []
+        cur_d = datetime.strptime(a, '%Y-%m-%d')
+        end_d = datetime.strptime(b, '%Y-%m-%d')
+        while cur_d <= end_d:
+            out.append(cur_d.strftime('%Y-%m-%d'))
+            cur_d += timedelta(days=1)
+        return out
+
+    def needs_backfill(wd_raw):
+        if wd_raw is None:
+            return True
+        s = str(wd_raw).strip()
+        if s in ('', '[]', 'null'):
+            return True
+        try:
+            j = json.loads(s)
+            return not (isinstance(j, list) and len(j) > 0)
+        except Exception:
+            return True
+
+    mc = conn.cursor()
+    try:
+        mc.execute("SELECT id, date_start, date_end, work_dates FROM objects")
+        rows = mc.fetchall()
+        ph = '%s' if IS_POSTGRES else '?'
+        upd = f"UPDATE objects SET work_dates = {ph}, date_start = {ph}, date_end = {ph} WHERE id = {ph}"
+        for row in rows:
+            r = dict(row)
+            if not needs_backfill(r.get('work_dates')):
+                continue
+            days = expand(r.get('date_start'), r.get('date_end'))
+            if not days:
+                continue
+            js = json.dumps(days, ensure_ascii=False)
+            d0, d1 = days[0], days[-1]
+            mc.execute(upd, (js, d0, d1, r['id']))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        mc.close()
+
+
 def _migrate_object_status_labels(conn):
     """Переименование статусов объектов в существующих строках (этапы работ vs оплата)."""
     mapping = (
@@ -396,7 +464,8 @@ def init_db():
             """
             CREATE TABLE IF NOT EXISTS objects (
                 id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                date_start TEXT, date_end TEXT, name TEXT NOT NULL, client TEXT, client_id INTEGER,
+                date_start TEXT, date_end TEXT, work_dates TEXT DEFAULT '[]',
+                name TEXT NOT NULL, client TEXT, client_id INTEGER,
                 sum_work REAL DEFAULT 0, expenses REAL DEFAULT 0, status TEXT DEFAULT 'Ожидает старта',
                 advance REAL DEFAULT 0, salary REAL DEFAULT 0, notes TEXT,
                 is_regular_to INTEGER DEFAULT 0,
@@ -494,6 +563,7 @@ def init_db():
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS is_regular_to INTEGER DEFAULT 0",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS next_to_date TEXT",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS next_to_note TEXT",
+            "ALTER TABLE objects ADD COLUMN IF NOT EXISTS work_dates TEXT DEFAULT '[]'",
         ):
             try:
                 cur.execute(alter)
@@ -520,7 +590,8 @@ def init_db():
 
             CREATE TABLE IF NOT EXISTS objects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-                date_start TEXT, date_end TEXT, name TEXT NOT NULL, client TEXT, client_id INTEGER,
+                date_start TEXT, date_end TEXT, work_dates TEXT DEFAULT '[]',
+                name TEXT NOT NULL, client TEXT, client_id INTEGER,
                 sum_work REAL DEFAULT 0, expenses REAL DEFAULT 0, status TEXT DEFAULT 'Ожидает старта',
                 advance REAL DEFAULT 0, salary REAL DEFAULT 0, notes TEXT,
                 is_regular_to INTEGER DEFAULT 0,
@@ -700,6 +771,13 @@ def init_db():
     except Exception:
         pass
 
+    try:
+        if not IS_POSTGRES:
+            conn.execute("ALTER TABLE objects ADD COLUMN work_dates TEXT DEFAULT '[]'")
+            conn.commit()
+    except Exception:
+        pass
+
     # Миграция: подотчёт / выручка у рабочих
     try:
         if not IS_POSTGRES:
@@ -719,6 +797,11 @@ def init_db():
         _migrate_object_status_labels(conn)
     except Exception as e:
         logging.warning("Миграция статусов objects: %s", e)
+
+    try:
+        _backfill_objects_work_dates(conn)
+    except Exception as e:
+        logging.warning("Миграция work_dates objects: %s", e)
 
     cur.close()
     _ensure_indexes()

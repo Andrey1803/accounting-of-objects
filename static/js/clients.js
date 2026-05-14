@@ -65,12 +65,39 @@ var ClientsPage = (function(API, UI) {
         } else {
             list.innerHTML = related.map(function(o) {
                 var status = o.status || '-';
-                var dateStart = o.date_start || '-';
-                var dateEnd = o.date_end || '-';
+                function parseWd(x) {
+                    if (!x) return [];
+                    if (x.work_dates != null && x.work_dates !== '') {
+                        try {
+                            var a = typeof x.work_dates === 'string' ? JSON.parse(x.work_dates) : x.work_dates;
+                            if (Array.isArray(a)) {
+                                var u = [];
+                                a.forEach(function(z) {
+                                    var s = String(z).trim().slice(0, 10);
+                                    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) u.push(s);
+                                });
+                                u.sort();
+                                if (u.length) return u;
+                            }
+                        } catch (e) {}
+                    }
+                    var ds = String(x.date_start || '').trim().slice(0, 10);
+                    var de = String(x.date_end || '').trim().slice(0, 10);
+                    if (!ds) return [];
+                    if (!de || de < ds) de = ds;
+                    var out = [], c = new Date(ds + 'T12:00:00'), last = new Date(de + 'T12:00:00');
+                    while (c <= last) {
+                        out.push(c.toISOString().slice(0, 10));
+                        c.setDate(c.getDate() + 1);
+                    }
+                    return out;
+                }
+                var days = parseWd(o);
+                var daysLabel = days.length ? days.join(', ') : '-';
                 var titleText = o.name || ('Объект #' + String(o.id));
                 return '<div class="history-item">' +
                     '<div class="history-title">' + API.esc(titleText) + '</div>' +
-                    '<div class="history-meta">Статус: ' + API.esc(String(status)) + ' | Начало: ' + API.esc(String(dateStart)) + ' | Окончание: ' + API.esc(String(dateEnd)) + '</div>' +
+                    '<div class="history-meta">Статус: ' + API.esc(String(status)) + ' | Дни на объекте: ' + API.esc(daysLabel) + '</div>' +
                 '</div>';
             }).join('');
         }
