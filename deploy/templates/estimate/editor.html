@@ -2425,7 +2425,7 @@
             if (matched.length > 0) {
                 html += '<p class="pdf-import-hintline">Галочка по умолчанию при уверенности ≥75%. ' + (importMode === 'retail'
                     ? 'В смету подставляется <strong>розничная цена из PDF</strong>.'
-                    : 'В счёте закуп <strong>без НДС</strong>; в каталог — <strong>закуп с НДС 20%</strong>, розница в каталоге не меняется.'
+                    : 'В смете обновляется закуп по совпавшим материалам или добавляется строка; в каталог — <strong>закуп с НДС 20%</strong>, розница в каталоге не меняется.'
                     ) + '</p>';
                 html += '<div class="pdf-import-section-title">Совпали с каталогом</div>';
                 html += '<div class="pdf-import-table-wrap"><table class="pdf-import-table">';
@@ -2532,37 +2532,7 @@
 
             const importMode = (window._pdfImportMode === 'wholesale') ? 'wholesale' : 'retail';
 
-            // Для режима РРЦ гарантируем, что смета создана.
-            if (importMode === 'retail' && !estimateId) {
-                try {
-                    var data = {
-                        date: document.getElementById('date').value || new Date().toISOString().split('T')[0],
-                        object_name: document.getElementById('object-name').value,
-                        client: document.getElementById('client').value,
-                        status: document.getElementById('status').value || 'Черновик'
-                    };
-                    if (prefilledObjectId) data.object_id = prefilledObjectId;
-
-                    var res = await fetch('/estimate/api/estimates', {
-                        method: 'POST',
-                        headers: { 'Content-Type':'application/json', 'X-CSRF-Token': getCsrf() },
-                        body: JSON.stringify(data)
-                    });
-                    if (!res.ok) {
-                        var err = await res.json().catch(()=>({error:'Ошибка'}));
-                        alert('Не удалось создать смету: ' + (err.error || 'HTTP ' + res.status));
-                        return;
-                    }
-                    var saved = await res.json();
-                    estimateId = saved.id;
-                    document.getElementById('estimate-number').textContent = saved.number;
-                    localStorage.setItem('estimate_last_id', estimateId);
-                    console.log('Смета создана для импорта: id=' + estimateId);
-                } catch(e) {
-                    alert('Ошибка: ' + e.message);
-                    return;
-                }
-            }
+            if (!await ensureEstimateExistsForAddingItems()) return;
 
             // Теперь применяем выбранные позиции ПОСЛЕДОВАТЕЛЬНО
             let added = 0;
@@ -2628,15 +2598,22 @@
                                     body: JSON.stringify(updBody)
                                 });
                                 var catNm = _pdfNormName(m.item.name);
-                                items.forEach(function(it){
-                                    if (it.section !== 'material') return;
-                                    if (_pdfNormName(it.name) !== catNm) return;
-                                    it.purchase_price = useWholesaleWithVat;
-                                    var p = parseFloat(it.price) || 0;
-                                    var q = parseFloat(it.quantity) || 0;
-                                    it.material_profit = (p - useWholesaleWithVat) * q;
-                                    it.total = p * q;
+                                var matMatches = items.filter(function(it) {
+                                    return it.section === 'material' && _pdfNormName(it.name) === catNm;
                                 });
+                                if (matMatches.length) {
+                                    for (var wi = 0; wi < matMatches.length; wi++) {
+                                        await updateItem(matMatches[wi].id, 'purchase_price', useWholesaleWithVat);
+                                    }
+                                } else {
+                                    var useRetailRow = Number(m.item.retail_price) || 0;
+                                    await doAddFromCatalog({
+                                        name: m.item.name,
+                                        unit: m.unit || 'шт',
+                                        retail_price: useRetailRow,
+                                        purchase_price: useWholesaleWithVat
+                                    }, qty, 'material');
+                                }
                                 added++;
                             }
                         } catch(e) {
@@ -2683,6 +2660,12 @@
                             qtyU > 0 ? qtyU : 1,
                             'material'
                         );
+                    } else if (importMode === 'wholesale' && filePriceU > 0) {
+                        await doAddFromCatalog(
+                            { name: nameU, unit: unitU, retail_price: filePriceU, purchase_price: filePriceU },
+                            qtyU > 0 ? qtyU : 1,
+                            'material'
+                        );
                     }
                     added++;
                 } catch (e) {
@@ -2698,6 +2681,17 @@
                         } catch (e2) {
                             console.error('Ошибка добавления новой позиции в смету:', nameU, e2);
                         }
+                    } else if (importMode === 'wholesale' && filePriceU > 0) {
+                        try {
+                            await doAddFromCatalog(
+                                { name: nameU, unit: unitU, retail_price: filePriceU, purchase_price: filePriceU },
+                                qtyU > 0 ? qtyU : 1,
+                                'material'
+                            );
+                            added++;
+                        } catch (e2) {
+                            console.error('Ошибка добавления новой позиции в смету:', nameU, e2);
+                        }
                     }
                 }
             }
@@ -2706,9 +2700,8 @@
                 if (importMode === 'retail') {
                     alert(`Добавлено ${added} позиций в смету №${document.getElementById('estimate-number').textContent}`);
                 } else {
-                    render();
                     await saveEstimateToDB();
-                    alert(`Обновлено ${added} закупочных цен (с НДС 20% от сумм из PDF). Розничные цены не изменялись.`);
+                    alert(`Обработано позиций: ${added}. Закуп в каталоге — с НДС 20% от сумм из PDF; розница в каталоге не менялась. Строки без совпадения в смете добавлены с нулевой маржой (розница = закуп из PDF), при необходимости поправьте РРЦ.`);
                 }
                 closePdfImport();
                 resetPdfDropZones();
@@ -2725,7 +2718,7 @@
             }
             var wholesaleInner = document.getElementById('pdfDropWholesaleInner');
             if (wholesaleInner) {
-                wholesaleInner.innerHTML = '<div class="pdf-import-drop-icon">🏷️</div><div class="pdf-import-drop-title">Оптовый счёт</div><div class="pdf-import-drop-hint">Цены в PDF без НДС → в каталог закуп с НДС +20%. Нажмите или перетащите файл.</div><input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'wholesale\')">';
+                wholesaleInner.innerHTML = '<div class="pdf-import-drop-icon">🏷️</div><div class="pdf-import-drop-title">Оптовый счёт</div><div class="pdf-import-drop-hint">Цены в PDF без НДС → в каталог закуп с НДС +20%; в смете обновится закуп или добавятся строки. Нажмите или перетащите файл.</div><input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, \'wholesale\')">';
             }
         }
 
@@ -2775,7 +2768,7 @@
             <div class="modal-header pdf-import-header">
                 <div>
                     <h2>Импорт из PDF</h2>
-                    <p class="pdf-import-lead">Счёт поставщика: режим <strong>Розница</strong> — строки в смету с РРЦ из файла; режим <strong>Опт</strong> — обновление закупа в каталоге (в PDF без НДС, в каталог с +20%). Колонки таблицы определяются автоматически; при ошибке откройте «Настройка колонок», поправьте номера (с 1) и перетащите PDF снова.</p>
+                    <p class="pdf-import-lead">Счёт поставщика: режим <strong>Розница</strong> — строки в смету с РРЦ из файла; режим <strong>Опт</strong> — закуп в каталоге (в PDF без НДС, в каталог с +20%), в смете для совпавших материалов обновляется закуп, при отсутствии строки — добавляется. Колонки таблицы определяются автоматически; при ошибке откройте «Настройка колонок», поправьте номера (с 1) и перетащите PDF снова.</p>
                 </div>
                 <button type="button" class="btn-close" onclick="closePdfImport()" aria-label="Закрыть">✕</button>
             </div>
