@@ -579,6 +579,42 @@
             });
         }
 
+        /** Маркер для других вкладок: данные по объектам изменились на сервере. */
+        var OBJECTS_DATA_TS_KEY = 'accountingObjectsDataTs';
+        var OBJECTS_AUTO_POLL_MS = 15000;
+
+        function notifyObjectsDataChangedExternally() {
+            try {
+                localStorage.setItem(OBJECTS_DATA_TS_KEY, String(Date.now()));
+            } catch (e) {}
+        }
+
+        function refreshObjectsDataAfterMutation(page) {
+            notifyObjectsDataChangedExternally();
+            if (page === undefined || page === null) {
+                return loadData(1);
+            }
+            return loadData(page);
+        }
+
+        function initObjectsLiveAutoRefresh() {
+            setInterval(function() {
+                if (document.visibilityState === 'visible' && navigator.onLine) {
+                    loadData(currentPage);
+                }
+            }, OBJECTS_AUTO_POLL_MS);
+            document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'visible' && navigator.onLine) {
+                    loadData(currentPage);
+                }
+            });
+            window.addEventListener('storage', function(ev) {
+                if (ev.key === OBJECTS_DATA_TS_KEY && document.visibilityState === 'visible' && navigator.onLine) {
+                    loadData(currentPage);
+                }
+            });
+        }
+
         async function loadData(page = 1) {
             try {
                 console.log('loadData: starting, page =', page);
@@ -992,7 +1028,7 @@
                 // Пересчитываем зарплату
                 await loadSalaryInfo(editingId);
                 // Обновляем таблицу
-                loadData(currentPage);
+                refreshObjectsDataAfterMutation(currentPage);
             } catch(e) {
                 console.error('Status change error:', e);
             }
@@ -1144,7 +1180,7 @@
                     body: JSON.stringify(data)
                 });
                 if (!res.ok) { var e = await res.json(); alert('Ошибка: ' + (e.error||'')); return; }
-                loadData(currentPage);
+                refreshObjectsDataAfterMutation(currentPage);
             } catch(e) { alert('Ошибка: ' + e.message); }
         }
 
@@ -1215,7 +1251,7 @@
                 try { await OfflineDB.put('objects', savedObj); } catch(e) {}
 
                 closeModal();
-                loadData(currentPage);
+                refreshObjectsDataAfterMutation(currentPage);
             } catch (e) {
                 try {
                     const action = {
@@ -1226,7 +1262,7 @@
                     await OfflineDB.addToQueue(action, data);
                     alert('Сохранено локально. Синхронизируйте при подключении.');
                     closeModal();
-                    loadData(currentPage);
+                    refreshObjectsDataAfterMutation(currentPage);
                 } catch(e2) {
                     alert('Ошибка: ' + e.message);
                 }
@@ -1254,7 +1290,7 @@
                     await OfflineDB.delete('objects', id);
                 } catch(e2) { alert('Ошибка удаления'); return; }
             }
-            loadData(currentPage);
+            refreshObjectsDataAfterMutation(currentPage);
         }
 
         // ============================
@@ -1416,7 +1452,7 @@
                 var sel = document.querySelector('.estimates-modal .est-select-all-cb');
                 if (sel) sel.checked = false;
                 openEstimates(currentObjectId);
-                loadData();
+                refreshObjectsDataAfterMutation();
             } catch (e) {
                 alert('Не удалось вырезать: ' + e.message);
             }
@@ -1515,7 +1551,7 @@
                 var sel = document.querySelector('.estimates-modal .est-select-all-cb');
                 if (sel) sel.checked = false;
                 openEstimates(currentObjectId);
-                loadData();
+                refreshObjectsDataAfterMutation();
             } catch (e) {
                 alert('Вставка не удалась: ' + e.message);
             }
@@ -1614,7 +1650,7 @@
             if (confirm('Удалить смету?')) {
                 await fetchCsrf(`/estimate/api/estimates/${id}`, { method: 'DELETE' });
                 openEstimates(currentObjectId);
-                loadData();
+                refreshObjectsDataAfterMutation();
             }
         }
 
@@ -1756,7 +1792,7 @@
                 });
                 if (!res.ok) { var e = await res.json(); alert('Ошибка: ' + (e.error||'')); return; }
                 document.getElementById('quickName').value = '';
-                loadData(currentPage);
+                refreshObjectsDataAfterMutation(currentPage);
             } catch(e) {
                 alert('Ошибка: ' + e.message);
             }
@@ -1816,7 +1852,8 @@
         console.log('Страница загружена');
         console.log('Фильтры очищены, загружаем данные...');
         loadData();
-        
+        initObjectsLiveAutoRefresh();
+
         // Принудительно загружаем данные через 2 секунды после автозаполнения
         setTimeout(function() {
             var searchInput = document.getElementById('filter-search');
@@ -2059,6 +2096,8 @@
                 document.getElementById('salary-info').textContent = `👷 ${objectWorkersData.length} рабочих, ${Number(data.total_pay).toLocaleString('ru-RU', {minimumFractionDigits:2})} руб`;
 
                 renderObjectWorkers();
+                notifyObjectsDataChangedExternally();
+                void loadData(currentPage);
             } catch(e) {
                 alert('Ошибка: ' + e.message);
             }
@@ -2083,6 +2122,8 @@
                 document.getElementById('salary-info').textContent = 'Рабочий удалён';
 
                 renderObjectWorkers();
+                notifyObjectsDataChangedExternally();
+                void loadData(currentPage);
             } catch(e) {
                 alert('Ошибка: ' + e.message);
             }
@@ -2270,7 +2311,7 @@
                 if (data.error) { alert('Ошибка: ' + data.error); return; }
                 alert(`✅ Обновлено ${data.updated} цен`);
                 closePriceSyncModal();
-                loadData(); // Обновить таблицу
+                refreshObjectsDataAfterMutation(); // Обновить таблицу
             })
             .catch(e => alert('Ошибка: ' + e.message));
         }

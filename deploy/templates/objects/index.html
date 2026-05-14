@@ -96,7 +96,7 @@
             font-size: var(--fs-sm);
             text-align: center;
         }
-        td:nth-child(4) { text-align: left; }
+        td:nth-child(3) { text-align: left; }
 
         .debt-row td { font-weight: 600; }
         .balance-cell { font-weight: bold; text-align: right; }
@@ -248,25 +248,29 @@
                 <option>Ожидает старта</option><option>В работе</option><option>Приостановлен</option><option>Выполнен</option><option>Закрыт</option>
             </select>
             <select id="filter-client" autocomplete="off"><option value="">Все клиенты</option></select>
+            <select id="filter-regular-to" autocomplete="off">
+                <option value="">Все объекты</option>
+                <option value="regular">Только регулярное ТО</option>
+                <option value="overdue">ТО просрочено</option>
+            </select>
         </div>
         <div class="table-wrapper table-pan-viewport" title="Прокрутка колёсиком / тачем; мышью — зажмите и тяните по таблице">
             <table>
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th onclick="sortTable(1)" style="cursor:pointer">Дата начала ↕</th>
-                        <th onclick="sortTable(2)" style="cursor:pointer">Дата завершения ↕</th>
-                        <th onclick="sortTable(3)" style="cursor:pointer">Наименование ↕</th>
-                        <th onclick="sortTable(4)" style="cursor:pointer">Клиент ↕</th>
-                        <th onclick="sortTable(5)" style="cursor:pointer" title="max(сумма работ, работы по смете) + материалы по смете">Выручка ↕</th>
-                        <th onclick="sortTable(6)" style="cursor:pointer" title="Закуп материалов по смете + прочие затраты (без двойного учёта розницы сметы)">Затраты ↕</th>
-                        <th onclick="sortTable(7)" style="cursor:pointer">Статус ↕</th>
-                        <th onclick="sortTable(8)" style="cursor:pointer">Аванс ↕</th>
-                        <th onclick="sortTable(9)" style="cursor:pointer">Затраты на рабочих ↕</th>
-                        <th onclick="sortTable(10)" style="cursor:pointer">Прибыль ↕</th>
-                        <th onclick="sortTable(11)" style="cursor:pointer">Прибыль с матер. ↕</th>
-                        <th onclick="sortTable(12)" style="cursor:pointer">Маржа ↕</th>
-                        <th onclick="sortTable(13)" style="cursor:pointer">Остаток ↕</th>
+                        <th onclick="sortTable(1)" style="cursor:pointer" title="Календарные дни выезда на объект">Дни на объекте ↕</th>
+                        <th onclick="sortTable(2)" style="cursor:pointer">Наименование ↕</th>
+                        <th onclick="sortTable(3)" style="cursor:pointer">Клиент ↕</th>
+                        <th onclick="sortTable(4)" style="cursor:pointer" title="max(сумма работ, работы по смете) + материалы по смете">Выручка ↕</th>
+                        <th onclick="sortTable(5)" style="cursor:pointer" title="Закуп материалов по смете + прочие затраты (без двойного учёта розницы сметы)">Затраты ↕</th>
+                        <th onclick="sortTable(6)" style="cursor:pointer">Статус ↕</th>
+                        <th onclick="sortTable(7)" style="cursor:pointer">Аванс ↕</th>
+                        <th onclick="sortTable(8)" style="cursor:pointer">Затраты на рабочих ↕</th>
+                        <th onclick="sortTable(9)" style="cursor:pointer">Прибыль ↕</th>
+                        <th onclick="sortTable(10)" style="cursor:pointer">Прибыль с матер. ↕</th>
+                        <th onclick="sortTable(11)" style="cursor:pointer">Маржа ↕</th>
+                        <th onclick="sortTable(12)" style="cursor:pointer">Остаток ↕</th>
                         <th>Действия</th>
                     </tr>
                 </thead>
@@ -283,9 +287,14 @@
             <h2 id="modal-title">Добавить объект</h2>
             <form id="object-form">
                 <input type="hidden" id="obj-id">
-                <div class="form-row">
-                    <div class="form-group"><label>Дата начала</label><input type="date" id="date-start"></div>
-                    <div class="form-group"><label>Дата завершения</label><input type="date" id="date-end"></div>
+                <div class="form-group">
+                    <label>Дни на объекте (учёт затрат по выездам)</label>
+                    <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
+                        <input type="date" id="work-day-pick" title="Добавить день">
+                        <button type="button" class="btn" style="background:#2E75B6;color:white;padding:6px 12px;font-size:13px;" onclick="addWorkDayFromPicker()">+ День</button>
+                    </div>
+                    <ul id="work-days-list" style="margin:0;padding-left:20px;max-height:140px;overflow-y:auto;"></ul>
+                    <small style="color:#666;display:block;margin-top:6px;font-size:12px;">Укажите все дни, когда вели работы на объекте — зарплата суммируется по каждому дню (доля бригады на этот день).</small>
                 </div>
                 <div class="form-group"><label>Наименование *</label><input type="text" id="name" required placeholder="Например: Колодищи - насос"></div>
                 <div class="form-group">
@@ -324,6 +333,14 @@
                     <small id="salary-info" style="color:#666; display:block; margin-top:3px;"></small>
                 </div>
                 <div class="form-group"><label>Примечания</label><textarea id="notes" rows="2" placeholder="Дополнительная информация..."></textarea></div>
+                <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="is-regular-to">
+                    <label for="is-regular-to" style="margin:0;">Регулярное ТО</label>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Дата следующего ТО</label><input type="date" id="next-to-date"></div>
+                    <div class="form-group"><label>Заметка на следующее ТО</label><input type="text" id="next-to-note" placeholder="Например: проверить реле"></div>
+                </div>
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-primary">💾 Сохранить</button>
                     <button type="button" class="btn" style="background:#FF9800; color:white;" id="btnDuplicate" onclick="duplicateObject()" title="Создать копию объекта">📋 Дублировать</button>
@@ -450,8 +467,78 @@
     <script src="/static/js/table-pan.js?v=1"></script>
     <script>
         let objects = [], clients = [], editingId = null, currentObjectId = null;
+        let objectWorkDaysEdit = [];
         let currentPage = 1;
         const perPage = 50;
+
+        function parseWorkDatesFromObject(obj) {
+            if (!obj) return [];
+            if (obj.work_dates != null && obj.work_dates !== '') {
+                try {
+                    var a = typeof obj.work_dates === 'string' ? JSON.parse(obj.work_dates) : obj.work_dates;
+                    if (Array.isArray(a)) {
+                        var u = [];
+                        a.forEach(function(x) {
+                            var s = String(x).trim().slice(0, 10);
+                            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) u.push(s);
+                        });
+                        u.sort();
+                        if (u.length) return u;
+                    }
+                } catch (e) {}
+            }
+            var ds = String(obj.date_start || '').trim().slice(0, 10);
+            var de = String(obj.date_end || '').trim().slice(0, 10);
+            if (!ds || !/^\d{4}-\d{2}-\d{2}$/.test(ds)) return [];
+            if (!de || !/^\d{4}-\d{2}-\d{2}$/.test(de) || de < ds) de = ds;
+            var out = [];
+            var c = new Date(ds + 'T12:00:00');
+            var last = new Date(de + 'T12:00:00');
+            while (c <= last) {
+                out.push(c.toISOString().slice(0, 10));
+                c.setDate(c.getDate() + 1);
+            }
+            return out;
+        }
+
+        function formatWorkDaysCell(obj) {
+            var d = parseWorkDatesFromObject(obj);
+            if (!d.length) return '-';
+            return d.map(formatDate).join(', ');
+        }
+
+        function renderWorkDaysEditor() {
+            var ul = document.getElementById('work-days-list');
+            if (!ul) return;
+            ul.innerHTML = '';
+            objectWorkDaysEdit.slice().sort().forEach(function(iso) {
+                var li = document.createElement('li');
+                li.style.cssText = 'display:flex;align-items:center;gap:8px;margin:4px 0;';
+                li.appendChild(document.createTextNode(formatDate(iso)));
+                var rm = document.createElement('button');
+                rm.type = 'button';
+                rm.textContent = '✕';
+                rm.className = 'btn';
+                rm.style.cssText = 'padding:2px 8px;font-size:12px;';
+                rm.onclick = function() {
+                    objectWorkDaysEdit = objectWorkDaysEdit.filter(function(x) { return x !== iso; });
+                    renderWorkDaysEditor();
+                    showExpectedSalary();
+                };
+                li.appendChild(rm);
+                ul.appendChild(li);
+            });
+        }
+
+        function addWorkDayFromPicker() {
+            var inp = document.getElementById('work-day-pick');
+            if (!inp || !inp.value) return;
+            if (objectWorkDaysEdit.indexOf(inp.value) < 0) objectWorkDaysEdit.push(inp.value);
+            objectWorkDaysEdit.sort();
+            renderWorkDaysEditor();
+            inp.value = '';
+            showExpectedSalary();
+        }
 
         function objectTotalRevenue(obj) {
             if (obj.total_revenue != null && obj.total_revenue !== '') {
@@ -478,7 +565,9 @@
             arr.sort(function(a, b) {
                 var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
                 if (pa !== pb) return pa - pb;
-                var ds = String(b.date_start || '').localeCompare(String(a.date_start || ''));
+                var da = (parseWorkDatesFromObject(a)[0] || String(a.date_start || ''));
+                var db = (parseWorkDatesFromObject(b)[0] || String(b.date_start || ''));
+                var ds = String(db).localeCompare(String(da));
                 if (ds !== 0) return ds;
                 return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
             });
@@ -487,6 +576,42 @@
         function resetTableSortHeaders() {
             document.querySelectorAll('thead th[onclick]').forEach(function(th) {
                 th.textContent = th.textContent.replace(/ [↑↓]/, ' ↕');
+            });
+        }
+
+        /** Маркер для других вкладок: данные по объектам изменились на сервере. */
+        var OBJECTS_DATA_TS_KEY = 'accountingObjectsDataTs';
+        var OBJECTS_AUTO_POLL_MS = 15000;
+
+        function notifyObjectsDataChangedExternally() {
+            try {
+                localStorage.setItem(OBJECTS_DATA_TS_KEY, String(Date.now()));
+            } catch (e) {}
+        }
+
+        function refreshObjectsDataAfterMutation(page) {
+            notifyObjectsDataChangedExternally();
+            if (page === undefined || page === null) {
+                return loadData(1);
+            }
+            return loadData(page);
+        }
+
+        function initObjectsLiveAutoRefresh() {
+            setInterval(function() {
+                if (document.visibilityState === 'visible' && navigator.onLine) {
+                    loadData(currentPage);
+                }
+            }, OBJECTS_AUTO_POLL_MS);
+            document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'visible' && navigator.onLine) {
+                    loadData(currentPage);
+                }
+            });
+            window.addEventListener('storage', function(ev) {
+                if (ev.key === OBJECTS_DATA_TS_KEY && document.visibilityState === 'visible' && navigator.onLine) {
+                    loadData(currentPage);
+                }
             });
         }
 
@@ -677,6 +802,8 @@
             const search = document.getElementById('filter-search').value.toLowerCase();
             const statusFilter = document.getElementById('filter-status').value;
             const clientFilter = document.getElementById('filter-client').value;
+            const regularToFilter = document.getElementById('filter-regular-to').value;
+            const todayIso = new Date().toISOString().split('T')[0];
             
             console.log('renderTable: objects count =', objects.length);
             
@@ -684,6 +811,13 @@
                 if (search && !obj.name.toLowerCase().includes(search)) return false;
                 if (statusFilter && obj.status !== statusFilter) return false;
                 if (!objectMatchesClientFilter(obj, clientFilter)) return false;
+                if (regularToFilter === 'regular' && !obj.is_regular_to) return false;
+                if (regularToFilter === 'overdue') {
+                    if (!obj.is_regular_to) return false;
+                    const nextDate = String(obj.next_to_date || '');
+                    if (!nextDate) return false;
+                    if (nextDate >= todayIso) return false;
+                }
                 return true;
             });
 
@@ -695,7 +829,7 @@
             if (filtered.length === 0) {
                 const tr = document.createElement('tr');
                 const td = document.createElement('td');
-                td.colSpan = 15;
+                td.colSpan = 14;
                 td.style.padding = '30px';
                 td.style.textAlign = 'center';
                 td.style.color = '#666';
@@ -716,8 +850,7 @@
                 else if (obj.status === 'Приостановлен') tr.style.background = '#fff3f3';
 
                 const td0 = document.createElement('td'); td0.textContent = obj.id; tr.appendChild(td0);
-                const td1 = document.createElement('td'); td1.textContent = formatDate(obj.date_start); tr.appendChild(td1);
-                const td2 = document.createElement('td'); td2.textContent = formatDate(obj.date_end); tr.appendChild(td2);
+                const td1 = document.createElement('td'); td1.textContent = formatWorkDaysCell(obj); tr.appendChild(td1);
                 const td3 = document.createElement('td'); td3.style.textAlign = 'left'; td3.textContent = obj.name; tr.appendChild(td3);
                 const td4 = document.createElement('td'); td4.textContent = objectClientDisplay(obj); tr.appendChild(td4);
                 const td5 = document.createElement('td'); td5.textContent = formatMoney(objectTotalRevenue(obj)); tr.appendChild(td5);
@@ -727,6 +860,23 @@
                     span.className = 'status status-' + obj.status.replace(/ /g, '-');
                     span.textContent = obj.status;
                     td7.appendChild(span);
+                    if (obj.is_regular_to) {
+                        const toMeta = document.createElement('div');
+                        toMeta.style.marginTop = '4px';
+                        toMeta.style.fontSize = '11px';
+                        toMeta.style.lineHeight = '1.25';
+                        const todayIso = new Date().toISOString().split('T')[0];
+                        const nextDateRaw = String(obj.next_to_date || '');
+                        const isOverdueTo = !!nextDateRaw && nextDateRaw < todayIso;
+                        toMeta.style.color = isOverdueTo ? '#C62828' : '#0D47A1';
+                        const nextDate = obj.next_to_date ? formatDate(obj.next_to_date) : '';
+                        toMeta.textContent = nextDate
+                            ? ((isOverdueTo ? '⛔ Просрочено ТО: ' : '🔁 ТО: ') + nextDate)
+                            : '🔁 Регулярное ТО';
+                        const note = String(obj.next_to_note || '').trim();
+                        if (note) toMeta.title = 'Заметка на следующее ТО: ' + note;
+                        td7.appendChild(toMeta);
+                    }
                 tr.appendChild(td7);
                 const td8 = document.createElement('td'); td8.textContent = formatMoney(obj.advance); tr.appendChild(td8);
                 const td9 = document.createElement('td'); td9.textContent = formatMoney(obj.salary); tr.appendChild(td9);
@@ -812,8 +962,8 @@
             if (id) {
                 const obj = objects.find(o => o.id === id);
                 document.getElementById('obj-id').value = obj.id;
-                document.getElementById('date-start').value = obj.date_start || '';
-                document.getElementById('date-end').value = obj.date_end || '';
+                objectWorkDaysEdit = parseWorkDatesFromObject(obj).slice();
+                renderWorkDaysEditor();
                 document.getElementById('name').value = obj.name;
                 document.getElementById('client').value = clientSelectValueForObject(obj);
                 document.getElementById('status').value = obj.status;
@@ -822,6 +972,9 @@
                 document.getElementById('salary-allocation-mode').value = obj.salary_allocation_mode || 'all_workers';
                 syncSalaryAllocationUi();
                 document.getElementById('notes').value = obj.notes || '';
+                document.getElementById('is-regular-to').checked = !!obj.is_regular_to;
+                document.getElementById('next-to-date').value = obj.next_to_date || '';
+                document.getElementById('next-to-note').value = obj.next_to_note || '';
 
                 // Автозаполнение из сметы
                 loadEstimateData(obj.id, function(estTotals) {
@@ -835,18 +988,18 @@
                 loadSalaryInfo(obj.id);
             } else {
                 document.getElementById('object-form').reset();
-                document.getElementById('date-start').value = new Date().toISOString().split('T')[0];
+                objectWorkDaysEdit = [new Date().toISOString().split('T')[0]];
+                renderWorkDaysEditor();
                 document.getElementById('salary-allocation-mode').value = 'all_workers';
                 syncSalaryAllocationUi();
                 document.getElementById('salary-info').textContent = '';
                 // Автозаполнение для нового объекта: покажем предполагаемую зарплату
                 showExpectedSalary();
 
-                // Пересчёт при изменении даты
-                var dsInput = document.getElementById('date-start');
-                if (dsInput) {
-                    dsInput.removeEventListener('change', showExpectedSalary);
-                    dsInput.addEventListener('change', showExpectedSalary);
+                var wdp = document.getElementById('work-day-pick');
+                if (wdp) {
+                    wdp.removeEventListener('change', showExpectedSalary);
+                    wdp.addEventListener('change', showExpectedSalary);
                 }
 
                 // Пересчёт при изменении статуса
@@ -875,7 +1028,7 @@
                 // Пересчитываем зарплату
                 await loadSalaryInfo(editingId);
                 // Обновляем таблицу
-                loadData(currentPage);
+                refreshObjectsDataAfterMutation(currentPage);
             } catch(e) {
                 console.error('Status change error:', e);
             }
@@ -904,11 +1057,10 @@
                     document.getElementById('salary-info').textContent = 'Ручной режим: введите «Затраты на рабочих» сами и сохраните.';
                     return;
                 }
-                const dateStart = document.getElementById('date-start').value || new Date().toISOString().split('T')[0];
                 const objsRes = await fetch('/api/objects');
                 const allObjects = await objsRes.json();
-                const sameDayObjects = allObjects.filter(o => o.date_start && o.date_start.startsWith(dateStart));
-                const numObjects = Math.max(sameDayObjects.length, 1);
+                const myDays = objectWorkDaysEdit.slice();
+                function parseOd(o) { return parseWorkDatesFromObject(o); }
 
                 if (mode === 'assigned_workers') {
                     if (!editingId) {
@@ -926,9 +1078,19 @@
                         document.getElementById('salary-info').textContent = '⚠️ Нет назначенных рабочих на объект (или ставки 0)';
                         return;
                     }
-                    const salaryPerObjectAssigned = assignedRateSum / numObjects;
+                    function countOnDay(dayIso) {
+                        return allObjects.filter(function(o) {
+                            if (editingId && o.id === editingId) return false;
+                            return parseOd(o).indexOf(dayIso) >= 0;
+                        }).length + 1;
+                    }
+                    var estA = 0;
+                    myDays.forEach(function(d) {
+                        var n = Math.max(countOnDay(d), 1);
+                        estA += assignedRateSum / n;
+                    });
                     document.getElementById('salary-info').textContent =
-                        'Назначенные: Σ ' + assignedRateSum + ' руб/день / ' + numObjects + ' объект(ов) за день ≈ ' + salaryPerObjectAssigned.toFixed(2) + ' руб';
+                        'Назначенные: по дням выезда ≈ ' + estA.toFixed(2) + ' руб (Σ ' + assignedRateSum + ' руб/день; см. сохранённый объект)';
                     return;
                 }
 
@@ -944,9 +1106,19 @@
                 activeWorkers.forEach(function(w) {
                     totalDailyRate += w.daily_rate;
                 });
-                const salaryPerObject = totalDailyRate / numObjects;
+                function countOnDay2(dayIso) {
+                    return allObjects.filter(function(o) {
+                        if (editingId && o.id === editingId) return false;
+                        return parseOd(o).indexOf(dayIso) >= 0;
+                    }).length + 1;
+                }
+                var est = 0;
+                myDays.forEach(function(d) {
+                    var n = Math.max(countOnDay2(d), 1);
+                    est += totalDailyRate / n;
+                });
                 document.getElementById('salary-info').textContent =
-                    `👷 ${activeWorkers.length} рабочих (${totalDailyRate} руб/день) / ${numObjects} объект(ов) = ${salaryPerObject.toFixed(2)} руб`;
+                    `👷 ${activeWorkers.length} рабочих (${totalDailyRate} руб/день), выбрано дней: ${myDays.length} — оценка затрат ≈ ${est.toFixed(2)} руб`;
             } catch(e) {}
         }
 
@@ -971,6 +1143,7 @@
         function closeModal() {
             document.getElementById('modal').classList.remove('active');
             document.getElementById('object-form').reset();
+            objectWorkDaysEdit = [];
             editingId = null;
         }
 
@@ -984,8 +1157,7 @@
             if (!newName.trim()) { alert('Введите название'); return; }
 
             var data = {
-                date_start: obj.date_start || new Date().toISOString().split('T')[0],
-                date_end: obj.date_end || '',
+                work_dates: parseWorkDatesFromObject(obj),
                 name: newName.trim(),
                 client: obj.client || '',
                 client_id: obj.client_id != null && obj.client_id !== '' ? Number(obj.client_id) : null,
@@ -995,7 +1167,10 @@
                 advance: obj.advance || 0,
                 salary: obj.salary || 0,
                 salary_allocation_mode: obj.salary_allocation_mode || 'all_workers',
-                notes: obj.notes || ''
+                notes: obj.notes || '',
+                is_regular_to: !!obj.is_regular_to,
+                next_to_date: obj.next_to_date || '',
+                next_to_note: obj.next_to_note || ''
             };
 
             try {
@@ -1005,7 +1180,7 @@
                     body: JSON.stringify(data)
                 });
                 if (!res.ok) { var e = await res.json(); alert('Ошибка: ' + (e.error||'')); return; }
-                loadData(currentPage);
+                refreshObjectsDataAfterMutation(currentPage);
             } catch(e) { alert('Ошибка: ' + e.message); }
         }
 
@@ -1025,11 +1200,15 @@
                 return;
             }
 
+            if (!objectWorkDaysEdit || objectWorkDaysEdit.length === 0) {
+                alert('Добавьте хотя бы один день работы на объекте');
+                return;
+            }
+
             var clientIdNum = parseInt(clientVal, 10);
             var selClient = !Number.isNaN(clientIdNum) ? clients.find(function(c) { return Number(c.id) === clientIdNum; }) : null;
             const data = {
-                date_start: document.getElementById('date-start').value,
-                date_end: document.getElementById('date-end').value,
+                work_dates: objectWorkDaysEdit.slice().sort(),
                 name: nameVal,
                 client: selClient ? selClient.name : '',
                 client_id: !Number.isNaN(clientIdNum) ? clientIdNum : null,
@@ -1039,7 +1218,10 @@
                 advance: parseFloat(document.getElementById('advance').value) || 0,
                 salary: parseFloat(document.getElementById('salary').value) || 0,
                 salary_allocation_mode: document.getElementById('salary-allocation-mode').value,
-                notes: document.getElementById('notes').value
+                notes: document.getElementById('notes').value,
+                is_regular_to: document.getElementById('is-regular-to').checked,
+                next_to_date: document.getElementById('next-to-date').value,
+                next_to_note: document.getElementById('next-to-note').value
             };
 
             try {
@@ -1069,7 +1251,7 @@
                 try { await OfflineDB.put('objects', savedObj); } catch(e) {}
 
                 closeModal();
-                loadData(currentPage);
+                refreshObjectsDataAfterMutation(currentPage);
             } catch (e) {
                 try {
                     const action = {
@@ -1080,7 +1262,7 @@
                     await OfflineDB.addToQueue(action, data);
                     alert('Сохранено локально. Синхронизируйте при подключении.');
                     closeModal();
-                    loadData(currentPage);
+                    refreshObjectsDataAfterMutation(currentPage);
                 } catch(e2) {
                     alert('Ошибка: ' + e.message);
                 }
@@ -1108,7 +1290,7 @@
                     await OfflineDB.delete('objects', id);
                 } catch(e2) { alert('Ошибка удаления'); return; }
             }
-            loadData(currentPage);
+            refreshObjectsDataAfterMutation(currentPage);
         }
 
         // ============================
@@ -1270,7 +1452,7 @@
                 var sel = document.querySelector('.estimates-modal .est-select-all-cb');
                 if (sel) sel.checked = false;
                 openEstimates(currentObjectId);
-                loadData();
+                refreshObjectsDataAfterMutation();
             } catch (e) {
                 alert('Не удалось вырезать: ' + e.message);
             }
@@ -1369,7 +1551,7 @@
                 var sel = document.querySelector('.estimates-modal .est-select-all-cb');
                 if (sel) sel.checked = false;
                 openEstimates(currentObjectId);
-                loadData();
+                refreshObjectsDataAfterMutation();
             } catch (e) {
                 alert('Вставка не удалась: ' + e.message);
             }
@@ -1468,7 +1650,7 @@
             if (confirm('Удалить смету?')) {
                 await fetchCsrf(`/estimate/api/estimates/${id}`, { method: 'DELETE' });
                 openEstimates(currentObjectId);
-                loadData();
+                refreshObjectsDataAfterMutation();
             }
         }
 
@@ -1595,8 +1777,7 @@
             if (!name) { document.getElementById('quickName').focus(); return; }
 
             var data = {
-                date_start: new Date().toISOString().split('T')[0],
-                date_end: '',
+                work_dates: [new Date().toISOString().split('T')[0]],
                 name: name,
                 client: '',
                 sum_work: 0, expenses: 0, status: 'Ожидает старта',
@@ -1611,7 +1792,7 @@
                 });
                 if (!res.ok) { var e = await res.json(); alert('Ошибка: ' + (e.error||'')); return; }
                 document.getElementById('quickName').value = '';
-                loadData(currentPage);
+                refreshObjectsDataAfterMutation(currentPage);
             } catch(e) {
                 alert('Ошибка: ' + e.message);
             }
@@ -1632,10 +1813,13 @@
             objects.sort(function(a, b) {
                 var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
                 if (pa !== pb) return pa - pb;
-                var keys = ['id','date_start','date_end','name','client','__revenue__','__total_expenses__','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
+                var keys = ['id','__work_days__','name','client','__revenue__','__total_expenses__','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
                 var key = keys[colIdx] || 'name';
                 var va, vb;
-                if (key === '__revenue__') {
+                if (key === '__work_days__') {
+                    va = (parseWorkDatesFromObject(a)[0] || '');
+                    vb = (parseWorkDatesFromObject(b)[0] || '');
+                } else if (key === '__revenue__') {
                     va = objectTotalRevenue(a); vb = objectTotalRevenue(b);
                 } else if (key === '__total_expenses__') {
                     va = Number(a.total_expenses != null && a.total_expenses !== '' ? a.total_expenses : a.expenses) || 0;
@@ -1661,11 +1845,15 @@
         document.getElementById('filter-client').addEventListener('change', function() {
             renderTable();
         });
+        document.getElementById('filter-regular-to').addEventListener('change', function() {
+            renderTable();
+        });
 
         console.log('Страница загружена');
         console.log('Фильтры очищены, загружаем данные...');
         loadData();
-        
+        initObjectsLiveAutoRefresh();
+
         // Принудительно загружаем данные через 2 секунды после автозаполнения
         setTimeout(function() {
             var searchInput = document.getElementById('filter-search');
@@ -1908,6 +2096,8 @@
                 document.getElementById('salary-info').textContent = `👷 ${objectWorkersData.length} рабочих, ${Number(data.total_pay).toLocaleString('ru-RU', {minimumFractionDigits:2})} руб`;
 
                 renderObjectWorkers();
+                notifyObjectsDataChangedExternally();
+                void loadData(currentPage);
             } catch(e) {
                 alert('Ошибка: ' + e.message);
             }
@@ -1932,6 +2122,8 @@
                 document.getElementById('salary-info').textContent = 'Рабочий удалён';
 
                 renderObjectWorkers();
+                notifyObjectsDataChangedExternally();
+                void loadData(currentPage);
             } catch(e) {
                 alert('Ошибка: ' + e.message);
             }
@@ -2119,7 +2311,7 @@
                 if (data.error) { alert('Ошибка: ' + data.error); return; }
                 alert(`✅ Обновлено ${data.updated} цен`);
                 closePriceSyncModal();
-                loadData(); // Обновить таблицу
+                refreshObjectsDataAfterMutation(); // Обновить таблицу
             })
             .catch(e => alert('Ошибка: ' + e.message));
         }
