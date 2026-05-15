@@ -211,10 +211,7 @@
     <div class="modal" id="searchModal">
         <div class="modal-sheet wide">
             <div class="modal-header">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;">
-                    <h2 id="modalTitle" style="margin:0;">Добавить</h2>
-                    <button type="button" class="btn-close" onclick="closeSearch()" title="Закрыть (Esc)">✕</button>
-                </div>
+                <h2 id="modalTitle">Добавить</h2>
                 <!-- Вкладки -->
                 <div style="display:flex;gap:5px;margin-bottom:8px;">
                     <button class="sort-btn active" id="tabCatalog" onclick="switchSearchTab('catalog')">📦 Каталог</button>
@@ -325,9 +322,12 @@
         let selectedCats = []; // id узлов дерева: cat_*, *_type_*, *_br_*
         let catTreeOpen = {};  // Состояние раскрытия категорий
         let catIdToName = {};  // cat_* → название категории (поле category у товара)
-        let categoryTree = { material: [], work: [] };
-        let catNamesForFilter = { material: {}, work: {} };
 
+        function getCatalogItems(type) {
+            var t = type || currentType;
+            var list = catalog[t];
+            return Array.isArray(list) ? list : [];
+        }
 
         function slugCatPart(s) {
             return String(s || '').replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
@@ -341,61 +341,18 @@
         function makeBrandId(catName, itype, brand) {
             return makeTypeId(catName, itype) + '_br_' + slugCatPart(brand || 'Без бренда');
         }
-        function categoryNamesWithDescendants(catName) {
-            var names = [catName];
-            var catType = currentType === 'material' ? 'material' : 'work';
-            var desc = catNamesForFilter[catType][catName];
-            if (desc && desc.length) {
-                desc.forEach(function(d) {
-                    if (names.indexOf(d) === -1) names.push(d);
-                });
-            }
-            return names;
-        }
-
         function expandCategoryNames(catName) {
-            var names = categoryNamesWithDescendants(catName);
-            if (names.length > 1) return names;
+            var names = [catName];
             var type = currentType === 'material' ? 'material' : 'work';
             var cats = allCategories[type] || [];
             var row = cats.find(function(c) { return c.name === catName; });
             if (row && !row.parent_id) {
                 cats.forEach(function(c) {
-                    if (c.parent_id == row.id && names.indexOf(c.name) === -1) names.push(c.name);
+                    if (c.parent_id == row.id) names.push(c.name);
                 });
             }
             return names;
         }
-
-        function countItemsInCategoryNames(names, list) {
-            var n = 0;
-            list.forEach(function(item) {
-                var c = (item.category || 'Без категории').trim();
-                if (names.indexOf(c) !== -1) n++;
-            });
-            return n;
-        }
-
-        function loadCategoryTree(type) {
-            return fetch('/estimate/api/catalog/categories/tree?type=' + type)
-                .then(function(r) { return r.json(); })
-                .then(function(tree) {
-                    categoryTree[type] = Array.isArray(tree) ? tree : [];
-                    catNamesForFilter[type] = {};
-                    function walk(nodes) {
-                        (nodes || []).forEach(function(node) {
-                            catNamesForFilter[type][node.name] = node.all_descendants || [];
-                            if (node.children && node.children.length) walk(node.children);
-                        });
-                    }
-                    walk(categoryTree[type]);
-                })
-                .catch(function() {
-                    categoryTree[type] = [];
-                    catNamesForFilter[type] = {};
-                });
-        }
-
         function itemMatchesSelectedCats(item) {
             if (!selectedCats.length) return true;
             var cat = item.category || 'Без категории';
@@ -408,16 +365,11 @@
             if (selectedCats.indexOf(typeId) !== -1) return true;
             if (selectedCats.indexOf(catId) !== -1) return true;
             var si;
-            var catNorm = (cat || '').trim().toLowerCase();
             for (si = 0; si < selectedCats.length; si++) {
                 var s = selectedCats[si];
                 if (s.indexOf('cat_') !== 0 || s.indexOf('_type_') !== -1) continue;
                 var cName = catIdToName[s];
-                if (!cName) continue;
-                var allowed = expandCategoryNames(cName);
-                for (var ai = 0; ai < allowed.length; ai++) {
-                    if ((allowed[ai] || '').trim().toLowerCase() === catNorm) return true;
-                }
+                if (cName && expandCategoryNames(cName).indexOf(cat) !== -1) return true;
             }
             for (si = 0; si < selectedCats.length; si++) {
                 var s2 = selectedCats[si];
@@ -434,7 +386,9 @@
             if (tree.style.display === 'none') {
                 tree.style.display = 'block';
                 btn.className = 'sort-btn active';
-                buildCatTree();
+                if (catalog[currentType].length > 0) {
+                    buildCatTree();
+                }
             } else {
                 tree.style.display = 'none';
                 btn.className = 'sort-btn';
@@ -443,244 +397,90 @@
 
         // Обновление дерева категорий для работ
         function updateWorkDropdown() {
-            if (currentType === 'work' && catalog.works.length > 0) {
+            if (currentType === 'work' && getCatalogItems('work').length > 0) {
                 buildCatTree();
             }
         }
 
         // Построение дерева категорий: Категория → Тип → Бренд
-
-        function collectDbCategoryNames(nodes, out) {
-            (nodes || []).forEach(function(node) {
-                out[node.name] = true;
-                if (node.children && node.children.length) collectDbCategoryNames(node.children, out);
-            });
-        }
-
-        function renderEstimateDbCatNodes(nodes, list, depth) {
-            var html = '';
-            (nodes || []).forEach(function(node) {
-                var cat = node.name;
-                var catId = makeCatId(cat);
-                catIdToName[catId] = cat;
-                var names = categoryNamesWithDescendants(cat);
-                var cTotal = countItemsInCategoryNames(names, list);
-                var catSel = selectedCats.indexOf(catId) !== -1;
-                var cIsOpen = catTreeOpen[catId] === true;
-                var bg = depth === 0 ? '#e8f5e9' : (depth === 1 ? '#f1f8e9' : '#fafafa');
-                var pad = 6 + depth * 14;
-                html += '<div style="margin-bottom:2px;">';
-                html += '<div style="padding:' + pad + 'px 6px;font-weight:' + (depth === 0 ? '700' : '600') + ';font-size:13px;display:flex;align-items:center;gap:4px;background:' + bg + ';border-radius:4px;">';
-                html += '<input type="checkbox" ' + (catSel ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleCatCheckCategory(\'' + catId + '\', this.checked)" style="margin:0;" title="Вся категория">';
-                html += '<span style="cursor:pointer;flex:1;" onclick="toggleCatNode(\'' + catId + '\')">' + (cIsOpen ? '▼' : '▶') + ' 📁 ' + esc(cat);
-                html += ' <span style="color:#666;font-weight:normal;font-size:11px;">(' + cTotal + ')</span></span>';
-                html += '</div>';
-                if (node.children && node.children.length && cIsOpen) {
-                    html += renderEstimateDbCatNodes(node.children, list, depth + 1);
-                }
-                html += '</div>';
-            });
-            return html;
-        }
-
-        function renderMaterialTypeBrandTree(tree, catKeys) {
-            var html = '';
-            var list = catalog[currentType];
-            catKeys.forEach(function(cat) {
-                var catId = makeCatId(cat);
-                catIdToName[catId] = cat;
-                var cIsOpen = catTreeOpen[catId] === true;
-                var cTotal = countItemsInCategoryNames(categoryNamesWithDescendants(cat), list);
-                if (!cTotal && tree[cat]) {
-                    Object.keys(tree[cat]).forEach(function(t) {
-                        Object.keys(tree[cat][t]).forEach(function(br) { cTotal += tree[cat][t][br]; });
-                    });
-                }
-                var catSel = selectedCats.indexOf(catId) !== -1;
-                html += '<div style="margin-bottom:2px;">';
-                html += '<div style="padding:6px 6px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:4px;background:#e8f5e9;border-radius:4px;">';
-                html += '<input type="checkbox" ' + (catSel ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleCatCheckCategory(\'' + catId + '\', this.checked)" style="margin:0;" title="Вся категория">';
-                html += '<span style="cursor:pointer;flex:1;" onclick="toggleCatNode(\'' + catId + '\')">' + (cIsOpen ? '▼' : '▶') + ' 📁 ' + esc(cat);
-                html += ' <span style="color:#666;font-weight:normal;font-size:11px;">(' + cTotal + ')</span></span>';
-                html += '</div>';
-                if (cIsOpen && tree[cat]) {
-                    html += '<div style="padding-left:16px;">';
-                    Object.keys(tree[cat]).sort().forEach(function(itype) {
-                        var typeId = makeTypeId(cat, itype);
-                        var typeSel = selectedCats.indexOf(typeId) !== -1;
-                        var tIsOpen = catTreeOpen[typeId] === true;
-                        var tTotal = 0;
-                        Object.keys(tree[cat][itype]).forEach(function(br) { tTotal += tree[cat][itype][br]; });
-                        html += '<div style="margin-bottom:1px;">';
-                        html += '<div style="padding:4px 6px;font-weight:600;font-size:12px;display:flex;align-items:center;gap:4px;">';
-                        html += '<input type="checkbox" ' + (typeSel ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleCatCheckType(\'' + typeId + '\', this.checked)" style="margin:0;" title="Весь тип">';
-                        html += '<span style="cursor:pointer;flex:1;" onclick="toggleCatNode(\'' + typeId + '\')">&nbsp;&nbsp;' + (tIsOpen ? '▼' : '▶') + ' 📂 ' + esc(itype);
-                        html += ' <span style="color:#999;font-weight:normal;font-size:11px;">(' + tTotal + ')</span></span>';
-                        html += '</div>';
-                        if (tIsOpen) {
-                            html += '<div style="padding-left:16px;">';
-                            Object.keys(tree[cat][itype]).sort().forEach(function(brand) {
-                                var brandId = makeBrandId(cat, itype, brand);
-                                var checked = selectedCats.indexOf(brandId) !== -1;
-                                html += '<label style="display:flex;align-items:center;gap:4px;padding:3px 6px;cursor:pointer;font-size:12px;">';
-                                html += '<input type="checkbox" ' + (checked?'checked':'') + ' onchange="toggleCatCheck(\'' + brandId + '\', this.checked)" style="margin:0;"> ';
-                                html += '🏷️ ' + esc(brand) + ' <span style="color:#999;">(' + tree[cat][itype][brand] + ')</span>';
-                                html += '</label>';
-                            });
-                            html += '</div>';
-                        }
-                        html += '</div>';
-                    });
-                    html += '</div>';
-                }
-                html += '</div>';
-            });
-            return html;
-        }
-
-
-        function collectDbCategoryNames(nodes, out) {
-            (nodes || []).forEach(function(node) {
-                out[node.name] = true;
-                if (node.children && node.children.length) collectDbCategoryNames(node.children, out);
-            });
-        }
-
-        function renderEstimateDbCatNodes(nodes, list, depth) {
-            var html = '';
-            (nodes || []).forEach(function(node) {
-                var cat = node.name;
-                var catId = makeCatId(cat);
-                catIdToName[catId] = cat;
-                var names = categoryNamesWithDescendants(cat);
-                var cTotal = countItemsInCategoryNames(names, list);
-                var catSel = selectedCats.indexOf(catId) !== -1;
-                var cIsOpen = catTreeOpen[catId] === true;
-                var bg = depth === 0 ? '#e8f5e9' : (depth === 1 ? '#f1f8e9' : '#fafafa');
-                var pad = 6 + depth * 14;
-                html += '<div style="margin-bottom:2px;">';
-                html += '<div style="padding:' + pad + 'px 6px;font-weight:' + (depth === 0 ? '700' : '600') + ';font-size:13px;display:flex;align-items:center;gap:4px;background:' + bg + ';border-radius:4px;">';
-                html += '<input type="checkbox" ' + (catSel ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleCatCheckCategory(\'' + catId + '\', this.checked)" style="margin:0;" title="Вся категория">';
-                html += '<span style="cursor:pointer;flex:1;" onclick="toggleCatNode(\'' + catId + '\')">' + (cIsOpen ? '▼' : '▶') + ' 📁 ' + esc(cat);
-                html += ' <span style="color:#666;font-weight:normal;font-size:11px;">(' + cTotal + ')</span></span>';
-                html += '</div>';
-                if (node.children && node.children.length && cIsOpen) {
-                    html += renderEstimateDbCatNodes(node.children, list, depth + 1);
-                }
-                html += '</div>';
-            });
-            return html;
-        }
-
-        function renderMaterialTypeBrandTree(tree, catKeys) {
-            var html = '';
-            var list = catalog[currentType];
-            catKeys.forEach(function(cat) {
-                var catId = makeCatId(cat);
-                catIdToName[catId] = cat;
-                var cIsOpen = catTreeOpen[catId] === true;
-                var cTotal = countItemsInCategoryNames(categoryNamesWithDescendants(cat), list);
-                if (!cTotal && tree[cat]) {
-                    Object.keys(tree[cat]).forEach(function(t) {
-                        Object.keys(tree[cat][t]).forEach(function(br) { cTotal += tree[cat][t][br]; });
-                    });
-                }
-                var catSel = selectedCats.indexOf(catId) !== -1;
-                html += '<div style="margin-bottom:2px;">';
-                html += '<div style="padding:6px 6px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:4px;background:#e8f5e9;border-radius:4px;">';
-                html += '<input type="checkbox" ' + (catSel ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleCatCheckCategory(\'' + catId + '\', this.checked)" style="margin:0;" title="Вся категория">';
-                html += '<span style="cursor:pointer;flex:1;" onclick="toggleCatNode(\'' + catId + '\')">' + (cIsOpen ? '▼' : '▶') + ' 📁 ' + esc(cat);
-                html += ' <span style="color:#666;font-weight:normal;font-size:11px;">(' + cTotal + ')</span></span>';
-                html += '</div>';
-                if (cIsOpen && tree[cat]) {
-                    html += '<div style="padding-left:16px;">';
-                    Object.keys(tree[cat]).sort().forEach(function(itype) {
-                        var typeId = makeTypeId(cat, itype);
-                        var typeSel = selectedCats.indexOf(typeId) !== -1;
-                        var tIsOpen = catTreeOpen[typeId] === true;
-                        var tTotal = 0;
-                        Object.keys(tree[cat][itype]).forEach(function(br) { tTotal += tree[cat][itype][br]; });
-                        html += '<div style="margin-bottom:1px;">';
-                        html += '<div style="padding:4px 6px;font-weight:600;font-size:12px;display:flex;align-items:center;gap:4px;">';
-                        html += '<input type="checkbox" ' + (typeSel ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleCatCheckType(\'' + typeId + '\', this.checked)" style="margin:0;" title="Весь тип">';
-                        html += '<span style="cursor:pointer;flex:1;" onclick="toggleCatNode(\'' + typeId + '\')">&nbsp;&nbsp;' + (tIsOpen ? '▼' : '▶') + ' 📂 ' + esc(itype);
-                        html += ' <span style="color:#999;font-weight:normal;font-size:11px;">(' + tTotal + ')</span></span>';
-                        html += '</div>';
-                        if (tIsOpen) {
-                            html += '<div style="padding-left:16px;">';
-                            Object.keys(tree[cat][itype]).sort().forEach(function(brand) {
-                                var brandId = makeBrandId(cat, itype, brand);
-                                var checked = selectedCats.indexOf(brandId) !== -1;
-                                html += '<label style="display:flex;align-items:center;gap:4px;padding:3px 6px;cursor:pointer;font-size:12px;">';
-                                html += '<input type="checkbox" ' + (checked?'checked':'') + ' onchange="toggleCatCheck(\'' + brandId + '\', this.checked)" style="margin:0;"> ';
-                                html += '🏷️ ' + esc(brand) + ' <span style="color:#999;">(' + tree[cat][itype][brand] + ')</span>';
-                                html += '</label>';
-                            });
-                            html += '</div>';
-                        }
-                        html += '</div>';
-                    });
-                    html += '</div>';
-                }
-                html += '</div>';
-            });
-            return html;
-        }
-
         function buildCatTree() {
-            var list = catalog[currentType];
-            var catType = currentType === 'material' ? 'material' : 'work';
-            var dbCats = allCategories[catType] || [];
-            var dbTree = categoryTree[catType] || [];
-            if (!list.length && !dbCats.length && !dbTree.length) return;
+            var list = getCatalogItems();
+            if (!list.length) return;
             catIdToName = {};
 
-            var html = '';
-            var useDbHierarchy = dbTree.length > 0 && catType === 'material';
+            // Строим: Категория → Тип(item_type) → Бренд
+            var tree = {};
+            list.forEach(function(item) {
+                var catName = item.category || 'Без категории';
+                var itype = item.item_type || 'Другое';
+                var brand = item.brand || 'Без бренда';
 
-            if (useDbHierarchy) {
-                html = renderEstimateDbCatNodes(dbTree, list, 0);
-                var inDb = {};
-                collectDbCategoryNames(dbTree, inDb);
-                var tree = {};
-                list.forEach(function(item) {
-                    var catName = item.category || 'Без категории';
-                    if (inDb[catName]) return;
-                    var itype = item.item_type || 'Другое';
-                    var brand = item.brand || 'Без бренда';
-                    if (!tree[catName]) tree[catName] = {};
-                    if (!tree[catName][itype]) tree[catName][itype] = {};
-                    if (!tree[catName][itype][brand]) tree[catName][itype][brand] = 0;
-                    tree[catName][itype][brand]++;
+                if (!tree[catName]) tree[catName] = {};
+                if (!tree[catName][itype]) tree[catName][itype] = {};
+                if (!tree[catName][itype][brand]) tree[catName][itype][brand] = 0;
+                tree[catName][itype][brand]++;
+            });
+
+            var html = '';
+            var catKeys = Object.keys(tree).sort();
+            catKeys.forEach(function(cat) {
+                var catId = makeCatId(cat);
+                catIdToName[catId] = cat;
+                var cIsOpen = catTreeOpen[catId] === true;
+                var cTotal = 0;
+                var types = tree[cat];
+                Object.keys(types).forEach(function(t) {
+                    Object.keys(types[t]).forEach(function(br) {
+                        cTotal += types[t][br];
+                    });
                 });
-                var orphanKeys = Object.keys(tree).sort();
-                if (orphanKeys.length) {
-                    html += '<div style="margin:8px 0 4px;font-size:11px;color:#888;">Прочие категории</div>';
-                    html += renderMaterialTypeBrandTree(tree, orphanKeys);
+
+                html += '<div style="margin-bottom:2px;">';
+                html += '<div style="cursor:pointer;padding:6px 6px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:4px;background:#e8f5e9;border-radius:4px;" onclick="toggleCatNode(\'' + catId + '\')">';
+                html += (cIsOpen ? '▼' : '▶') + ' 📁 ' + esc(cat);
+                html += ' <span style="color:#666;font-weight:normal;font-size:11px;">(' + cTotal + ')</span>';
+                html += '</div>';
+
+                if (cIsOpen) {
+                    html += '<div style="padding-left:16px;">';
+                    var typeKeys = Object.keys(types).sort();
+                    typeKeys.forEach(function(itype) {
+                        var typeId = makeTypeId(cat, itype);
+                        var typeSel = selectedCats.indexOf(typeId) !== -1;
+                        var tIsOpen = catTreeOpen[typeId] === true;
+                        var tTotal = 0;
+                        Object.keys(types[itype]).forEach(function(br) { tTotal += types[itype][br]; });
+
+                        html += '<div style="margin-bottom:1px;">';
+                        html += '<div style="padding:4px 6px;font-weight:600;font-size:12px;display:flex;align-items:center;gap:4px;">';
+                        html += '<input type="checkbox" ' + (typeSel ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleCatCheckType(\'' + typeId + '\', this.checked)" style="margin:0;" title="Весь тип">';
+                        html += '<span style="cursor:pointer;flex:1;" onclick="toggleCatNode(\'' + typeId + '\')">&nbsp;&nbsp;' + (tIsOpen ? '▼' : '▶') + ' 📂 ' + esc(itype);
+                        html += ' <span style="color:#999;font-weight:normal;font-size:11px;">(' + tTotal + ')</span></span>';
+                        html += '</div>';
+
+                        if (tIsOpen) {
+                            html += '<div style="padding-left:16px;">';
+                            var brandKeys = Object.keys(types[itype]).sort();
+                            brandKeys.forEach(function(brand) {
+                                var brandId = makeBrandId(cat, itype, brand);
+                                var checked = selectedCats.indexOf(brandId) !== -1;
+                                html += '<label style="display:flex;align-items:center;gap:4px;padding:3px 6px;cursor:pointer;font-size:12px;">';
+                                html += '<input type="checkbox" ' + (checked?'checked':'') + ' onchange="toggleCatCheck(\'' + brandId + '\', this.checked)" style="margin:0;"> ';
+                                html += '🏷️ ' + esc(brand) + ' <span style="color:#999;">(' + types[itype][brand] + ')</span>';
+                                html += '</label>';
+                            });
+                            html += '</div>';
+                        }
+                        html += '</div>';
+                    });
+                    html += '</div>';
                 }
-            } else {
-                var tree = {};
-                list.forEach(function(item) {
-                    var catName = item.category || 'Без категории';
-                    var itype = item.item_type || 'Другое';
-                    var brand = item.brand || 'Без бренда';
-                    if (!tree[catName]) tree[catName] = {};
-                    if (!tree[catName][itype]) tree[catName][itype] = {};
-                    if (!tree[catName][itype][brand]) tree[catName][itype][brand] = 0;
-                    tree[catName][itype][brand]++;
-                });
-                dbCats.forEach(function(c) {
-                    var catName = (c.name || '').trim();
-                    if (catName && !tree[catName]) tree[catName] = {};
-                });
-                html = renderMaterialTypeBrandTree(tree, Object.keys(tree).sort());
-            }
+                html += '</div>';
+            });
 
             document.getElementById('catTreeContent').innerHTML = html;
             updateCatTreeCount();
         }
-
-
 
         // Извлечение бренда из названия
         function extractBrand(name) {
@@ -838,23 +638,6 @@
             buildCatTree();
         }
 
-
-        function toggleCatCheckCategory(catId, checked) {
-            var idx = selectedCats.indexOf(catId);
-            if (checked) { if (idx === -1) selectedCats.push(catId); }
-            else { if (idx !== -1) selectedCats.splice(idx, 1); }
-            buildCatTree();
-            filterCatalog();
-        }
-
-        function toggleCatCheckType(typeId, checked) {
-            var idx = selectedCats.indexOf(typeId);
-            if (checked) { if (idx === -1) selectedCats.push(typeId); }
-            else { if (idx !== -1) selectedCats.splice(idx, 1); }
-            buildCatTree();
-            filterCatalog();
-        }
-
         function toggleCatCheck(brandId, checked) {
             var idx = selectedCats.indexOf(brandId);
             if (checked) { if (idx === -1) selectedCats.push(brandId); }
@@ -865,7 +648,7 @@
         function selectAllCats(val) {
             if (val) {
                 selectedCats = [];
-                var list = catalog[currentType];
+                var list = getCatalogItems();
                 var seen = {};
                 list.forEach(function(item) {
                     var brand = extractBrand(item.name);
@@ -1012,17 +795,14 @@
             try { await OfflineDB.init(); } catch(e) { console.error('OfflineDB init failed:', e); }
 
             // Загружаем категории и каталоги параллельно
-            await Promise.all([
-                loadCategories('material'), loadCategories('work'),
-                loadCategoryTree('material'), loadCategoryTree('work')
-            ]);
+            await Promise.all([loadCategories('material'), loadCategories('work')]);
 
             const [mRes, wRes] = await Promise.all([
                 fetch('/estimate/api/catalog/materials').then(r=>r.json()),
                 fetch('/estimate/api/catalog/works').then(r=>r.json())
             ]);
-            catalog.material = mRes;
-            catalog.work = wRes;
+            catalog.material = Array.isArray(mRes) ? mRes : [];
+            catalog.work = Array.isArray(wRes) ? wRes : [];
             catalogLoaded = true;
 
             console.log('Catalog loaded: ' + catalog.material.length + ' materials, ' + catalog.work.length + ' works');
@@ -1032,7 +812,9 @@
                 console.log('Search modal is open, refreshing...');
                 selectedCats = [];
                 catTreeOpen = {};
-                buildCatTree();
+                if (catalog[currentType].length > 0) {
+                    buildCatTree();
+                }
                 filterCatalog();
             }
 
@@ -1362,33 +1144,18 @@
             if (!catalogLoaded) {
                 document.getElementById('searchResults').innerHTML = '<div style="padding:30px;text-align:center;color:#999;">⏳ Загрузка каталога... Подождите несколько секунд и попробуйте снова.</div>';
                 document.getElementById('itemCount').textContent = '';
-            } else {
+            } else if (catalog[currentType].length > 0) {
                 selectedCats = [];
                 catTreeOpen = {};
                 buildCatTree();
                 filterCatalog();
-                if (!catalog[currentType].length && !(allCategories[currentType === 'material' ? 'material' : 'work'] || []).length) {
-                    document.getElementById('searchResults').innerHTML = '<div style="padding:30px;text-align:center;color:#999;">📦 Каталог пуст. Добавьте материалы через ⚙️ или кнопку «+ Создать».</div>';
-                    document.getElementById('itemCount').textContent = '';
-                }
+            } else {
+                document.getElementById('searchResults').innerHTML = '<div style="padding:30px;text-align:center;color:#999;">📦 Каталог пуст. Добавьте материалы через ⚙️</div>';
+                document.getElementById('itemCount').textContent = '';
             }
             setTimeout(function() { document.getElementById('searchInput').focus(); }, 100);
         }
-        function clearCatFilter() {
-            selectedCats = [];
-            document.getElementById('catTree').style.display = 'none';
-            document.getElementById('catTreeBtn').className = 'sort-btn';
-            buildCatTree();
-            filterCatalog();
-        }
-        function closeSearch() {
-            document.getElementById('searchModal').classList.remove('active');
-            document.getElementById('catModal').classList.remove('active');
-            selectedCats = [];
-            document.getElementById('searchInput').value = '';
-            document.getElementById('catTree').style.display = 'none';
-            document.getElementById('catTreeBtn').className = 'sort-btn';
-        }
+        function closeSearch() { document.getElementById('searchModal').classList.remove('active'); }
 
         function openCreateNew() {
             closeSearch();
@@ -1450,7 +1217,8 @@
                 // Перезагружаем каталог
                 var catUrl = currentType === 'material' ? '/estimate/api/catalog/materials' : '/estimate/api/catalog/works';
                 var catRes = await fetch(catUrl);
-                catalog[currentType] = await catRes.json();
+                var catData = await catRes.json();
+                catalog[currentType] = Array.isArray(catData) ? catData : [];
                 if (currentType === 'work') updateWorkDropdown();
 
                 closeCreate();
@@ -1501,7 +1269,7 @@
             console.log('filterCatalog: txt="' + txt + '", currentType=' + currentType + ', searchTab=' + searchTab);
 
             if (searchTab === 'catalog') {
-                var pool = catalog[currentType];
+                var pool = getCatalogItems();
                 console.log('filterCatalog: pool length=' + pool.length + ', selectedCats=' + JSON.stringify(selectedCats));
 
                 if (selectedCats.length > 0) {
@@ -1649,7 +1417,7 @@
 
             } else {
                 loadFavorites();
-                list = catalog[currentType].filter(function(i) {
+                list = getCatalogItems().filter(function(i) {
                     if (favoriteItems.indexOf(i.name) === -1) return false;
                     if (txt) {
                         var cleanF = txt.replace(/[()"'«»\[\]{}\/\\]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1675,11 +1443,7 @@
 
             if (list.length === 0) {
                 var msg = searchTab === 'catalog' ? 'Ничего не найдено' : searchTab === 'recent' ? 'Нет недавних материалов' : 'Нет избранных — нажмите ⭐ у материала';
-                var extra = '';
-                if (searchTab === 'catalog' && selectedCats.length > 0) {
-                    extra = '<br><button type="button" class="sort-btn" style="margin-top:12px;" onclick="clearCatFilter()">Сбросить фильтр категорий</button>';
-                }
-                div.innerHTML = '<div style="padding:30px;text-align:center;color:#999;">' + msg + extra + '<br><button type="button" class="sort-btn" style="margin-top:10px;" onclick="closeSearch()">Закрыть без выбора</button></div>';
+                div.innerHTML = '<div style="padding:30px;text-align:center;color:#999;">' + msg + '</div>';
                 countLabel.textContent = '';
                 return;
             }
@@ -2069,8 +1833,6 @@
                 loadCategories(type).then(function() {
                     openCatManager();
                     buildCategoryFilter();
-                    buildCatTree();
-                    filterCatalog();
                 });
             });
         }
@@ -2085,8 +1847,6 @@
                 loadCategories(type).then(function() {
                     openCatManager();
                     buildCategoryFilter();
-                    buildCatTree();
-                    filterCatalog();
                 });
             });
         }
@@ -3040,22 +2800,6 @@
             </div>
         </div>
     </div>
-
-
-    <script>
-(function() {
-    var sm = document.getElementById('searchModal');
-    if (sm) sm.addEventListener('click', function(e) { if (e.target === sm) closeSearch(); });
-    var cm = document.getElementById('catModal');
-    if (cm) cm.addEventListener('click', function(e) { if (e.target === cm) closeCatManager(); });
-    document.addEventListener('keydown', function(e) {
-        if (e.key !== 'Escape') return;
-        if (document.getElementById('catModal').classList.contains('active')) { closeCatManager(); return; }
-        if (document.getElementById('createModal').classList.contains('active')) { closeCreate(); return; }
-        if (document.getElementById('searchModal').classList.contains('active')) closeSearch();
-    });
-})();
-    </script>
 
 </body>
 </html>
