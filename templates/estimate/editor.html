@@ -319,8 +319,59 @@
         let currentType = 'material';
         let sortMode = 'name';
         let allCategories = { material: [], work: [] };
-        let selectedCats = []; // Выбранные категории (чекбоксы)
+        let selectedCats = []; // id узлов дерева: cat_*, *_type_*, *_br_*
         let catTreeOpen = {};  // Состояние раскрытия категорий
+        let catIdToName = {};  // cat_* → название категории (поле category у товара)
+
+        function slugCatPart(s) {
+            return String(s || '').replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+        }
+        function makeCatId(catName) {
+            return 'cat_' + slugCatPart(catName || 'Без категории');
+        }
+        function makeTypeId(catName, itype) {
+            return makeCatId(catName) + '_type_' + slugCatPart(itype || 'Другое');
+        }
+        function makeBrandId(catName, itype, brand) {
+            return makeTypeId(catName, itype) + '_br_' + slugCatPart(brand || 'Без бренда');
+        }
+        function expandCategoryNames(catName) {
+            var names = [catName];
+            var type = currentType === 'material' ? 'material' : 'work';
+            var cats = allCategories[type] || [];
+            var row = cats.find(function(c) { return c.name === catName; });
+            if (row && !row.parent_id) {
+                cats.forEach(function(c) {
+                    if (c.parent_id == row.id) names.push(c.name);
+                });
+            }
+            return names;
+        }
+        function itemMatchesSelectedCats(item) {
+            if (!selectedCats.length) return true;
+            var cat = item.category || 'Без категории';
+            var itype = item.item_type || 'Другое';
+            var brand = item.brand || 'Без бренда';
+            var brandId = makeBrandId(cat, itype, brand);
+            var typeId = makeTypeId(cat, itype);
+            var catId = makeCatId(cat);
+            if (selectedCats.indexOf(brandId) !== -1) return true;
+            if (selectedCats.indexOf(typeId) !== -1) return true;
+            if (selectedCats.indexOf(catId) !== -1) return true;
+            var si;
+            for (si = 0; si < selectedCats.length; si++) {
+                var s = selectedCats[si];
+                if (s.indexOf('cat_') !== 0 || s.indexOf('_type_') !== -1) continue;
+                var cName = catIdToName[s];
+                if (cName && expandCategoryNames(cName).indexOf(cat) !== -1) return true;
+            }
+            for (si = 0; si < selectedCats.length; si++) {
+                var s2 = selectedCats[si];
+                if (s2.indexOf('_type_') === -1 || s2.indexOf('_br_') !== -1) continue;
+                if (s2 === typeId) return true;
+            }
+            return false;
+        }
 
         // Переключение дерева категорий
         function toggleCatTree() {
@@ -349,6 +400,7 @@
         function buildCatTree() {
             var list = catalog[currentType];
             if (!list.length) return;
+            catIdToName = {};
 
             // Строим: Категория → Тип(item_type) → Бренд
             var tree = {};
@@ -366,7 +418,8 @@
             var html = '';
             var catKeys = Object.keys(tree).sort();
             catKeys.forEach(function(cat) {
-                var catId = 'cat_' + cat.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+                var catId = makeCatId(cat);
+                catIdToName[catId] = cat;
                 var cIsOpen = catTreeOpen[catId] === true;
                 var cTotal = 0;
                 var types = tree[cat];
@@ -386,22 +439,24 @@
                     html += '<div style="padding-left:16px;">';
                     var typeKeys = Object.keys(types).sort();
                     typeKeys.forEach(function(itype) {
-                        var typeId = catId + '_type_' + itype.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+                        var typeId = makeTypeId(cat, itype);
+                        var typeSel = selectedCats.indexOf(typeId) !== -1;
                         var tIsOpen = catTreeOpen[typeId] === true;
                         var tTotal = 0;
                         Object.keys(types[itype]).forEach(function(br) { tTotal += types[itype][br]; });
 
                         html += '<div style="margin-bottom:1px;">';
-                        html += '<div style="cursor:pointer;padding:4px 6px;font-weight:600;font-size:12px;display:flex;align-items:center;gap:4px;" onclick="toggleCatNode(\'' + typeId + '\')">';
-                        html += '&nbsp;&nbsp;' + (tIsOpen ? '▼' : '▶') + ' 📂 ' + esc(itype);
-                        html += ' <span style="color:#999;font-weight:normal;font-size:11px;">(' + tTotal + ')</span>';
+                        html += '<div style="padding:4px 6px;font-weight:600;font-size:12px;display:flex;align-items:center;gap:4px;">';
+                        html += '<input type="checkbox" ' + (typeSel ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleCatCheckType(\'' + typeId + '\', this.checked)" style="margin:0;" title="Весь тип">';
+                        html += '<span style="cursor:pointer;flex:1;" onclick="toggleCatNode(\'' + typeId + '\')">&nbsp;&nbsp;' + (tIsOpen ? '▼' : '▶') + ' 📂 ' + esc(itype);
+                        html += ' <span style="color:#999;font-weight:normal;font-size:11px;">(' + tTotal + ')</span></span>';
                         html += '</div>';
 
                         if (tIsOpen) {
                             html += '<div style="padding-left:16px;">';
                             var brandKeys = Object.keys(types[itype]).sort();
                             brandKeys.forEach(function(brand) {
-                                var brandId = typeId + '_br_' + brand.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
+                                var brandId = makeBrandId(cat, itype, brand);
                                 var checked = selectedCats.indexOf(brandId) !== -1;
                                 html += '<label style="display:flex;align-items:center;gap:4px;padding:3px 6px;cursor:pointer;font-size:12px;">';
                                 html += '<input type="checkbox" ' + (checked?'checked':'') + ' onchange="toggleCatCheck(\'' + brandId + '\', this.checked)" style="margin:0;"> ';
@@ -1210,27 +1265,8 @@
                 var pool = catalog[currentType];
                 console.log('filterCatalog: pool length=' + pool.length + ', selectedCats=' + JSON.stringify(selectedCats));
 
-                // Фильтр по выбранным категориям (чекбоксы на брендах)
-                if (selectedCats.length > 0 && txt === '') {
-                    pool = pool.filter(function(item) {
-                        var cat = item.category || 'Без категории';
-                        var itype = item.item_type || 'Другое';
-                        var brand = item.brand || 'Без бренда';
-                        var brandId = 'cat_' + cat.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_') + '_type_' + itype.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_') + '_br_' + brand.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
-                        return selectedCats.indexOf(brandId) !== -1;
-                    });
-                    console.log('filterCatalog: после фильтра категорий=' + pool.length);
-                } else if (selectedCats.length > 0 && txt !== '') {
-                    // При поиске тоже фильтруем по категориям
-                    var origPool = pool;
-                    pool = pool.filter(function(item) {
-                        var cat = item.category || 'Без категории';
-                        var itype = item.item_type || 'Другое';
-                        var brand = item.brand || 'Без бренда';
-                        var brandId = 'cat_' + cat.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_') + '_type_' + itype.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_') + '_br_' + brand.replace(/[^a-zA-Z0-9а-яА-ЯёЁ]/g, '_');
-                        return selectedCats.indexOf(brandId) !== -1;
-                    });
-                    console.log('filterCatalog: после фильтра категорий при поиске=' + pool.length);
+                if (selectedCats.length > 0) {
+                    pool = pool.filter(itemMatchesSelectedCats);
                 }
 
                 if (!txt) {
