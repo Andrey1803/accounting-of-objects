@@ -760,23 +760,38 @@
             else select.appendChild(opt);
         }
 
+        function clientNameFromSelectOption(clientIdNum) {
+            var sel = document.getElementById('client');
+            if (!sel || sel.selectedIndex < 0) return '';
+            var opt = sel.options[sel.selectedIndex];
+            if (!opt || String(opt.value) !== String(clientIdNum)) return '';
+            var t = String(opt.textContent || '').trim();
+            return t.replace(/\s*\(ID\s+\d+\)\s*$/i, '').trim();
+        }
+
         function resolveObjectClientFields(clientVal, editingObject) {
-            var clientIdNum = parseInt(clientVal, 10);
-            var selClient = !Number.isNaN(clientIdNum) ? clients.find(function(c) { return Number(c.id) === clientIdNum; }) : null;
-            var clientId = !Number.isNaN(clientIdNum) ? clientIdNum : null;
-            var clientName = selClient ? selClient.name : '';
-            if (editingObject) {
-                if (clientId === null && editingObject.client_id != null && editingObject.client_id !== '') {
-                    clientId = Number(editingObject.client_id);
-                    if (!clientName) {
-                        var ec = clients.find(function(c) { return Number(c.id) === clientId; });
-                        clientName = ec ? ec.name : (editingObject.client || '');
-                    }
-                } else if (!clientName && (editingObject.client || '')) {
-                    clientName = editingObject.client;
-                }
+            if (clientVal === '__new__') {
+                return { client: '', client_id: null };
             }
-            return { client: clientName, client_id: clientId };
+            var clientIdNum = parseInt(clientVal, 10);
+            var hasPick = clientVal !== '' && !Number.isNaN(clientIdNum);
+            if (hasPick) {
+                var selClient = clients.find(function(c) { return Number(c.id) === clientIdNum; });
+                var clientName = selClient ? selClient.name : clientNameFromSelectOption(clientIdNum);
+                return { client: clientName || '', client_id: clientIdNum };
+            }
+            if (clientVal === '') {
+                return { client: '', client_id: null };
+            }
+            if (editingObject && editingObject.client_id != null && editingObject.client_id !== '') {
+                var keepId = Number(editingObject.client_id);
+                var ec = clients.find(function(c) { return Number(c.id) === keepId; });
+                return {
+                    client: ec ? ec.name : (editingObject.client || ''),
+                    client_id: keepId
+                };
+            }
+            return { client: editingObject ? (editingObject.client || '') : '', client_id: null };
         }
 
         function objectClientDisplay(obj) {
@@ -805,7 +820,13 @@
         function renderClients() {
             const select = document.getElementById('client');
             const filterSelect = document.getElementById('filter-client');
+            const modalOpen = document.getElementById('modal') && document.getElementById('modal').classList.contains('active');
+            const prevClientVal = modalOpen && select ? select.value : '';
             select.innerHTML = '';
+            const emptyOpt = document.createElement('option');
+            emptyOpt.value = '';
+            emptyOpt.textContent = '-- Выберите клиента --';
+            select.appendChild(emptyOpt);
             clients.forEach(c => {
                 const opt = document.createElement('option');
                 opt.value = String(c.id);
@@ -816,6 +837,10 @@
             newOpt.value = '__new__';
             newOpt.textContent = '+ Добавить нового клиента...';
             select.appendChild(newOpt);
+            if (modalOpen && prevClientVal) {
+                ensureClientOptionInSelect(prevClientVal, '');
+                select.value = prevClientVal;
+            }
 
             filterSelect.innerHTML = '';
             const allOpt = document.createElement('option');
@@ -1064,6 +1089,35 @@
                 refreshObjectsDataAfterMutation(currentPage);
             } catch(e) {
                 console.error('Status change error:', e);
+            }
+        }
+
+        var _skipClientAutosave = false;
+
+        async function onClientChange() {
+            if (!editingId || _skipClientAutosave) return;
+            var clientVal = document.getElementById('client').value;
+            if (clientVal === '__new__') return;
+            var editingObj = objects.find(function(o) { return o.id === editingId; });
+            var clientFields = resolveObjectClientFields(clientVal, editingObj);
+            try {
+                var res = await fetchCsrf('/api/objects/' + editingId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        client: clientFields.client,
+                        client_id: clientFields.client_id
+                    })
+                });
+                if (!res.ok) return;
+                var obj = objects.find(function(o) { return o.id === editingId; });
+                if (obj) {
+                    obj.client = clientFields.client;
+                    obj.client_id = clientFields.client_id;
+                }
+                refreshObjectsDataAfterMutation(currentPage);
+            } catch (e) {
+                console.error('Client change error:', e);
             }
         }
 
@@ -1378,13 +1432,21 @@
             }
         });
 
-        // При выборе "__new__" в селекте — открываем модалку
+        // При выборе "__new__" в селекте — открываем модалку; иначе сохраняем клиента на объекте
         document.getElementById('client').addEventListener('change', function() {
             if (this.value === '__new__') {
+                _skipClientAutosave = true;
+                var prevVal = '';
+                if (editingId) {
+                    var o = objects.find(function(x) { return x.id === editingId; });
+                    prevVal = clientSelectValueForObject(o);
+                }
                 openNewClientModal();
-                // Сбрасываем select на пустое значение, пока клиент не создан
-                this.value = '';
+                this.value = prevVal || '';
+                _skipClientAutosave = false;
+                return;
             }
+            void onClientChange();
         });
 
         // Обработчики фильтров
