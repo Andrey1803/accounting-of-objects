@@ -211,7 +211,10 @@
     <div class="modal" id="searchModal">
         <div class="modal-sheet wide">
             <div class="modal-header">
-                <h2 id="modalTitle">Добавить</h2>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;">
+                    <h2 id="modalTitle" style="margin:0;">Добавить</h2>
+                    <button type="button" class="btn-close" onclick="closeSearch()" title="Закрыть (Esc)">✕</button>
+                </div>
                 <!-- Вкладки -->
                 <div style="display:flex;gap:5px;margin-bottom:8px;">
                     <button class="sort-btn active" id="tabCatalog" onclick="switchSearchTab('catalog')">📦 Каталог</button>
@@ -359,11 +362,16 @@
             if (selectedCats.indexOf(typeId) !== -1) return true;
             if (selectedCats.indexOf(catId) !== -1) return true;
             var si;
+            var catNorm = (cat || '').trim().toLowerCase();
             for (si = 0; si < selectedCats.length; si++) {
                 var s = selectedCats[si];
                 if (s.indexOf('cat_') !== 0 || s.indexOf('_type_') !== -1) continue;
                 var cName = catIdToName[s];
-                if (cName && expandCategoryNames(cName).indexOf(cat) !== -1) return true;
+                if (!cName) continue;
+                var allowed = expandCategoryNames(cName);
+                for (var ai = 0; ai < allowed.length; ai++) {
+                    if ((allowed[ai] || '').trim().toLowerCase() === catNorm) return true;
+                }
             }
             for (si = 0; si < selectedCats.length; si++) {
                 var s2 = selectedCats[si];
@@ -380,9 +388,7 @@
             if (tree.style.display === 'none') {
                 tree.style.display = 'block';
                 btn.className = 'sort-btn active';
-                if (catalog[currentType].length > 0) {
-                    buildCatTree();
-                }
+                buildCatTree();
             } else {
                 tree.style.display = 'none';
                 btn.className = 'sort-btn';
@@ -399,7 +405,9 @@
         // Построение дерева категорий: Категория → Тип → Бренд
         function buildCatTree() {
             var list = catalog[currentType];
-            if (!list.length) return;
+            var catType = currentType === 'material' ? 'material' : 'work';
+            var dbCats = allCategories[catType] || [];
+            if (!list.length && !dbCats.length) return;
             catIdToName = {};
 
             // Строим: Категория → Тип(item_type) → Бренд
@@ -413,6 +421,10 @@
                 if (!tree[catName][itype]) tree[catName][itype] = {};
                 if (!tree[catName][itype][brand]) tree[catName][itype][brand] = 0;
                 tree[catName][itype][brand]++;
+            });
+            dbCats.forEach(function(c) {
+                var catName = (c.name || '').trim();
+                if (catName && !tree[catName]) tree[catName] = {};
             });
 
             var html = '';
@@ -429,10 +441,12 @@
                     });
                 });
 
+                var catSel = selectedCats.indexOf(catId) !== -1;
                 html += '<div style="margin-bottom:2px;">';
-                html += '<div style="cursor:pointer;padding:6px 6px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:4px;background:#e8f5e9;border-radius:4px;" onclick="toggleCatNode(\'' + catId + '\')">';
-                html += (cIsOpen ? '▼' : '▶') + ' 📁 ' + esc(cat);
-                html += ' <span style="color:#666;font-weight:normal;font-size:11px;">(' + cTotal + ')</span>';
+                html += '<div style="padding:6px 6px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:4px;background:#e8f5e9;border-radius:4px;">';
+                html += '<input type="checkbox" ' + (catSel ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleCatCheckCategory(\'' + catId + '\', this.checked)" style="margin:0;" title="Вся категория">';
+                html += '<span style="cursor:pointer;flex:1;" onclick="toggleCatNode(\'' + catId + '\')">' + (cIsOpen ? '▼' : '▶') + ' 📁 ' + esc(cat);
+                html += ' <span style="color:#666;font-weight:normal;font-size:11px;">(' + cTotal + ')</span></span>';
                 html += '</div>';
 
                 if (cIsOpen) {
@@ -632,6 +646,23 @@
             buildCatTree();
         }
 
+
+        function toggleCatCheckCategory(catId, checked) {
+            var idx = selectedCats.indexOf(catId);
+            if (checked) { if (idx === -1) selectedCats.push(catId); }
+            else { if (idx !== -1) selectedCats.splice(idx, 1); }
+            buildCatTree();
+            filterCatalog();
+        }
+
+        function toggleCatCheckType(typeId, checked) {
+            var idx = selectedCats.indexOf(typeId);
+            if (checked) { if (idx === -1) selectedCats.push(typeId); }
+            else { if (idx !== -1) selectedCats.splice(idx, 1); }
+            buildCatTree();
+            filterCatalog();
+        }
+
         function toggleCatCheck(brandId, checked) {
             var idx = selectedCats.indexOf(brandId);
             if (checked) { if (idx === -1) selectedCats.push(brandId); }
@@ -806,9 +837,7 @@
                 console.log('Search modal is open, refreshing...');
                 selectedCats = [];
                 catTreeOpen = {};
-                if (catalog[currentType].length > 0) {
-                    buildCatTree();
-                }
+                buildCatTree();
                 filterCatalog();
             }
 
@@ -1138,18 +1167,33 @@
             if (!catalogLoaded) {
                 document.getElementById('searchResults').innerHTML = '<div style="padding:30px;text-align:center;color:#999;">⏳ Загрузка каталога... Подождите несколько секунд и попробуйте снова.</div>';
                 document.getElementById('itemCount').textContent = '';
-            } else if (catalog[currentType].length > 0) {
+            } else {
                 selectedCats = [];
                 catTreeOpen = {};
                 buildCatTree();
                 filterCatalog();
-            } else {
-                document.getElementById('searchResults').innerHTML = '<div style="padding:30px;text-align:center;color:#999;">📦 Каталог пуст. Добавьте материалы через ⚙️</div>';
-                document.getElementById('itemCount').textContent = '';
+                if (!catalog[currentType].length && !(allCategories[currentType === 'material' ? 'material' : 'work'] || []).length) {
+                    document.getElementById('searchResults').innerHTML = '<div style="padding:30px;text-align:center;color:#999;">📦 Каталог пуст. Добавьте материалы через ⚙️ или кнопку «+ Создать».</div>';
+                    document.getElementById('itemCount').textContent = '';
+                }
             }
             setTimeout(function() { document.getElementById('searchInput').focus(); }, 100);
         }
-        function closeSearch() { document.getElementById('searchModal').classList.remove('active'); }
+        function clearCatFilter() {
+            selectedCats = [];
+            document.getElementById('catTree').style.display = 'none';
+            document.getElementById('catTreeBtn').className = 'sort-btn';
+            buildCatTree();
+            filterCatalog();
+        }
+        function closeSearch() {
+            document.getElementById('searchModal').classList.remove('active');
+            document.getElementById('catModal').classList.remove('active');
+            selectedCats = [];
+            document.getElementById('searchInput').value = '';
+            document.getElementById('catTree').style.display = 'none';
+            document.getElementById('catTreeBtn').className = 'sort-btn';
+        }
 
         function openCreateNew() {
             closeSearch();
@@ -1436,7 +1480,11 @@
 
             if (list.length === 0) {
                 var msg = searchTab === 'catalog' ? 'Ничего не найдено' : searchTab === 'recent' ? 'Нет недавних материалов' : 'Нет избранных — нажмите ⭐ у материала';
-                div.innerHTML = '<div style="padding:30px;text-align:center;color:#999;">' + msg + '</div>';
+                var extra = '';
+                if (searchTab === 'catalog' && selectedCats.length > 0) {
+                    extra = '<br><button type="button" class="sort-btn" style="margin-top:12px;" onclick="clearCatFilter()">Сбросить фильтр категорий</button>';
+                }
+                div.innerHTML = '<div style="padding:30px;text-align:center;color:#999;">' + msg + extra + '<br><button type="button" class="sort-btn" style="margin-top:10px;" onclick="closeSearch()">Закрыть без выбора</button></div>';
                 countLabel.textContent = '';
                 return;
             }
@@ -1826,6 +1874,8 @@
                 loadCategories(type).then(function() {
                     openCatManager();
                     buildCategoryFilter();
+                    buildCatTree();
+                    filterCatalog();
                 });
             });
         }
@@ -1840,6 +1890,8 @@
                 loadCategories(type).then(function() {
                     openCatManager();
                     buildCategoryFilter();
+                    buildCatTree();
+                    filterCatalog();
                 });
             });
         }
@@ -2793,6 +2845,22 @@
             </div>
         </div>
     </div>
+
+
+    <script>
+(function() {
+    var sm = document.getElementById('searchModal');
+    if (sm) sm.addEventListener('click', function(e) { if (e.target === sm) closeSearch(); });
+    var cm = document.getElementById('catModal');
+    if (cm) cm.addEventListener('click', function(e) { if (e.target === cm) closeCatManager(); });
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Escape') return;
+        if (document.getElementById('catModal').classList.contains('active')) { closeCatManager(); return; }
+        if (document.getElementById('createModal').classList.contains('active')) { closeCreate(); return; }
+        if (document.getElementById('searchModal').classList.contains('active')) closeSearch();
+    });
+})();
+    </script>
 
 </body>
 </html>
