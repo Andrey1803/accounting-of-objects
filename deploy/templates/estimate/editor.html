@@ -2250,10 +2250,7 @@
                 alert('Оба файла должны быть в формате PDF.');
                 return;
             }
-            if (!estimateId) {
-                alert('Сначала создайте или откройте смету, чтобы импортировать материалы в список.');
-                return;
-            }
+            if (!await ensureEstimateExistsForAddingItems()) return;
 
             if (runBtn) runBtn.disabled = true;
             if (statusEl) statusEl.textContent = 'Сверяем с базой и импортируем материалы...';
