@@ -820,7 +820,13 @@
         function renderClients() {
             const select = document.getElementById('client');
             const filterSelect = document.getElementById('filter-client');
+            const modalOpen = document.getElementById('modal') && document.getElementById('modal').classList.contains('active');
+            const prevClientVal = modalOpen && select ? select.value : '';
             select.innerHTML = '';
+            const emptyOpt = document.createElement('option');
+            emptyOpt.value = '';
+            emptyOpt.textContent = '-- Выберите клиента --';
+            select.appendChild(emptyOpt);
             clients.forEach(c => {
                 const opt = document.createElement('option');
                 opt.value = String(c.id);
@@ -831,6 +837,10 @@
             newOpt.value = '__new__';
             newOpt.textContent = '+ Добавить нового клиента...';
             select.appendChild(newOpt);
+            if (modalOpen && prevClientVal) {
+                ensureClientOptionInSelect(prevClientVal, '');
+                select.value = prevClientVal;
+            }
 
             filterSelect.innerHTML = '';
             const allOpt = document.createElement('option');
