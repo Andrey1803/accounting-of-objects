@@ -1823,30 +1823,10 @@
         }
 
         function openPdfImport() {
-            window._pdfImportMode = null;
-            window._pdfMatchedData = [];
-            window._pdfUnmatchedData = [];
-            window._pdfColumnsConfirmed = false;
-            window._pdfLastFile = null;
-            if (window._pdfReparseTimer) {
-                try { clearTimeout(window._pdfReparseTimer); } catch (e) {}
-                window._pdfReparseTimer = null;
-            }
-            var mapR = document.getElementById('pdfMapBuilderRetail');
-            var mapW = document.getElementById('pdfMapBuilderWholesale');
-            if (mapR) mapR.innerHTML = '';
-            if (mapW) mapW.innerHTML = '';
-            resetPdfDropZones();
-            clearPdfColumnOverrideFields();
-            setPdfImportTab('retail');
-            const resultsDiv = document.getElementById('pdfResults');
-            if (resultsDiv) {
-                resultsDiv.innerHTML = '';
-                resultsDiv.classList.remove('pdf-import-results');
-            }
+            var statusEl = document.getElementById('pdfDualExportStatus');
+            if (statusEl) statusEl.textContent = '';
             document.getElementById('pdfImportModal').classList.add('active');
         }
-
         function _pdfIdx0ToColNumber(v) {
             if (v === null || v === undefined || v === '') return '';
             var n = Number(v);
@@ -2748,103 +2728,35 @@
             });
         }
 
-        function initPdfDragAndDrop() {
-            bindPdfDropZone('pdfDropZoneRetail', 'pdfFileInputRetail', 'retail');
-            bindPdfDropZone('pdfDropZoneWholesale', 'pdfFileInputWholesale', 'wholesale');
-        }
-
-        // Инициализация при загрузке
-        setTimeout(initPdfDragAndDrop, 500);
-
         init();
     </script>
 
-    <!-- Модальное окно импорта из PDF -->
+    <!-- Импорт из PDF: розница + опт -->
     <div class="modal" id="pdfImportModal">
-        <div class="modal-sheet wide pdf-import-sheet">
-            <div class="modal-header pdf-import-header">
-                <div>
-                    <h2>Импорт из PDF</h2>
-                    <p class="pdf-import-lead">Счёт поставщика: режим <strong>Розница</strong> — строки в смету с РРЦ из файла; режим <strong>Опт</strong> — закуп в каталоге (в PDF без НДС, в каталог с +20%), в смете для совпавших материалов обновляется закуп, при отсутствии строки — добавляется. Колонки таблицы определяются автоматически; при ошибке откройте «Настройка колонок», поправьте номера (с 1) и перетащите PDF снова.</p>
-                </div>
+        <div class="modal-sheet pdf-import-sheet" style="max-width:480px;">
+            <div class="modal-header pdf-import-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <h2 style="margin:0;">Импорт из PDF</h2>
                 <button type="button" class="btn-close" onclick="closePdfImport()" aria-label="Закрыть">✕</button>
             </div>
-            <div class="modal-body">
-                <div class="pdf-import-callout pdf-import-callout--info" style="margin-bottom:14px;">
-                    <div style="font-weight:700;margin-bottom:8px;">Быстрый режим: 2 PDF -> 2 Excel-таблицы</div>
-                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;align-items:end;">
-                        <label style="font-size:12px;color:#455a64;display:flex;flex-direction:column;gap:6px;">
-                            PDF розница
-                            <input type="file" id="pdfDualRetailInput" accept=".pdf" />
-                        </label>
-                        <label style="font-size:12px;color:#455a64;display:flex;flex-direction:column;gap:6px;">
-                            PDF опт
-                            <input type="file" id="pdfDualWholesaleInput" accept=".pdf" />
-                        </label>
-                        <button type="button" id="pdfDualExportBtn" class="pdf-import-btn-primary" onclick="buildTwoPdfTables()">Сформировать 2 таблицы</button>
-                        <button type="button" id="pdfMergedExportBtn" class="pdf-import-btn-primary" onclick="buildMergedRetailOptSheet()">Сформировать 1 объединенную</button>
-                        <button type="button" id="pdfDualImportBtn" class="pdf-import-btn-primary" onclick="importDualPdfMaterials()">Импортировать в материалы</button>
-                    </div>
-                    <div id="pdfDualExportStatus" style="margin-top:8px;font-size:12px;color:#0d47a1;"></div>
+            <div class="modal-body" style="padding-top:8px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+                    <label style="font-size:13px;color:#455a64;display:flex;flex-direction:column;gap:6px;">
+                        PDF розница
+                        <input type="file" id="pdfDualRetailInput" accept=".pdf" />
+                    </label>
+                    <label style="font-size:13px;color:#455a64;display:flex;flex-direction:column;gap:6px;">
+                        PDF опт
+                        <input type="file" id="pdfDualWholesaleInput" accept=".pdf" />
+                    </label>
                 </div>
-
-                <div class="pdf-import-tabs" role="tablist">
-                    <button type="button" class="pdf-import-tab active" data-tab="retail" id="pdfImportTabRetail" onclick="setPdfImportTab('retail')">Розница</button>
-                    <button type="button" class="pdf-import-tab" data-tab="wholesale" id="pdfImportTabWholesale" onclick="setPdfImportTab('wholesale')">Опт</button>
-                </div>
-
-                <div id="pdfImportPanelRetail" class="pdf-import-panel active">
-                    <div id="pdfDropZoneRetail" class="pdf-import-drop" data-pdf-drop-zone="1" data-import-mode="retail">
-                        <div id="pdfDropRetailInner">
-                            <div class="pdf-import-drop-icon">🛒</div>
-                            <div class="pdf-import-drop-title">Розничный счёт</div>
-                            <div class="pdf-import-drop-hint">РРЦ из PDF попадут в смету. Нажмите или перетащите файл.</div>
-                            <input type="file" id="pdfFileInputRetail" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'retail')">
-                        </div>
-                    </div>
-                    <details class="pdf-import-details">
-                        <summary>Настройка колонок (если разбор неверный)</summary>
-                        <div class="pdf-import-col-grid">
-                            <label>Наимен.<input id="pdfColNameRetail" type="number" min="1" step="1" placeholder="авто" title="Номер колонки с 1"></label>
-                            <label>Ед.<input id="pdfColUnitRetail" type="number" min="1" step="1" placeholder="авто"></label>
-                            <label>Кол-во<input id="pdfColQtyRetail" type="number" min="1" step="1" placeholder="авто"></label>
-                            <label>Розница<input id="pdfColRetailRetail" type="number" min="1" step="1" placeholder="авто"></label>
-                            <label>Закуп (необяз.)<input id="pdfColPurchaseRetail" type="number" min="1" step="1" placeholder="авто"></label>
-                        </div>
-                        <p style="margin:0 14px 14px;font-size:11px;color:#90a4ae;line-height:1.45;">После разбора номера подставятся сами. Чтобы принудительно задать сетку, укажите <strong>наименование</strong>, <strong>кол-во</strong> и <strong>розницу</strong> и загрузите PDF ещё раз.</p>
-                    </details>
-                    <div id="pdfMapBuilderRetail"></div>
-                </div>
-
-                <div id="pdfImportPanelWholesale" class="pdf-import-panel">
-                    <div id="pdfDropZoneWholesale" class="pdf-import-drop" data-pdf-drop-zone="1" data-import-mode="wholesale">
-                        <div id="pdfDropWholesaleInner">
-                            <div class="pdf-import-drop-icon">🏷️</div>
-                            <div class="pdf-import-drop-title">Оптовый счёт</div>
-                            <div class="pdf-import-drop-hint">Цены в PDF без НДС → в каталог закуп с НДС +20%. Нажмите или перетащите файл.</div>
-                            <input type="file" id="pdfFileInputWholesale" accept=".pdf" style="display:none;" onchange="handlePdfDrop(event, 'wholesale')">
-                        </div>
-                    </div>
-                    <details class="pdf-import-details">
-                        <summary>Настройка колонок (если разбор неверный)</summary>
-                        <div class="pdf-import-col-grid">
-                            <label>Наимен.<input id="pdfColNameWholesale" type="number" min="1" step="1" placeholder="авто"></label>
-                            <label>Ед.<input id="pdfColUnitWholesale" type="number" min="1" step="1" placeholder="авто"></label>
-                            <label>Кол-во<input id="pdfColQtyWholesale" type="number" min="1" step="1" placeholder="авто"></label>
-                            <label>Розница<input id="pdfColRetailWholesale" type="number" min="1" step="1" placeholder="авто"></label>
-                            <label>Закуп/Опт<input id="pdfColPurchaseWholesale" type="number" min="1" step="1" placeholder="авто"></label>
-                        </div>
-                        <p style="margin:0 14px 14px;font-size:11px;color:#90a4ae;line-height:1.45;">То же, что для розницы: при необходимости задайте три обязательных номера колонки и повторите загрузку.</p>
-                    </details>
-                    <div id="pdfMapBuilderWholesale"></div>
-                </div>
-
-                <div id="pdfResults"></div>
+                <button type="button" id="pdfDualImportBtn" class="pdf-import-btn-primary" style="width:100%;padding:14px;font-size:15px;border-radius:10px;border:none;cursor:pointer;" onclick="importDualPdfMaterials()">Импортировать в материалы</button>
+                <div id="pdfDualExportStatus" style="margin-top:12px;font-size:13px;color:#1565c0;min-height:1.2em;line-height:1.45;"></div>
             </div>
             <div class="modal-footer pdf-import-footer">
                 <button type="button" onclick="closePdfImport()">Закрыть</button>
             </div>
         </div>
     </div>
+
 </body>
 </html>
