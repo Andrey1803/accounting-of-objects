@@ -1339,34 +1339,73 @@ def api_get_categories():
         return jsonify(fetch_all("SELECT * FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name", (current_user.id, cat_type)))
     return jsonify(fetch_all("SELECT * FROM categories WHERE user_id = ? ORDER BY name", (current_user.id,)))
 
-@estimate_bp.route('/api/catalog/categories/tree', methods=['GET'])
-@login_required
-def api_get_categories_tree():
-    """Получить древовидную структуру: Категория → Тип → Бренд"""
-    cat_type = request.args.get('type', 'material')
+def _build_db_category_tree(user_id, cat_type):
+    """Дерево из таблицы categories (категория → подкатегория) со счётчиками материалов/работ."""
+    rows = fetch_all(
+        "SELECT id, name, parent_id FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name",
+        (user_id, cat_type),
+    )
+    if not rows:
+        return None
 
-    if cat_type != 'material':
-        # Для работ — плоский список категорий
-        cats = fetch_all(
-            "SELECT * FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name",
-            (current_user.id, cat_type)
-        )
-        return jsonify([{'id': c['id'], 'name': c['name'], 'children': [], 'all_descendants': []} for c in cats])
+    table = 'catalog_materials' if cat_type == 'material' else 'catalog_works'
+    items = fetch_all(f"SELECT category FROM {table} WHERE user_id = ?", (user_id,))
+    counts = {}
+    for it in items:
+        k = (it.get('category') or '').strip() or 'Без категории'
+        counts[k] = counts.get(k, 0) + 1
 
-    # Строим дерево из самих материалов: Категория → Тип(item_type) → Бренд
+    nodes = {}
+    for r in rows:
+        nodes[r['id']] = {
+            'id': r['id'],
+            'name': r['name'],
+            'parent_id': r.get('parent_id'),
+            'children': [],
+            'all_descendants': [],
+            'count': 0,
+            'is_brand_leaf': False,
+            'is_db_category': True,
+            'filter_level': '0',
+        }
+    roots = []
+    for r in rows:
+        n = nodes[r['id']]
+        pid = r.get('parent_id')
+        if pid and pid in nodes:
+            n['filter_level'] = 'sub'
+            nodes[pid]['children'].append(n)
+        else:
+            roots.append(n)
+
+    def walk(node):
+        direct = counts.get(node['name'], 0)
+        child_names = []
+        total = direct
+        for ch in node['children']:
+            sub_names, sub_total = walk(ch)
+            child_names.extend(sub_names)
+            total += sub_total
+        node['count'] = total
+        node['all_descendants'] = child_names
+        return [node['name']] + child_names, total
+
+    for root in roots:
+        walk(root)
+    return roots
+
+
+def _build_material_category_tree(user_id):
+    """Дерево из полей материалов: Категория → Тип → Бренд."""
     items = fetch_all(
         "SELECT category, item_type, brand, name, id FROM catalog_materials WHERE user_id = ?",
-        (current_user.id,)
+        (user_id,),
     )
-
-    # Строим иерархическое дерево
-    tree_map = {}  # category -> { types -> { brands -> [] } }
-
+    tree_map = {}
     for item in items:
         cat = item['category'] or 'Без категории'
         itype = item['item_type'] or 'Другое'
         brand = item['brand'] or 'Без бренда'
-
         if cat not in tree_map:
             tree_map[cat] = {}
         if itype not in tree_map[cat]:
@@ -1375,18 +1414,14 @@ def api_get_categories_tree():
             tree_map[cat][itype][brand] = []
         tree_map[cat][itype][brand].append(item)
 
-    # Преобразуем в JSON-совместимое дерево
     tree = []
     for cat_name in sorted(tree_map.keys()):
         type_branches = tree_map[cat_name]
         type_nodes = []
         cat_total = 0
-
-        # Проверяем: если только 1 тип и он совпадает с категорией — пропускаем уровень типа
         skip_type_level = False
         if len(type_branches) == 1:
             only_type = list(type_branches.keys())[0]
-            # Сравниваем: нормализуем оба названия
             norm_cat = cat_name.lower().replace(' ', '').replace('-', '')
             norm_type = only_type.lower().replace(' ', '').replace('-', '')
             if norm_cat == norm_type or norm_type in norm_cat or norm_cat in norm_type:
@@ -1396,7 +1431,6 @@ def api_get_categories_tree():
             brand_branches = type_branches[type_name]
             brand_nodes = []
             type_total = 0
-
             for brand_name in sorted(brand_branches.keys()):
                 item_list = brand_branches[brand_name]
                 type_total += len(item_list)
@@ -1406,21 +1440,18 @@ def api_get_categories_tree():
                     'count': len(item_list),
                     'children': [],
                     'all_descendants': [],
-                    'is_brand_leaf': True  # Флаг: это бренд, а не тип
+                    'is_brand_leaf': True,
                 })
-
             cat_total += type_total
             type_nodes.append({
                 'id': None,
                 'name': type_name,
                 'count': type_total,
                 'children': brand_nodes,
-                'all_descendants': [b['name'] for b in brand_nodes]
+                'all_descendants': [b['name'] for b in brand_nodes],
             })
 
-        # Если пропускаем уровень типа — бренды становятся прямыми детьми категории
         if skip_type_level and type_nodes:
-            # Все бренды из единственного типа
             all_brands = type_nodes[0]['children']
             final_children = all_brands
             all_descs = [b['name'] for b in all_brands]
@@ -1437,10 +1468,29 @@ def api_get_categories_tree():
             'count': cat_total,
             'children': final_children,
             'all_descendants': all_descs,
-            'skip_type_level': skip_type_level  # Флаг для фронтенда
+            'skip_type_level': skip_type_level,
         })
+    return tree
 
-    return jsonify(tree)
+
+@estimate_bp.route('/api/catalog/categories/tree', methods=['GET'])
+@login_required
+def api_get_categories_tree():
+    """Древовидная структура: из БД (категория → подкатегория) или из полей материалов."""
+    cat_type = request.args.get('type', 'material')
+    db_tree = _build_db_category_tree(current_user.id, cat_type)
+    if db_tree is not None:
+        return jsonify(db_tree)
+    if cat_type != 'material':
+        cats = fetch_all(
+            "SELECT * FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name",
+            (current_user.id, cat_type),
+        )
+        return jsonify([
+            {'id': c['id'], 'name': c['name'], 'children': [], 'all_descendants': [], 'count': 0}
+            for c in cats
+        ])
+    return jsonify(_build_material_category_tree(current_user.id))
 
 @estimate_bp.route('/api/catalog/categories', methods=['POST'])
 @login_required
@@ -1449,12 +1499,28 @@ def api_add_category():
     data, err = _require_json()
     if err: return err
     try:
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({"error": "Укажите название категории"}), 400
         parent_id = data.get('parent_id')
-        if not parent_id or parent_id == 'null': parent_id = None
-        cat_type = data.get('type', 'material')  # 'material' или 'work'
-        execute("INSERT INTO categories (user_id, name, parent_id, category_type) VALUES (?, ?, ?, ?)",
-                (current_user.id, data['name'], parent_id, cat_type))
-        return jsonify({"status": "ok"}), 201
+        if not parent_id or parent_id == 'null':
+            parent_id = None
+        else:
+            parent_id = int(parent_id)
+        cat_type = data.get('type', 'material')
+        if parent_id:
+            parent = fetch_one(
+                "SELECT id FROM categories WHERE id = ? AND user_id = ? AND category_type = ?",
+                (parent_id, current_user.id, cat_type),
+            )
+            if not parent:
+                return jsonify({"error": "Родительская категория не найдена"}), 400
+        new_id = execute(
+            "INSERT INTO categories (user_id, name, parent_id, category_type) VALUES (?, ?, ?, ?)",
+            (current_user.id, name, parent_id, cat_type),
+            return_id=True,
+        )
+        return jsonify({"status": "ok", "id": new_id}), 201
     except Exception as e:
         logger.error(f"Add category error: {e}")
         return jsonify({"error": "Ошибка при создании категории"}), 400

@@ -446,37 +446,21 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
             continue
         n = [_pdf_header_norm(c) for c in cells]
         name_idx = unit_idx = qty_idx = retail_idx = purchase_idx = None
-        line_total_vat_idx = None
         for i, h in enumerate(n):
             if not h:
                 continue
             if name_idx is None and (
                 'наимен' in h
                 or h in ('товар',)
-                or h.startswith('товар')
                 or 'материал' in h
                 or 'номенклат' in h
             ):
                 name_idx = i
             if unit_idx is None and (h.startswith('ед') or 'изм' in h):
                 unit_idx = i
-            if qty_idx is None and (
-                'колво' in h
-                or 'кол во' in h
-                or 'колич' in h
-                or ('кол' in h and 'чество' in h)
-                or h == 'кол'
-                or (len(h) <= 6 and h.startswith('кол') and 'коллек' not in h and 'колон' not in h)
-            ):
+            if qty_idx is None and ('колво' in h or 'кол во' in h or 'колич' in h):
                 qty_idx = i
-            if line_total_vat_idx is None and h.startswith('всего') and 'ндс' in h:
-                line_total_vat_idx = i
-            if retail_idx is None and (
-                'розн' in h
-                or 'ррц' in h
-                or h == 'цена'
-                or ('цен' in h and 'ндс' not in h and '%' not in h and 'скид' not in h)
-            ):
+            if retail_idx is None and ('розн' in h or 'ррц' in h or h == 'цена'):
                 retail_idx = i
             if purchase_idx is None and ('закуп' in h or 'опт' in h or 'себестоим' in h):
                 purchase_idx = i
@@ -484,22 +468,12 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
         # Иногда «цена» одна, но есть явный «закуп/опт»: считаем её розницей.
         if name_idx is None or qty_idx is None or retail_idx is None:
             continue
-        retail_is_line_total_vat = False
-        if (
-            str(import_mode).lower() == 'retail'
-            and line_total_vat_idx is not None
-            and line_total_vat_idx != retail_idx
-        ):
-            # Счёт с НДС: колонка «Цена» — без НДС; для сметы по РРЦ нужна сумма строки с НДС (делим на кол-во).
-            retail_idx = line_total_vat_idx
-            retail_is_line_total_vat = True
         return {
             'name_idx': name_idx,
             'unit_idx': unit_idx,
             'qty_idx': qty_idx,
             'retail_idx': retail_idx,
             'purchase_idx': purchase_idx,
-            'retail_is_line_total_vat': retail_is_line_total_vat,
             'header_cells': [str(c or '').strip() for c in cells],
         }
     return None
@@ -598,7 +572,7 @@ def _pdf_detect_table_material_row(row, import_mode='retail', header_layout=None
         if direct_purchase is not None and direct_purchase > 0:
             if list_price is None or direct_purchase < (float(list_price) * 1.25 + 0.01):
                 purchase_hint = float(direct_purchase)
-    out = {
+    return {
         'name_idx': name_idx,
         'unit_idx': unit_idx,
         'qty_idx': qty_idx,
@@ -607,9 +581,6 @@ def _pdf_detect_table_material_row(row, import_mode='retail', header_layout=None
         'purchase_from_tail': purchase_hint,
         'line_sum_from_tail': sum_hint,
     }
-    if header_layout and header_layout.get('retail_is_line_total_vat'):
-        out['retail_is_line_total_vat'] = True
-    return out
 
 
 def _pdf_table_layout_header_fallback(row, import_mode, header_layout):
@@ -668,7 +639,7 @@ def _pdf_table_layout_header_fallback(row, import_mode, header_layout):
         if direct_purchase is not None and direct_purchase > 0:
             if list_price is None or direct_purchase < (float(list_price) * 1.25 + 0.01):
                 purchase_hint = float(direct_purchase)
-    out = {
+    return {
         'name_idx': name_idx,
         'unit_idx': unit_idx,
         'qty_idx': qty_idx,
@@ -677,9 +648,6 @@ def _pdf_table_layout_header_fallback(row, import_mode, header_layout):
         'purchase_from_tail': purchase_hint,
         'line_sum_from_tail': sum_hint,
     }
-    if header_layout and header_layout.get('retail_is_line_total_vat'):
-        out['retail_is_line_total_vat'] = True
-    return out
 
 
 def _pdf_table_layout_for_row(row, import_mode, header_layout):
@@ -779,16 +747,9 @@ def _pdf_floats_in_order_from_text(s):
 
 
 def _pdf_first_matching_triplet(vals):
-    """
-    Тройка (кол-во, цена за ед., сумма) где q×p ≈ t.
-    Если подходит несколько окон подряд, берём тройку с наибольшей «суммой» c:
-    иначе часто выбирается промежуточное число (частичная сумма / НДС / скидка),
-    из‑за чего количество и цена занижаются примерно вдвое.
-    """
+    """Тройка (кол-во, цена за ед., сумма) где q×p ≈ t."""
     if len(vals) < 3:
         return None
-    best = None
-    best_c = -1.0
     for i in range(len(vals) - 2):
         a, b, c = vals[i], vals[i + 1], vals[i + 2]
         if a <= 0 or b <= 0 or c <= 0:
@@ -796,10 +757,8 @@ def _pdf_first_matching_triplet(vals):
         prod = a * b
         tol = max(0.015 * abs(c), 0.02 * abs(prod), 0.05)
         if abs(prod - c) <= tol:
-            if c > best_c + 1e-9:
-                best = (a, b, c)
-                best_c = c
-    return best
+            return (a, b, c)
+    return None
 
 
 def _pdf_qty_from_triplet(vals):
@@ -899,14 +858,6 @@ def _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=False, table_layout=No
         if ri < len(row):
             v = _pdf_parse_money_cell(row[ri])
             if v is not None and v > 0:
-                if table_layout.get('retail_is_line_total_vat'):
-                    q = _pdf_extract_qty(row, from_cart_pdf=from_cart_pdf, table_layout=table_layout)
-                    try:
-                        fq = float(q)
-                    except (TypeError, ValueError):
-                        fq = 0.0
-                    if fq > 0:
-                        return round(float(v) / fq, 4)
                 return v
     whole = ' '.join(str(c or '') for c in row)
     vals = _pdf_row_numeric_tail_vals(row)
@@ -1388,34 +1339,73 @@ def api_get_categories():
         return jsonify(fetch_all("SELECT * FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name", (current_user.id, cat_type)))
     return jsonify(fetch_all("SELECT * FROM categories WHERE user_id = ? ORDER BY name", (current_user.id,)))
 
-@estimate_bp.route('/api/catalog/categories/tree', methods=['GET'])
-@login_required
-def api_get_categories_tree():
-    """Получить древовидную структуру: Категория → Тип → Бренд"""
-    cat_type = request.args.get('type', 'material')
+def _build_db_category_tree(user_id, cat_type):
+    """Дерево из таблицы categories (категория → подкатегория) со счётчиками материалов/работ."""
+    rows = fetch_all(
+        "SELECT id, name, parent_id FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name",
+        (user_id, cat_type),
+    )
+    if not rows:
+        return None
 
-    if cat_type != 'material':
-        # Для работ — плоский список категорий
-        cats = fetch_all(
-            "SELECT * FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name",
-            (current_user.id, cat_type)
-        )
-        return jsonify([{'id': c['id'], 'name': c['name'], 'children': [], 'all_descendants': []} for c in cats])
+    table = 'catalog_materials' if cat_type == 'material' else 'catalog_works'
+    items = fetch_all(f"SELECT category FROM {table} WHERE user_id = ?", (user_id,))
+    counts = {}
+    for it in items:
+        k = (it.get('category') or '').strip() or 'Без категории'
+        counts[k] = counts.get(k, 0) + 1
 
-    # Строим дерево из самих материалов: Категория → Тип(item_type) → Бренд
+    nodes = {}
+    for r in rows:
+        nodes[r['id']] = {
+            'id': r['id'],
+            'name': r['name'],
+            'parent_id': r.get('parent_id'),
+            'children': [],
+            'all_descendants': [],
+            'count': 0,
+            'is_brand_leaf': False,
+            'is_db_category': True,
+            'filter_level': '0',
+        }
+    roots = []
+    for r in rows:
+        n = nodes[r['id']]
+        pid = r.get('parent_id')
+        if pid and pid in nodes:
+            n['filter_level'] = 'sub'
+            nodes[pid]['children'].append(n)
+        else:
+            roots.append(n)
+
+    def walk(node):
+        direct = counts.get(node['name'], 0)
+        child_names = []
+        total = direct
+        for ch in node['children']:
+            sub_names, sub_total = walk(ch)
+            child_names.extend(sub_names)
+            total += sub_total
+        node['count'] = total
+        node['all_descendants'] = child_names
+        return [node['name']] + child_names, total
+
+    for root in roots:
+        walk(root)
+    return roots
+
+
+def _build_material_category_tree(user_id):
+    """Дерево из полей материалов: Категория → Тип → Бренд."""
     items = fetch_all(
         "SELECT category, item_type, brand, name, id FROM catalog_materials WHERE user_id = ?",
-        (current_user.id,)
+        (user_id,),
     )
-
-    # Строим иерархическое дерево
-    tree_map = {}  # category -> { types -> { brands -> [] } }
-
+    tree_map = {}
     for item in items:
         cat = item['category'] or 'Без категории'
         itype = item['item_type'] or 'Другое'
         brand = item['brand'] or 'Без бренда'
-
         if cat not in tree_map:
             tree_map[cat] = {}
         if itype not in tree_map[cat]:
@@ -1424,18 +1414,14 @@ def api_get_categories_tree():
             tree_map[cat][itype][brand] = []
         tree_map[cat][itype][brand].append(item)
 
-    # Преобразуем в JSON-совместимое дерево
     tree = []
     for cat_name in sorted(tree_map.keys()):
         type_branches = tree_map[cat_name]
         type_nodes = []
         cat_total = 0
-
-        # Проверяем: если только 1 тип и он совпадает с категорией — пропускаем уровень типа
         skip_type_level = False
         if len(type_branches) == 1:
             only_type = list(type_branches.keys())[0]
-            # Сравниваем: нормализуем оба названия
             norm_cat = cat_name.lower().replace(' ', '').replace('-', '')
             norm_type = only_type.lower().replace(' ', '').replace('-', '')
             if norm_cat == norm_type or norm_type in norm_cat or norm_cat in norm_type:
@@ -1445,7 +1431,6 @@ def api_get_categories_tree():
             brand_branches = type_branches[type_name]
             brand_nodes = []
             type_total = 0
-
             for brand_name in sorted(brand_branches.keys()):
                 item_list = brand_branches[brand_name]
                 type_total += len(item_list)
@@ -1455,21 +1440,18 @@ def api_get_categories_tree():
                     'count': len(item_list),
                     'children': [],
                     'all_descendants': [],
-                    'is_brand_leaf': True  # Флаг: это бренд, а не тип
+                    'is_brand_leaf': True,
                 })
-
             cat_total += type_total
             type_nodes.append({
                 'id': None,
                 'name': type_name,
                 'count': type_total,
                 'children': brand_nodes,
-                'all_descendants': [b['name'] for b in brand_nodes]
+                'all_descendants': [b['name'] for b in brand_nodes],
             })
 
-        # Если пропускаем уровень типа — бренды становятся прямыми детьми категории
         if skip_type_level and type_nodes:
-            # Все бренды из единственного типа
             all_brands = type_nodes[0]['children']
             final_children = all_brands
             all_descs = [b['name'] for b in all_brands]
@@ -1486,10 +1468,29 @@ def api_get_categories_tree():
             'count': cat_total,
             'children': final_children,
             'all_descendants': all_descs,
-            'skip_type_level': skip_type_level  # Флаг для фронтенда
+            'skip_type_level': skip_type_level,
         })
+    return tree
 
-    return jsonify(tree)
+
+@estimate_bp.route('/api/catalog/categories/tree', methods=['GET'])
+@login_required
+def api_get_categories_tree():
+    """Древовидная структура: из БД (категория → подкатегория) или из полей материалов."""
+    cat_type = request.args.get('type', 'material')
+    db_tree = _build_db_category_tree(current_user.id, cat_type)
+    if db_tree is not None:
+        return jsonify(db_tree)
+    if cat_type != 'material':
+        cats = fetch_all(
+            "SELECT * FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name",
+            (current_user.id, cat_type),
+        )
+        return jsonify([
+            {'id': c['id'], 'name': c['name'], 'children': [], 'all_descendants': [], 'count': 0}
+            for c in cats
+        ])
+    return jsonify(_build_material_category_tree(current_user.id))
 
 @estimate_bp.route('/api/catalog/categories', methods=['POST'])
 @login_required
@@ -1498,19 +1499,34 @@ def api_add_category():
     data, err = _require_json()
     if err: return err
     try:
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({"error": "Укажите название категории"}), 400
         parent_id = data.get('parent_id')
-        if not parent_id or parent_id == 'null': parent_id = None
-        cat_type = data.get('type', 'material')  # 'material' или 'work'
-        execute("INSERT INTO categories (user_id, name, parent_id, category_type) VALUES (?, ?, ?, ?)",
-                (current_user.id, data['name'], parent_id, cat_type))
-        return jsonify({"status": "ok"}), 201
+        if not parent_id or parent_id == 'null':
+            parent_id = None
+        else:
+            parent_id = int(parent_id)
+        cat_type = data.get('type', 'material')
+        if parent_id:
+            parent = fetch_one(
+                "SELECT id FROM categories WHERE id = ? AND user_id = ? AND category_type = ?",
+                (parent_id, current_user.id, cat_type),
+            )
+            if not parent:
+                return jsonify({"error": "Родительская категория не найдена"}), 400
+        new_id = execute(
+            "INSERT INTO categories (user_id, name, parent_id, category_type) VALUES (?, ?, ?, ?)",
+            (current_user.id, name, parent_id, cat_type),
+            return_id=True,
+        )
+        return jsonify({"status": "ok", "id": new_id}), 201
     except Exception as e:
         logger.error(f"Add category error: {e}")
         return jsonify({"error": "Ошибка при создании категории"}), 400
 
 @estimate_bp.route('/api/parse-pdf', methods=['POST'])
 @login_required
-@_require_csrf
 def api_parse_pdf():
     """Загрузить PDF, извлечь таблицы, сопоставить с каталогом"""
     try:
@@ -1773,6 +1789,430 @@ def api_parse_pdf():
         import logging, traceback
         tb = traceback.format_exc()
         logging.error(f"parse_pdf error: {e}\n{tb}")
+        return jsonify({"error": str(e)}), 500
+
+
+@estimate_bp.route('/api/pdf-to-sheet', methods=['POST'])
+@login_required
+def api_pdf_to_sheet():
+    """Преобразовать PDF в полную Excel-таблицу (без урезания строк/колонок)."""
+    try:
+        import pdfplumber
+
+        if 'file' not in request.files:
+            return jsonify({"error": "Нет файла"}), 400
+
+        file = request.files['file']
+        if not file or not (file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Нужен PDF файл"}), 400
+
+        mode_raw = (request.form.get('mode') or request.args.get('mode') or 'retail').strip().lower()
+        import_mode = 'wholesale' if mode_raw in ('wholesale', 'opt', 'purchase', 'cost') else 'retail'
+
+        pdf_file = pdfplumber.open(io.BytesIO(file.read()))
+        full_text_chunks = []
+        all_rows = []
+        for page in pdf_file.pages:
+            text = page.extract_text()
+            if text:
+                full_text_chunks.append(text)
+            tables = page.extract_tables()
+            if tables:
+                for table in tables:
+                    for row in table:
+                        if row and any(cell for cell in row if cell):
+                            all_rows.append([str(c).strip() if c else '' for c in row])
+            elif text:
+                for line in text.split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = re.split(r'\t|\s{3,}', line)
+                    parsed = [p.strip() for p in parts if p.strip()]
+                    if parsed:
+                        all_rows.append(parsed)
+        pdf_file.close()
+
+        full_text = '\n'.join(full_text_chunks)
+        cart_rows = _pdf_parse_cart_ready_format(full_text)
+        from_cart_pdf = len(cart_rows) >= 1
+        if from_cart_pdf:
+            all_rows = cart_rows
+
+        if not all_rows:
+            return jsonify({"error": "Не удалось извлечь таблицу из PDF"}), 400
+
+        manual_header_layout = None if from_cart_pdf else _pdf_parse_manual_header_layout(request)
+        header_layout = manual_header_layout if manual_header_layout else (
+            None if from_cart_pdf else _pdf_detect_header_layout(all_rows, import_mode)
+        )
+
+        max_cols = 0
+        for row in all_rows:
+            if row:
+                max_cols = max(max_cols, len(row))
+        if max_cols <= 0:
+            return jsonify({"error": "В PDF нет табличных данных"}), 400
+
+        header_cells = []
+        src_cells = list((header_layout or {}).get('header_cells') or [])
+        for i in range(max_cols):
+            cell = src_cells[i] if i < len(src_cells) else ''
+            header_cells.append((str(cell).strip() if cell else '') or f'Колонка {i + 1}')
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Опт' if import_mode == 'wholesale' else 'Розница'
+
+        ws.append(header_cells)
+        for row in all_rows:
+            padded = list(row) + [''] * max(0, max_cols - len(row))
+            ws.append(padded[:max_cols])
+
+        # Лёгкое авто-растяжение колонок для удобного просмотра.
+        for col_idx in range(1, max_cols + 1):
+            max_len = len(str(header_cells[col_idx - 1] or ''))
+            for row_idx in range(2, ws.max_row + 1):
+                val = ws.cell(row=row_idx, column=col_idx).value
+                if val is None:
+                    continue
+                max_len = max(max_len, len(str(val)))
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max(max_len + 2, 10), 80)
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+
+        suffix = 'opt' if import_mode == 'wholesale' else 'retail'
+        filename = f'pdf_{suffix}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+        return send_file(
+            out,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logging.error(f"pdf_to_sheet error: {e}\n{tb}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _pdf_extract_rows_for_sheet(uploaded_file):
+    import pdfplumber
+    pdf_file = pdfplumber.open(io.BytesIO(uploaded_file.read()))
+    full_text_chunks = []
+    all_rows = []
+    for page in pdf_file.pages:
+        text = page.extract_text()
+        if text:
+            full_text_chunks.append(text)
+        tables = page.extract_tables()
+        if tables:
+            for table in tables:
+                for row in table:
+                    if row and any(cell for cell in row if cell):
+                        all_rows.append([str(c).strip() if c else '' for c in row])
+        elif text:
+            for line in text.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                parts = re.split(r'\t|\s{3,}', line)
+                parsed = [p.strip() for p in parts if p.strip()]
+                if parsed:
+                    all_rows.append(parsed)
+    pdf_file.close()
+    full_text = '\n'.join(full_text_chunks)
+    cart_rows = _pdf_parse_cart_ready_format(full_text)
+    if len(cart_rows) >= 1:
+        return cart_rows
+    return all_rows
+
+
+def _to_float_ru(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    s = s.replace('\u00a0', ' ').replace(' ', '').replace(',', '.')
+    s = re.sub(r'[^0-9.\-]', '', s)
+    if not s:
+        return None
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+@estimate_bp.route('/api/pdf-merge-retail-wholesale-sheet', methods=['POST'])
+@login_required
+def api_pdf_merge_retail_wholesale_sheet():
+    """
+    Объединение двух PDF в одну таблицу:
+    - база: розничная таблица;
+    - 7-я колонка: заголовок "Опт";
+    - ниже: значения из 6-й колонки оптового PDF, увеличенные на 20%.
+    """
+    try:
+        retail_file = request.files.get('retail_file')
+        wholesale_file = request.files.get('wholesale_file')
+        if not retail_file or not wholesale_file:
+            return jsonify({"error": "Нужны два файла: retail_file и wholesale_file"}), 400
+        if not (retail_file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Файл розницы должен быть PDF"}), 400
+        if not (wholesale_file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Файл опта должен быть PDF"}), 400
+
+        retail_rows = _pdf_extract_rows_for_sheet(retail_file)
+        wholesale_rows = _pdf_extract_rows_for_sheet(wholesale_file)
+        if not retail_rows:
+            return jsonify({"error": "Не удалось извлечь таблицу из PDF розницы"}), 400
+
+        retail_mode = 'retail'
+        retail_header_layout = _pdf_detect_header_layout(retail_rows, retail_mode)
+
+        retail_max_cols = 0
+        for row in retail_rows:
+            if row:
+                retail_max_cols = max(retail_max_cols, len(row))
+        if retail_max_cols < 7:
+            retail_max_cols = 7
+
+        header_cells = []
+        src_cells = list((retail_header_layout or {}).get('header_cells') or [])
+        for i in range(retail_max_cols):
+            cell = src_cells[i] if i < len(src_cells) else ''
+            header_cells.append((str(cell).strip() if cell else '') or f'Колонка {i + 1}')
+        header_cells[6] = 'Опт'
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Розница+Опт'
+        ws.append(header_cells)
+
+        wholesale_col_index = 5  # 6-я колонка в терминах пользователя
+        wholesale_data_row_offset = 1  # пропускаем строку-заголовок в оптовой таблице
+        for i, retail_row in enumerate(retail_rows):
+            row_out = list(retail_row) + [''] * max(0, retail_max_cols - len(retail_row))
+            row_out = row_out[:retail_max_cols]
+
+            wholesale_src_val = ''
+            w_idx = i + wholesale_data_row_offset
+            if w_idx < len(wholesale_rows):
+                wrow = wholesale_rows[w_idx] or []
+                if wholesale_col_index < len(wrow):
+                    wholesale_src_val = wrow[wholesale_col_index]
+            wholesale_num = _to_float_ru(wholesale_src_val)
+            if wholesale_num is not None:
+                row_out[6] = round(wholesale_num * 1.2, 4)
+            else:
+                row_out[6] = ''
+
+            ws.append(row_out)
+
+        for col_idx in range(1, retail_max_cols + 1):
+            max_len = len(str(header_cells[col_idx - 1] or ''))
+            for row_idx in range(2, ws.max_row + 1):
+                val = ws.cell(row=row_idx, column=col_idx).value
+                if val is None:
+                    continue
+                max_len = max(max_len, len(str(val)))
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max(max_len + 2, 10), 80)
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+        filename = f'pdf_merged_retail_opt_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+        return send_file(
+            out,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logging.error(f"pdf_merge_retail_wholesale_sheet error: {e}\n{tb}")
+        return jsonify({"error": str(e)}), 500
+
+
+@estimate_bp.route('/api/pdf-import-dual-materials', methods=['POST'])
+@login_required
+def api_pdf_import_dual_materials():
+    """
+    Импорт материалов из двух PDF (розница + опт):
+    - формирует единый список материалов,
+    - сверяет с каталогом,
+    - добавляет отсутствующие,
+    - добавляет материалы в смету (если передан estimate_id).
+    """
+    try:
+        retail_file = request.files.get('retail_file')
+        wholesale_file = request.files.get('wholesale_file')
+        if not retail_file or not wholesale_file:
+            return jsonify({"error": "Нужны два файла: retail_file и wholesale_file"}), 400
+        if not (retail_file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Файл розницы должен быть PDF"}), 400
+        if not (wholesale_file.filename or '').lower().endswith('.pdf'):
+            return jsonify({"error": "Файл опта должен быть PDF"}), 400
+
+        estimate_id_raw = (request.form.get('estimate_id') or '').strip()
+        estimate_id = int(estimate_id_raw) if estimate_id_raw.isdigit() else None
+        if estimate_id is not None:
+            est = fetch_one("SELECT id FROM estimates WHERE id = ? AND user_id = ?", (estimate_id, current_user.id))
+            if not est:
+                return jsonify({"error": "Смета не найдена"}), 404
+
+        retail_rows = _pdf_extract_rows_for_sheet(retail_file)
+        wholesale_rows = _pdf_extract_rows_for_sheet(wholesale_file)
+        if not retail_rows:
+            return jsonify({"error": "Не удалось извлечь таблицу из PDF розницы"}), 400
+
+        retail_header_layout = _pdf_detect_header_layout(retail_rows, 'retail')
+        wholesale_header_layout = _pdf_detect_header_layout(wholesale_rows, 'wholesale') if wholesale_rows else None
+        wholesale_data_row_offset = 1
+
+        catalog_items = fetch_all(
+            "SELECT id, name, article, brand, category, item_type, retail_price, purchase_price, wholesale_price FROM catalog_materials WHERE user_id = ?",
+            (current_user.id,),
+        )
+        catalog_by_norm_name = {}
+        for it in catalog_items:
+            key = _pdf_normalize_name_for_index(it.get('name') or '')
+            if key and key not in catalog_by_norm_name:
+                catalog_by_norm_name[key] = it
+
+        materials = []
+        for i, row in enumerate(retail_rows):
+            if not row or all(not str(c or '').strip() for c in row):
+                continue
+            row_text = ' '.join(str(cell or '') for cell in row).strip()
+            if len(row_text) < 3:
+                continue
+            if _PDF_HEADER_START.search(row_text) or _PDF_TOTALS_ROW.search(row_text):
+                continue
+
+            retail_layout = _pdf_table_layout_for_row(row, 'retail', retail_header_layout)
+            if retail_layout:
+                name = str(row[retail_layout['name_idx']] or '').strip()
+            else:
+                name = _pdf_row_product_title(row_text)
+            if not name or len(name) < 3:
+                continue
+
+            qty = None
+            if retail_layout and retail_layout.get('qty_idx') is not None:
+                q_idx = int(retail_layout.get('qty_idx'))
+                if 0 <= q_idx < len(row):
+                    qty = _to_float_ru(row[q_idx])
+            if qty is None and len(row) > 2:
+                # Страховка для частого формата счетов: количество в 3-й колонке.
+                qty = _to_float_ru(row[2])
+            if qty is None:
+                qty = _pdf_sanitize_qty(_pdf_extract_qty(row, False, retail_layout), 0, 0)
+            qty = float(qty or 0)
+            if qty <= 0:
+                qty = 1.0
+
+            unit = _pdf_extract_unit(row, retail_layout)
+            if (not unit or str(unit).strip() == '') and retail_layout and retail_layout.get('unit_idx') is not None:
+                u_idx = int(retail_layout.get('unit_idx'))
+                if 0 <= u_idx < len(row):
+                    unit = str(row[u_idx] or '').strip()
+
+            retail_price = None
+            if retail_layout and retail_layout.get('retail_idx') is not None:
+                r_idx = int(retail_layout.get('retail_idx'))
+                if 0 <= r_idx < len(row):
+                    retail_price = _to_float_ru(row[r_idx])
+            if retail_price is None and len(row) > 4:
+                retail_price = _to_float_ru(row[4])
+            if retail_price is None:
+                retail_price = _pdf_extract_pdf_retail_unit_price(row, False, retail_layout)
+
+            wholesale_price = None
+            w_idx = i + wholesale_data_row_offset
+            if w_idx < len(wholesale_rows):
+                wrow = wholesale_rows[w_idx] or []
+                # Для режима "2 PDF" берем опт строго из колонки цены (без эвристик),
+                # чтобы не перепутать с колонкой количества.
+                wholesale_src_idx = 5  # 6-я колонка (как согласовано)
+                src = wrow[wholesale_src_idx] if len(wrow) > wholesale_src_idx else None
+                p = _to_float_ru(src)
+                if p is not None:
+                    wholesale_price = round(p * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4)
+
+            retail_price = float(retail_price or 0)
+            wholesale_price = float(wholesale_price or 0)
+            if retail_price <= 0 and wholesale_price <= 0:
+                continue
+            if retail_price <= 0 and wholesale_price > 0:
+                retail_price = wholesale_price
+
+            materials.append({
+                'name': name,
+                'unit': unit or 'шт',
+                'qty': float(qty or 1),
+                'retail_price': round(retail_price, 4),
+                'wholesale_price': round(wholesale_price, 4),
+            })
+
+        if not materials:
+            return jsonify({"error": "Не удалось собрать материалы из двух PDF"}), 400
+
+        added_to_catalog = 0
+        updated_in_catalog = 0
+        added_to_estimate = 0
+
+        for m in materials:
+            norm_key = _pdf_normalize_name_for_index(m['name'])
+            existing = catalog_by_norm_name.get(norm_key) if norm_key else None
+            if existing:
+                execute(
+                    """UPDATE catalog_materials
+                       SET retail_price = ?, purchase_price = ?, wholesale_price = ?, unit = ?, use_count = COALESCE(use_count,0)+1
+                       WHERE id = ? AND user_id = ?""",
+                    (m['retail_price'], m['wholesale_price'], m['wholesale_price'], m['unit'], existing['id'], current_user.id),
+                )
+                catalog_id = existing['id']
+                updated_in_catalog += 1
+            else:
+                catalog_id = execute(
+                    """INSERT INTO catalog_materials
+                       (user_id, name, unit, category, article, brand, item_type, purchase_price, retail_price, wholesale_price, min_wholesale_qty, description, use_count)
+                       VALUES (?, ?, ?, '', '', '', 'material', ?, ?, ?, 10, '', 1)""",
+                    (current_user.id, m['name'], m['unit'], m['wholesale_price'], m['retail_price'], m['wholesale_price']),
+                    return_id=True,
+                )
+                added_to_catalog += 1
+                if norm_key:
+                    catalog_by_norm_name[norm_key] = {'id': catalog_id, 'name': m['name']}
+
+            if estimate_id is not None:
+                total = m['retail_price'] * m['qty']
+                profit = (m['retail_price'] - m['wholesale_price']) * m['qty']
+                execute(
+                    """INSERT INTO estimate_items
+                       (estimate_id, section, name, unit, quantity, price_type, price, purchase_price, wholesale_price, total, material_profit, sort_order)
+                       VALUES (?, 'material', ?, ?, ?, 'retail', ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order),0)+1 FROM estimate_items WHERE estimate_id=?))""",
+                    (estimate_id, m['name'], m['unit'], m['qty'], m['retail_price'], m['wholesale_price'], m['wholesale_price'], total, profit, estimate_id),
+                )
+                added_to_estimate += 1
+
+        return jsonify({
+            "ok": True,
+            "materials_count": len(materials),
+            "added_to_catalog": added_to_catalog,
+            "updated_in_catalog": updated_in_catalog,
+            "added_to_estimate": added_to_estimate,
+            "estimate_id": estimate_id,
+        })
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logging.error(f"pdf_import_dual_materials error: {e}\n{tb}")
         return jsonify({"error": str(e)}), 500
 
 def _opt_config_path():

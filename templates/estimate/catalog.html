@@ -27,6 +27,11 @@
 
         /* Заголовок в сайдбаре */
         .sidebar h3 { font-size: 14px; color: #2E75B6; margin-bottom: 8px; padding: 5px; }
+        .sidebar-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        .sidebar-toolbar .btn-cat { padding: 5px 10px; font-size: 12px; flex: 1; min-width: 90px; border: none; border-radius: 6px; cursor: pointer; }
+        .sidebar-toolbar .btn-cat-root { background: #2E75B6; color: #fff; }
+        .sidebar-toolbar .btn-cat-sub { background: #5e35b1; color: #fff; }
+        .sidebar-toolbar .btn-cat-sub:disabled { opacity: 0.45; cursor: not-allowed; }
 
         /* Поиск (утилита, используется и в sidebar, и в content) */
         .srch { width: 100%; padding: 7px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 8px; font-size: 13px; }
@@ -78,6 +83,10 @@
             <div class="sidebar" id="sidebar">
                 <input type="text" class="srch" id="cat-srch" placeholder="Поиск категории...">
                 <h3 id="sb-title">Категории</h3>
+                <div class="sidebar-toolbar">
+                    <button type="button" class="btn-cat btn-cat-root" onclick="openCatManager(null)">+ Категория</button>
+                    <button type="button" class="btn-cat btn-cat-sub" id="btnAddSubcat" onclick="openCatManager(selectedDbCatId)" disabled>+ Подкатегория</button>
+                </div>
                 <div id="cat-list"></div>
                 <div id="tree-view" class="tree-view"></div>
             </div>
@@ -122,7 +131,7 @@
                     <select id="f-unit"><option>шт</option><option>м</option><option>м²</option><option>м³</option><option>кг</option><option>т</option><option>л</option><option>компл</option><option>усл</option><option>ч</option></select>
                 </div>
                 <div class="fg"><label>Бренд</label><input type="text" id="f-brand"></div>
-                <div class="fg"><label>Категория</label><input type="text" id="f-cat"></div>
+                <div class="fg"><label>Категория</label><select id="f-cat"></select></div>
             </div>
             <div class="frow" id="pRowMat">
                 <div class="fg"><label>Закупка</label><input type="number" step="0.01" id="f-purch"></div>
@@ -137,8 +146,24 @@
         </div>
     </div>
 
+    <div class="modal" id="catModal">
+        <div class="modal-content">
+            <h2 style="margin-bottom:12px;color:#2E75B6;">Управление категориями</h2>
+            <div class="fg"><label>Название</label><input type="text" id="newCatName" placeholder="Название категории..."></div>
+            <div class="fg" id="newCatParentRow"><label>Родительская</label>
+                <select id="newCatParent"><option value="">Корневая категория</option></select>
+            </div>
+            <button class="btn btn-add" style="margin-bottom:12px;" onclick="addCatCategory()">+ Добавить</button>
+            <div id="catList" style="max-height:220px;overflow-y:auto;border:1px solid #eee;border-radius:6px;"></div>
+            <div class="modal-actions">
+                <button class="btn" style="background:#999" onclick="closeCatManager()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let curType='mat', curCat='', curCatDescendants=[], curFilterType='', allData=[], categoryTree=[], currentPath=[];
+        let dbCategories=[], selectedDbCatId=null, catPresetParentId=null;
 
         function csrf(){ const m=document.querySelector('meta[name="csrf-token"]'); return m?m.getAttribute('content'):''; }
         function num(v){
@@ -179,31 +204,30 @@
         }
 
         function switchType(t){
-            curType=t; curCat=''; currentPath=[];
+            curType=t; curCat=''; currentPath=[]; selectedDbCatId=null;
             document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',(t==='mat'&&i===0)||(t==='work'&&i===1)));
             document.getElementById('item-srch').value='';
             loadData();
         }
 
+        function catalogCatType(){ return curType==='mat'?'material':'work'; }
+
         async function loadData(){
             const urlMat='/estimate/api/catalog/materials';
             const urlWork='/estimate/api/catalog/works';
             const urlTree='/estimate/api/catalog/categories/tree';
+            const catType=catalogCatType();
             try{
-                // Загружаем данные параллельно
-                const [dataRes, treeRes] = await Promise.all([
+                const [dataRes, treeRes, catRes] = await Promise.all([
                     fetch(curType==='mat'?urlMat:urlWork),
-                    curType==='mat' ? fetch(urlTree+'?type=material') : Promise.resolve(null)
+                    fetch(urlTree+'?type='+catType),
+                    fetch('/estimate/api/catalog/categories?type='+catType)
                 ]);
-                
                 if(!dataRes.ok) throw new Error('HTTP '+dataRes.status);
                 allData=await dataRes.json();
-                
-                // Загружаем дерево категорий
-                if(treeRes && treeRes.ok) {
-                    categoryTree = await treeRes.json();
-                }
-                
+                categoryTree = treeRes.ok ? await treeRes.json() : [];
+                dbCategories = catRes.ok ? await catRes.json() : [];
+                updateSubcatButton();
                 renderCatGrid();
                 renderTreeView();
                 renderItems();
@@ -245,9 +269,8 @@
             const treeContainer = document.getElementById('tree-view');
             const flatList = document.getElementById('cat-list');
             
-            if(curType==='work' || !categoryTree.length) {
+            if(!categoryTree.length) {
                 treeContainer.innerHTML = '';
-                // Для работ показываем плоский список
                 renderFlatCategories();
                 return;
             }
@@ -278,17 +301,19 @@
                     icon = '📦';
                 }
 
-                // Определяем уровень для фильтрации
-                let filterLevel;
-                if(isBrand) filterLevel = '2';
-                else if(depth === 0) filterLevel = '0';
-                else filterLevel = '1';
+                let filterLevel = node.filter_level;
+                if(!filterLevel) {
+                    if(isBrand) filterLevel = '2';
+                    else if(depth === 0) filterLevel = '0';
+                    else filterLevel = '1';
+                }
+                const nodeId = node.id != null ? node.id : 'null';
 
                 const countBadge = node.count ? `<span class="tree-count">${node.count}</span>` : '';
 
                 html += `<div class="tree-node">
                     <span class="${toggleClass}" onclick="toggleTreeNode(this)">&#9654;</span>
-                    <span class="${labelClass}" onclick="selectCategory('${esc(node.name).replace(/'/g,"\\'")}', '${filterLevel}')">${icon} ${esc(node.name)}</span>
+                    <span class="${labelClass}" onclick="selectCategory('${esc(node.name).replace(/'/g,"\\'")}', '${filterLevel}', ${nodeId})">${icon} ${esc(node.name)}</span>
                     ${countBadge}
                     ${hasChildren ? `<div class="tree-children">${renderTreeNodes(node.children, isBrand ? 2 : depth+1)}</div>` : ''}
                 </div>`;
@@ -358,6 +383,8 @@
             curCat = '';
             curCatDescendants = [];
             curFilterType = '';
+            selectedDbCatId = null;
+            updateSubcatButton();
             document.getElementById('item-srch').value = '';
             updateBreadcrumbs();
             renderItems();
@@ -385,11 +412,21 @@
             return findDescs(categoryTree);
         }
 
-        function selectCategory(name, depth) { selCat(name, depth); }
+        function updateSubcatButton() {
+            var btn = document.getElementById('btnAddSubcat');
+            if (!btn) return;
+            if (!selectedDbCatId) { btn.disabled = true; return; }
+            var rec = dbCategories.find(function(c){ return c.id == selectedDbCatId; });
+            btn.disabled = !!(rec && rec.parent_id);
+        }
 
-        function selCat(c, depth){
+        function selectCategory(name, depth, catId) { selCat(name, depth, catId); }
+
+        function selCat(c, depth, catId){
             curCat = c;
-            curFilterType = depth !== undefined ? depth : '';  // '0'=категория, '1'=тип, '2'=бренд
+            curFilterType = depth !== undefined ? depth : '';
+            selectedDbCatId = (catId && catId !== 'null') ? catId : null;
+            updateSubcatButton();
             curCatDescendants = [];
             // Ищем категорию в дереве и берём всех потомков
             function findDescs(nodes) {
@@ -435,8 +472,9 @@
                     // Клик на тип: фильтруем по item_type
                     items = items.filter(function(d){ return (d.item_type || 'Другое') === curCat; });
                 } else if(curFilterType === '2') {
-                    // Клик на бренд: фильтруем по brand
                     items = items.filter(function(d){ return (d.brand || 'Без бренда') === curCat; });
+                } else if(curFilterType === 'sub') {
+                    items = items.filter(function(d){ return (d.category || '') === curCat; });
                 }
             }
             if(q){
@@ -509,11 +547,33 @@
             tb.innerHTML=html;
         }
 
+        function fillCategorySelect(selectedName) {
+            var sel = document.getElementById('f-cat');
+            var seen = {};
+            sel.innerHTML = '<option value="">Без категории</option>';
+            function addOpt(val, label) {
+                if (!val || seen[val]) return;
+                seen[val] = true;
+                var o = document.createElement('option');
+                o.value = val;
+                o.textContent = label;
+                if (selectedName === val || (!selectedName && curCat === val)) o.selected = true;
+                sel.appendChild(o);
+            }
+            dbCategories.filter(function(c){ return !c.parent_id; }).forEach(function(r) {
+                addOpt(r.name, r.name);
+                dbCategories.filter(function(c){ return c.parent_id == r.id; }).forEach(function(sub) {
+                    addOpt(sub.name, '— ' + sub.name);
+                });
+            });
+            allData.forEach(function(d) { addOpt((d.category || '').trim(), (d.category || '').trim()); });
+        }
+
         function openAdd(){
             document.getElementById('mTitle').textContent='Добавить';
-            ['f-id','f-art','f-name','f-brand','f-cat','f-type','f-purch','f-retail','f-wprice'].forEach(function(id){ document.getElementById(id).value=''; });
+            ['f-id','f-art','f-name','f-brand','f-type','f-purch','f-retail','f-wprice'].forEach(function(id){ document.getElementById(id).value=''; });
             document.getElementById('f-unit').value='шт';
-            document.getElementById('f-cat').value=curCat||'';
+            fillCategorySelect(curCat || '');
             document.getElementById('pRowMat').style.display=curType==='mat'?'flex':'none';
             document.getElementById('pRowWork').style.display=curType==='work'?'block':'none';
             document.getElementById('editModal').classList.add('active');
@@ -527,7 +587,7 @@
             document.getElementById('f-art').value=d.article||'';
             document.getElementById('f-name').value=d.name||'';
             document.getElementById('f-brand').value=d.brand||'';
-            document.getElementById('f-cat').value=d.category||'';
+            fillCategorySelect(d.category||'');
             document.getElementById('f-type').value=d.item_type||'';
             document.getElementById('f-unit').value=d.unit||'шт';
             if(curType==='mat'){
@@ -571,6 +631,96 @@
 
         function closeModal(){ document.getElementById('editModal').classList.remove('active'); }
         document.getElementById('editModal').addEventListener('click',function(e){ if(e.target.id==='editModal') closeModal(); });
+
+        function openCatManager(presetParentId) {
+            catPresetParentId = presetParentId;
+            renderCatModal();
+            document.getElementById('catModal').classList.add('active');
+            if (presetParentId) {
+                document.getElementById('newCatParent').value = String(presetParentId);
+                document.getElementById('newCatName').focus();
+            }
+        }
+        function closeCatManager() {
+            document.getElementById('catModal').classList.remove('active');
+            catPresetParentId = null;
+        }
+        function renderCatModal() {
+            var sel = document.getElementById('newCatParent');
+            sel.innerHTML = '<option value="">Корневая категория</option>';
+            dbCategories.filter(function(c){ return !c.parent_id; }).forEach(function(c) {
+                var o = document.createElement('option');
+                o.value = c.id;
+                o.textContent = c.name;
+                sel.appendChild(o);
+            });
+            if (catPresetParentId) sel.value = String(catPresetParentId);
+
+            var list = document.getElementById('catList');
+            list.innerHTML = '';
+            if (!dbCategories.length) {
+                list.innerHTML = '<div style="padding:15px;text-align:center;color:#999;">Нет категорий</div>';
+                return;
+            }
+            function renderTree(parentId, level) {
+                dbCategories.filter(function(c){ return c.parent_id == parentId; }).forEach(function(ch) {
+                    var d = document.createElement('div');
+                    d.style.cssText = 'display:flex;justify-content:space-between;padding:'+(6+level*15)+'px 10px;border-bottom:1px solid #eee;font-size:13px;';
+                    var sp = document.createElement('span');
+                    sp.textContent = (level > 0 ? '— ' : '') + ch.name;
+                    d.appendChild(sp);
+                    var btn = document.createElement('button');
+                    btn.textContent = '✕';
+                    btn.style.cssText = 'background:none;border:none;color:#f44336;cursor:pointer;font-size:14px;';
+                    btn.onclick = function(){ deleteCatCategory(ch.id); };
+                    d.appendChild(btn);
+                    list.appendChild(d);
+                    renderTree(ch.id, level + 1);
+                });
+            }
+            dbCategories.filter(function(c){ return !c.parent_id; }).forEach(function(r) {
+                var d = document.createElement('div');
+                d.style.cssText = 'display:flex;justify-content:space-between;padding:8px 10px;border-bottom:1px solid #eee;font-size:13px;font-weight:bold;';
+                var sp = document.createElement('span');
+                sp.textContent = r.name;
+                d.appendChild(sp);
+                var btn = document.createElement('button');
+                btn.textContent = '✕';
+                btn.style.cssText = 'background:none;border:none;color:#f44336;cursor:pointer;font-size:14px;';
+                btn.onclick = function(){ deleteCatCategory(r.id); };
+                d.appendChild(btn);
+                list.appendChild(d);
+                renderTree(r.id, 1);
+            });
+        }
+        async function addCatCategory() {
+            var name = document.getElementById('newCatName').value.trim();
+            var parentId = document.getElementById('newCatParent').value || null;
+            if (!name) { alert('Укажите название'); return; }
+            try {
+                var r = await fetch('/estimate/api/catalog/categories', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf() },
+                    body: JSON.stringify({ name: name, parent_id: parentId, type: catalogCatType() })
+                });
+                if (!r.ok) { var e = await r.json(); alert(e.error || 'Ошибка'); return; }
+                document.getElementById('newCatName').value = '';
+                await loadData();
+                renderCatModal();
+            } catch (e) { alert('Ошибка: ' + e.message); }
+        }
+        async function deleteCatCategory(id) {
+            if (!confirm('Удалить категорию?')) return;
+            await fetch('/estimate/api/catalog/categories/' + id, {
+                method: 'DELETE',
+                headers: { 'X-CSRF-Token': csrf() }
+            });
+            await loadData();
+            renderCatModal();
+        }
+        document.getElementById('catModal').addEventListener('click', function(e) {
+            if (e.target.id === 'catModal') closeCatManager();
+        });
 
         loadData();
     </script>
