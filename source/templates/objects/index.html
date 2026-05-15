@@ -739,12 +739,44 @@
             if (!obj) return '';
             if (obj.client_id != null && obj.client_id !== '') {
                 var idNum = Number(obj.client_id);
-                if (!Number.isNaN(idNum) && clients.some(function(c) { return Number(c.id) === idNum; }))
-                    return String(idNum);
+                if (!Number.isNaN(idNum)) return String(idNum);
             }
             var matches = clients.filter(function(c) { return (c.name || '') === (obj.client || ''); });
             if (matches.length === 1) return String(matches[0].id);
             return '';
+        }
+
+        function ensureClientOptionInSelect(clientId, clientName) {
+            if (clientId == null || clientId === '') return;
+            var select = document.getElementById('client');
+            if (!select) return;
+            var idStr = String(clientId);
+            if (Array.from(select.options).some(function(o) { return o.value === idStr; })) return;
+            var opt = document.createElement('option');
+            opt.value = idStr;
+            opt.textContent = (clientName || 'Клиент') + ' (ID ' + clientId + ')';
+            var newOpt = select.querySelector('option[value="__new__"]');
+            if (newOpt) select.insertBefore(opt, newOpt);
+            else select.appendChild(opt);
+        }
+
+        function resolveObjectClientFields(clientVal, editingObject) {
+            var clientIdNum = parseInt(clientVal, 10);
+            var selClient = !Number.isNaN(clientIdNum) ? clients.find(function(c) { return Number(c.id) === clientIdNum; }) : null;
+            var clientId = !Number.isNaN(clientIdNum) ? clientIdNum : null;
+            var clientName = selClient ? selClient.name : '';
+            if (editingObject) {
+                if (clientId === null && editingObject.client_id != null && editingObject.client_id !== '') {
+                    clientId = Number(editingObject.client_id);
+                    if (!clientName) {
+                        var ec = clients.find(function(c) { return Number(c.id) === clientId; });
+                        clientName = ec ? ec.name : (editingObject.client || '');
+                    }
+                } else if (!clientName && (editingObject.client || '')) {
+                    clientName = editingObject.client;
+                }
+            }
+            return { client: clientName, client_id: clientId };
         }
 
         function objectClientDisplay(obj) {
@@ -965,6 +997,7 @@
                 objectWorkDaysEdit = parseWorkDatesFromObject(obj).slice();
                 renderWorkDaysEditor();
                 document.getElementById('name').value = obj.name;
+                ensureClientOptionInSelect(obj.client_id, obj.client);
                 document.getElementById('client').value = clientSelectValueForObject(obj);
                 document.getElementById('status').value = obj.status;
                 document.getElementById('advance').value = obj.advance;
@@ -1205,13 +1238,13 @@
                 return;
             }
 
-            var clientIdNum = parseInt(clientVal, 10);
-            var selClient = !Number.isNaN(clientIdNum) ? clients.find(function(c) { return Number(c.id) === clientIdNum; }) : null;
+            var editingObj = editingId ? objects.find(function(o) { return o.id === editingId; }) : null;
+            var clientFields = resolveObjectClientFields(clientVal, editingObj);
             const data = {
                 work_dates: objectWorkDaysEdit.slice().sort(),
                 name: nameVal,
-                client: selClient ? selClient.name : '',
-                client_id: !Number.isNaN(clientIdNum) ? clientIdNum : null,
+                client: clientFields.client,
+                client_id: clientFields.client_id,
                 sum_work: parseFloat(document.getElementById('sum-work').value) || 0,
                 expenses: parseFloat(document.getElementById('expenses').value) || 0,
                 status: document.getElementById('status').value,

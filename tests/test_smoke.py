@@ -32,3 +32,23 @@ def test_resolve_object_id_helper():
     import estimate_module
 
     assert callable(estimate_module._resolve_object_id_for_user)
+
+
+def test_object_client_fields_preserve_on_update():
+    import app_objects
+
+    existing = {"client": "Иван", "client_id": 5}
+
+    name, cid = app_objects._object_client_fields_from_payload(1, {"status": "В работе"}, existing)
+    assert name == "Иван"
+    assert cid == 5
+
+    name, cid = app_objects._object_client_fields_from_payload(1, {"client_id": None}, existing)
+    assert name == "Иван"
+    assert cid == 5
+
+    name, cid = app_objects._object_client_fields_from_payload(
+        1, {"client_id": None, "client": ""}, existing
+    )
+    assert name == ""
+    assert cid is None

@@ -536,8 +536,13 @@ def _object_client_fields_from_payload(user_id, data, existing=None):
     if 'client_id' in data:
         raw = data.get('client_id')
         if raw is None or raw == '':
-            name = data.get('client') if 'client' in data else ex_name
-            return (str(name or '').strip(), None)
+            # client_id: null без поля client — частичное обновление (статус и т.п.), не сбрасывать заказчика
+            if 'client' not in data:
+                return (str(ex_name).strip(), ex_cli)
+            name = str(data.get('client') or '').strip()
+            if not name:
+                return ('', None)
+            return (name, None)
         try:
             cid = int(raw)
         except (TypeError, ValueError):
@@ -546,6 +551,8 @@ def _object_client_fields_from_payload(user_id, data, existing=None):
             row = fetch_one("SELECT name FROM clients WHERE id = ? AND user_id = ?", (cid, user_id))
             if row:
                 return (str(row['name'] or '').strip(), cid)
+            if 'client' not in data:
+                return (str(ex_name).strip(), ex_cli)
         name = data.get('client') if 'client' in data else ex_name
         return (str(name or '').strip(), None)
 
