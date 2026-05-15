@@ -175,6 +175,7 @@
         }
         function money(v){ return num(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}); }
         function esc(s){ if(!s) return ''; const d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
+        function attrEsc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/\r?\n/g,' '); }
 
         // Иконки для категорий
         function getCatIcon(name) {
@@ -255,7 +256,7 @@
                 let total = counts[cat.name] || 0;
                 (cat.all_descendants || []).forEach(childName => { total += counts[childName] || 0; });
 
-                html += `<div class="cat-card" onclick="drillDown('${esc(cat.name)}')">
+                html += `<div class="cat-card" data-cat-name="${attrEsc(cat.name)}">
                     <div class="cat-icon">${getCatIcon(cat.name)}</div>
                     <div class="cat-name">${esc(cat.name)}</div>
                     <div class="cat-count-badge">${total} товар(ов)</div>
@@ -313,7 +314,7 @@
 
                 html += `<div class="tree-node">
                     <span class="${toggleClass}" onclick="toggleTreeNode(this)">&#9654;</span>
-                    <span class="${labelClass}" onclick="selectCategory('${esc(node.name).replace(/'/g,"\\'")}', '${filterLevel}', ${nodeId})">${icon} ${esc(node.name)}</span>
+                    <span class="${labelClass}" data-name="${attrEsc(node.name)}" data-level="${filterLevel}" data-id="${nodeId}">${icon} ${esc(node.name)}</span>
                     ${countBadge}
                     ${hasChildren ? `<div class="tree-children">${renderTreeNodes(node.children, isBrand ? 2 : depth+1)}</div>` : ''}
                 </div>`;
@@ -333,9 +334,9 @@
             const counts={};
             allData.forEach(function(d){ counts[d.category]=(counts[d.category]||0)+1; });
             var cats=Object.keys(counts).sort();
-            var html='<div class="cat-item'+(curCat===''?' active':'')+'" onclick="selCat(\'\')"><span>Все</span><span class="cat-count">'+allData.length+'</span></div>';
+            var html='<div class="cat-item'+(curCat===''?' active':'')+'" data-all="1"><span>Все</span><span class="cat-count">'+allData.length+'</span></div>';
             cats.forEach(function(c){
-                html+='<div class="cat-item'+(curCat===c?' active':'')+'" onclick="selCat(\''+esc(c).replace(/'/g,"\\'")+'\')"><span>'+esc(c)+'</span><span class="cat-count">'+counts[c]+'</span></div>';
+                html+='<div class="cat-item'+(curCat===c?' active':'')+'" data-cat-name="'+attrEsc(c)+'"><span>'+esc(c)+'</span><span class="cat-count">'+counts[c]+'</span></div>';
             });
             box.innerHTML=html;
         }
@@ -445,11 +446,17 @@
         }
 
         document.getElementById('cat-srch').addEventListener('input',function(){
-            var q=this.value.toLowerCase();
-            document.querySelectorAll('.cat-item').forEach(function(el){ el.style.display=el.textContent.toLowerCase().includes(q)?'':'none'; });
-            // Поиск по дереву
-            document.querySelectorAll('.tree-label').forEach(function(el){
-                el.style.display = el.textContent.toLowerCase().includes(q) ? '' : 'none';
+            var q=(this.value||'').toLowerCase().trim();
+            document.querySelectorAll('#cat-list .cat-item').forEach(function(el){
+                var name=(el.dataset.catName||el.textContent||'').toLowerCase();
+                el.style.display=!q || name.includes(q) ? '' : 'none';
+            });
+            document.querySelectorAll('#tree-view .tree-node').forEach(function(node){
+                var label=node.querySelector('.tree-label');
+                if(!label) return;
+                var name=(label.dataset.name||label.textContent||'').toLowerCase();
+                var match=!q || name.includes(q);
+                node.style.display=match ? '' : 'none';
             });
         });
 
@@ -720,6 +727,23 @@
         }
         document.getElementById('catModal').addEventListener('click', function(e) {
             if (e.target.id === 'catModal') closeCatManager();
+        });
+
+        document.getElementById('tree-view').addEventListener('click', function(e) {
+            var label = e.target.closest('.tree-label');
+            if (!label || label.dataset.name === undefined) return;
+            var id = label.dataset.id;
+            selectCategory(label.dataset.name, label.dataset.level, (!id || id === 'null') ? null : id);
+        });
+        document.getElementById('catGrid').addEventListener('click', function(e) {
+            var card = e.target.closest('.cat-card[data-cat-name]');
+            if (card) drillDown(card.dataset.catName);
+        });
+        document.getElementById('cat-list').addEventListener('click', function(e) {
+            var item = e.target.closest('.cat-item');
+            if (!item) return;
+            if (item.dataset.all) selCat('');
+            else if (item.dataset.catName !== undefined) selCat(item.dataset.catName);
         });
 
         loadData();
