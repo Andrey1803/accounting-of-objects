@@ -804,18 +804,21 @@ def _pdf_retail_price_match(catalog_retail, pdf_price, abs_tol=0.02):
     return abs(round(c, 2) - round(p, 2)) <= abs_tol
 
 
-def _pdf_purchase_for_file_retail(file_retail, cat_item):
+def _pdf_purchase_for_file_retail(file_retail, cat_item, qty=1.0):
     """Закупка для строки сметы при рознице из PDF: сохраняем отношение закуп/розница из каталога."""
     try:
         fr = float(file_retail)
         cr = float(cat_item.get('retail_price') or 0)
         cp = float(cat_item.get('purchase_price') or 0)
+        q = float(qty or 1)
     except (TypeError, ValueError):
         return None
     if fr <= 0:
         return None
+    cp = _normalize_unit_purchase_price(cp, cr, qty=q)
     if cr > 0 and cp >= 0:
-        return round(fr * (cp / cr), 4)
+        pu = round(fr * (cp / cr), 4)
+        return _normalize_unit_purchase_price(pu, fr, qty=q)
     return round(fr * 0.7, 2)
 
 
@@ -1262,6 +1265,48 @@ def _safe_float(value, default=0.0):
         return default
 
 
+_QTY_GUESS_FOR_LINE_PURCHASE = (
+    2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 40, 50, 100,
+)
+
+
+def _normalize_unit_purchase_price(purchase, retail_unit, qty=1.0):
+    """
+    Закуп в каталоге/смете — всегда за единицу. Старый импорт PDF иногда писал сумму строки
+    (закуп×кол-во) в purchase_price → маржа уходила в минус сотнями процентов.
+    """
+    try:
+        p = float(purchase or 0)
+        r = float(retail_unit or 0)
+        q = float(qty or 1)
+    except (TypeError, ValueError):
+        return 0.0
+    if p <= 0 or r <= 0:
+        return round(p, 4) if p > 0 else 0.0
+    if p <= r * 1.05:
+        return round(p, 4)
+
+    def _try_qty(q_try):
+        if q_try <= 1:
+            return None
+        unit_cand = p / q_try
+        if unit_cand <= 0 or unit_cand > r * 1.05:
+            return None
+        if abs(p - unit_cand * q_try) <= max(0.05, 0.02 * p):
+            return round(unit_cand, 4)
+        return None
+
+    if q > 1:
+        fixed = _try_qty(q)
+        if fixed is not None:
+            return fixed
+    for q_try in _QTY_GUESS_FOR_LINE_PURCHASE:
+        fixed = _try_qty(q_try)
+        if fixed is not None:
+            return fixed
+    return round(p, 4)
+
+
 def _norm_item_name(s):
     return re.sub(r"\s+", " ", (s or "").strip()).lower()
 
@@ -1687,7 +1732,7 @@ def api_parse_pdf():
                 if ambiguous:
                     conf_pct = round(min(conf_pct * 0.88, 100), 1)
                 file_purchase = (
-                    _pdf_purchase_for_file_retail(pdf_retail_unit, best_match)
+                    _pdf_purchase_for_file_retail(pdf_retail_unit, best_match, qty=qty)
                     if pdf_retail_unit is not None
                     else None
                 )
@@ -2442,6 +2487,15 @@ def api_get_estimate(est_id):
     if not est: return jsonify({"error": "Not found"}), 404
     items = fetch_all("SELECT * FROM estimate_items WHERE estimate_id = ?", (est_id,))
     _backfill_estimate_wholesale_from_catalog(current_user.id, est_id, items)
+    for it in items:
+        if it.get('section') == 'material':
+            q = _safe_float(it.get('quantity'), default=1.0)
+            p = _safe_float(it.get('price'))
+            pu = _normalize_unit_purchase_price(_safe_float(it.get('purchase_price')), p, qty=q)
+            if pu != _safe_float(it.get('purchase_price')):
+                it['purchase_price'] = pu
+                it['material_profit'] = (p - pu) * q
+                it['total'] = p * q
     return jsonify({**est, 'items': items})
 
 @estimate_bp.route('/api/estimates/<int:est_id>', methods=['PUT'])
@@ -2503,6 +2557,8 @@ def api_add_item(est_id):
     purchase = _safe_float(data.get('purchase_price'))
     wholesale = _safe_float(data.get('wholesale_price')) if data.get('section') == 'material' else 0
     qty = _safe_float(data.get('quantity'), default=1.0)
+    if data.get('section') == 'material':
+        purchase = _normalize_unit_purchase_price(purchase, price, qty=qty)
     total = price * qty
     profit = (price - purchase) * qty if data.get('section') == 'material' else 0
 
@@ -2526,6 +2582,8 @@ def api_update_item(item_id):
     purchase = _safe_float(data.get('purchase_price'))
     wholesale = _safe_float(data.get('wholesale_price')) if data.get('section', 'material') == 'material' else 0
     qty = _safe_float(data.get('quantity'), default=1.0)
+    if data.get('section', 'material') == 'material':
+        purchase = _normalize_unit_purchase_price(purchase, price, qty=qty)
     total = price * qty
     profit = (price - purchase) * qty if data.get('section', 'material') == 'material' else 0
 
@@ -2579,7 +2637,13 @@ def _add_to_catalog(section, name, unit, price, purchase):
 @estimate_bp.route('/api/catalog/materials', methods=['GET'])
 @login_required
 def api_get_materials():
-    return jsonify(fetch_all("SELECT * FROM catalog_materials WHERE user_id = ? ORDER BY use_count DESC", (current_user.id,)))
+    rows = fetch_all("SELECT * FROM catalog_materials WHERE user_id = ? ORDER BY use_count DESC", (current_user.id,))
+    for row in rows:
+        r = _safe_float(row.get('retail_price'))
+        row['purchase_price'] = _normalize_unit_purchase_price(
+            _safe_float(row.get('purchase_price')), r, qty=1.0
+        )
+    return jsonify(rows)
 
 @estimate_bp.route('/api/catalog/materials', methods=['POST'])
 @login_required
@@ -2589,7 +2653,9 @@ def api_add_catalog_material():
     if err: return err
     try:
         retail = _safe_float(data.get('retail_price'))
-        purchase = _safe_float(data.get('purchase_price'))
+        purchase = _normalize_unit_purchase_price(
+            _safe_float(data.get('purchase_price')), retail, qty=1.0
+        )
         wholesale = _safe_float(data.get('wholesale_price'), default=retail)
         category = data.get('category', '')
         min_qty = _safe_float(data.get('min_wholesale_qty'), default=10)
@@ -2612,12 +2678,16 @@ def api_update_catalog_material(item_id):
     data, err = _require_json()
     if err: return err
     try:
+        retail = _safe_float(data.get('retail_price'))
+        purchase = _normalize_unit_purchase_price(
+            _safe_float(data.get('purchase_price')), retail, qty=1.0
+        )
         execute("""UPDATE catalog_materials SET name=?, unit=?, category=?, article=?, brand=?, item_type=?,
                    purchase_price=?, retail_price=?, wholesale_price=?, min_wholesale_qty=?, description=?
                    WHERE id=? AND user_id=?""",
             (data.get('name'), data.get('unit'), data.get('category', ''),
              (data.get('article') or '').strip(), (data.get('brand') or '').strip(), (data.get('item_type') or '').strip(),
-             _safe_float(data.get('purchase_price')), _safe_float(data.get('retail_price')),
+             purchase, retail,
              _safe_float(data.get('wholesale_price')), _safe_float(data.get('min_wholesale_qty'), default=10),
              data.get('description', ''), item_id, current_user.id))
         return jsonify({"ok": True})

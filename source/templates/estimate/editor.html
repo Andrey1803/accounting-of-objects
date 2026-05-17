@@ -1027,9 +1027,35 @@
             renderMarginAlert();
         }
 
+        /** Закуп за единицу: если в каталог попала сумма строки (закуп×кол-во), приводим к цене за ед. */
+        function normalizePurchaseUnit(purchase, retail, qty) {
+            var p = parseFloat(purchase) || 0;
+            var r = parseFloat(retail) || 0;
+            var q = parseFloat(qty) || 1;
+            if (p <= 0 || r <= 0) return p;
+            if (p <= r * 1.05) return p;
+            function tryQ(qTry) {
+                if (qTry <= 1) return null;
+                var u = p / qTry;
+                if (u > 0 && u <= r * 1.05 && Math.abs(p - u * qTry) <= Math.max(0.05, 0.02 * p)) return u;
+                return null;
+            }
+            if (q > 1) { var f = tryQ(q); if (f != null) return f; }
+            var guesses = [2,3,4,5,6,7,8,9,10,12,15,20,25,30,40,50,100];
+            for (var i = 0; i < guesses.length; i++) {
+                var g = tryQ(guesses[i]);
+                if (g != null) return g;
+            }
+            return p;
+        }
+
         function getMaterialMarginPct(item) {
             var price = parseFloat(item.price) || 0;
-            var purchase = parseFloat(item.purchase_price) || 0;
+            var purchase = normalizePurchaseUnit(
+                parseFloat(item.purchase_price) || 0,
+                price,
+                parseFloat(item.quantity) || 1
+            );
             if (price <= 0) return 0;
             return ((price - purchase) / price) * 100;
         }
@@ -1066,7 +1092,9 @@
                 var marginPct = 0;
                 if (isMat) {
                     var priceNum = parseFloat(item.price) || 0;
-                    var purchaseNum = parseFloat(purch) || 0;
+                    var purchaseNum = normalizePurchaseUnit(
+                        parseFloat(purch) || 0, priceNum, parseFloat(item.quantity) || 1
+                    );
                     marginPct = priceNum > 0 ? ((priceNum - purchaseNum) / priceNum * 100) : 0;
                 }
                 var rowStyle = '';
@@ -1637,12 +1665,19 @@
 
             list.forEach(function(i) {
                 var price = i.retail_price != null && i.retail_price !== '' ? Number(i.retail_price) : Number(i.price || 0);
+                var retailNum = price;
                 var purchCat = (currentType === 'material' && i.purchase_price != null && i.purchase_price !== '')
-                    ? Number(i.purchase_price) : NaN;
+                    ? normalizePurchaseUnit(Number(i.purchase_price), retailNum, 1) : NaN;
                 var el = document.createElement('div');
                 el.className = 'modal-item';
                 el.onclick = function() {
-                    var itemObj = { name: i.name, unit: i.unit, retail_price: price, purchase_price: Number(i.purchase_price) || 0, price: price };
+                    var itemObj = {
+                        name: i.name, unit: i.unit, retail_price: price,
+                        purchase_price: currentType === 'material'
+                            ? normalizePurchaseUnit(Number(i.purchase_price) || 0, price, 1)
+                            : (Number(i.purchase_price) || 0),
+                        price: price
+                    };
                     if (currentType === 'material') {
                         itemObj.wholesale_price = 0;
                     }
@@ -1706,7 +1741,9 @@
                 }
 
                 // Маржа
-                var purchase = i.purchase_price || 0;
+                var purchase = currentType === 'material'
+                    ? normalizePurchaseUnit(i.purchase_price || 0, price, 1)
+                    : (i.purchase_price || 0);
                 var margin = price > 0 ? ((price - purchase) / price * 100) : 0;
                 var marginSpan = document.createElement('span');
                 marginSpan.className = 'mi-margin';
@@ -1759,7 +1796,9 @@
         async function doAddFromCatalog(item, qty, sectionOverride) {
             var section = sectionOverride || currentType;
             var price = item.retail_price || item.price;
-            var purchase = item.purchase_price || 0;
+            var purchase = section === 'material'
+                ? normalizePurchaseUnit(item.purchase_price || 0, price, qty)
+                : (item.purchase_price || 0);
             var wholesale = 0;
             var total = price * qty;
             var profit = (price - purchase) * qty;
@@ -2756,9 +2795,13 @@
                                 var useRetail = (m.file_retail_unit != null && m.file_retail_unit > 0)
                                     ? Number(m.file_retail_unit)
                                     : (Number(m.item.retail_price) || 0);
-                                var usePurchase = (m.file_purchase_unit != null && m.file_purchase_unit >= 0)
-                                    ? Number(m.file_purchase_unit)
-                                    : (Number(m.item.purchase_price) || 0);
+                                var usePurchase = normalizePurchaseUnit(
+                                    (m.file_purchase_unit != null && m.file_purchase_unit >= 0)
+                                        ? Number(m.file_purchase_unit)
+                                        : (Number(m.item.purchase_price) || 0),
+                                    useRetail,
+                                    qty
+                                );
                                 await fetchCsrf('/estimate/api/catalog/materials/' + m.item.id, {
                                     method: 'PUT',
                                     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
