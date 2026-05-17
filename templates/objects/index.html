@@ -419,7 +419,7 @@
     <div class="modal" id="wellSurveysModal">
         <div class="modal-content" style="width: min(96vw, 920px); max-height: 92vh; overflow-y: auto;">
             <h2>🔬 Замеры и расчёты скважины</h2>
-            <p style="color:#666; margin:5px 0 12px; font-size:13px;">История опытных замеров и расчётов (в т.ч. из диспетчера). Формула дебита как в калькуляторе: Q = Qнасос × (hрасч − hст) / (hдин − hст).</p>
+            <p style="color:#666; margin:5px 0 12px; font-size:13px;">История опытных замеров и расчётов (в т.ч. из диспетчера). Уровни — глубина воды от устья (статика без отбора, динамика при работе насоса). Опытный дебит на динамике: объём воды в литрах и время замера → м³/ч. Расчёт по насосу: Q = Q<sub>насос</sub> × (h<sub>расч</sub> − h<sub>ст</sub>) / (h<sub>дин</sub> − h<sub>ст</sub>).</p>
             <div id="well-surveys-list" style="margin-bottom:18px;"></div>
             <h3 style="font-size:15px; color:#2E75B6; margin:12px 0 8px;">Новая запись</h3>
             <div class="form-row">
@@ -428,18 +428,27 @@
                     <select id="ws-source"><option value="manual">Вручную</option><option value="calculator">Калькулятор (ПК)</option><option value="dispatcher">Диспетчер</option></select>
                 </div>
             </div>
+            <h4 style="font-size:13px; color:#444; margin:10px 0 6px;">Уровни воды и глубина скважины</h4>
             <div class="form-row">
-                <div class="form-group"><label>Статика, м</label><input type="number" id="ws-statika" step="0.1" placeholder="статика"></div>
-                <div class="form-group"><label>Динамика, м</label><input type="number" id="ws-dinamika" step="0.1" placeholder="динамика"></div>
-                <div class="form-group"><label>Глубина, м</label><input type="number" id="ws-glubina" step="0.1" placeholder="глина"></div>
+                <div class="form-group"><label title="Уровень воды от устья в покое">Статический уровень, м</label><input type="number" id="ws-statika" step="0.1" placeholder="от устья" oninput="wellSurveyRecalcDebit()"></div>
+                <div class="form-group"><label title="Уровень воды от устья при работе насоса">Динамический уровень, м</label><input type="number" id="ws-dinamika" step="0.1" placeholder="на режиме насоса" oninput="wellSurveyRecalcDebit()"></div>
+                <div class="form-group"><label>Глубина скважины, м</label><input type="number" id="ws-glubina" step="0.1" placeholder="глубина" oninput="wellSurveyRecalcDebit()"></div>
             </div>
+            <h4 style="font-size:13px; color:#444; margin:10px 0 6px;">Опытный дебит — на динамическом уровне (замер)</h4>
+            <p style="font-size:12px; color:#666; margin:-4px 0 6px;">Сколько литров снято за время замера — это производительность скважины при текущем динамическом уровне (перевод в м³/ч).</p>
             <div class="form-row">
-                <div class="form-group"><label>Насос м³/ч</label><input type="number" id="ws-nasos" step="0.01" placeholder="расход насоса"></div>
-                <div class="form-group"><label>Расчётная глубина, м</label><input type="number" id="ws-raschet" step="0.1" placeholder="точка расчёта"></div>
-                <div class="form-group"><label>Дебит м³/ч (расчёт)</label><input type="text" id="ws-debit-preview" readonly style="background:#f5f5f5;" title="Нажмите «Пересчитать»"></div>
+                <div class="form-group"><label>Объём воды, л</label><input type="number" id="ws-measure-liters" step="0.01" min="0" placeholder="литры" oninput="wellSurveyRecalcDebit()"></div>
+                <div class="form-group"><label>Время замера, с</label><input type="number" id="ws-measure-seconds" step="1" min="1" placeholder="секунды" oninput="wellSurveyRecalcDebit()"></div>
+                <div class="form-group"><label>Дебит по замеру, м³/ч</label><input type="text" id="ws-debit-measure-preview" readonly style="background:#e8f5e9;" title="(л / 1000) / (с / 3600)"></div>
+            </div>
+            <h4 style="font-size:13px; color:#444; margin:10px 0 6px;">Расчёт дебита по насосу</h4>
+            <div class="form-row">
+                <div class="form-group"><label>Насос, м³/ч</label><input type="number" id="ws-nasos" step="0.01" placeholder="номинальный расход" oninput="wellSurveyRecalcDebit()"></div>
+                <div class="form-group"><label>Расчётная глубина, м</label><input type="number" id="ws-raschet" step="0.1" placeholder="точка подвеса / расчёт" oninput="wellSurveyRecalcDebit()"></div>
+                <div class="form-group"><label>Дебит по формуле насоса, м³/ч</label><input type="text" id="ws-debit-preview" readonly style="background:#f5f5f5;" title="По уровням и расходу насоса"></div>
             </div>
             <div style="margin-bottom:10px;">
-                <button type="button" class="btn" style="background:#2E75B6;color:white;" onclick="wellSurveyRecalcDebit()">Пересчитать дебит</button>
+                <button type="button" class="btn" style="background:#2E75B6;color:white;" onclick="wellSurveyRecalcDebit()">Пересчитать</button>
             </div>
             <div class="form-group"><label>Вывод / заключение</label><textarea id="ws-conclusion" rows="3" placeholder="Итоги обследования, рекомендации…"></textarea></div>
             <div class="modal-actions" style="display:flex; gap:10px; margin-top:12px; justify-content:flex-end; flex-wrap:wrap;">
@@ -2298,8 +2307,16 @@
             return q / (d - s) * (h - s);
         }
 
+        /** Дебит при динамическом уровне по опытному замеру: л и с → м³/ч */
+        function wellSurveyDebitFromMeasureLiters(liters, seconds) {
+            var L = Number(liters), t = Number(seconds);
+            if (!isFinite(L) || !isFinite(t) || L < 0 || t <= 0) return null;
+            return (L / 1000) / (t / 3600);
+        }
+
         function wellSurveyRecalcDebit() {
             var el = document.getElementById('ws-debit-preview');
+            var elM = document.getElementById('ws-debit-measure-preview');
             if (!el) return;
             var v = wellSurveyDebitFromInputs(
                 document.getElementById('ws-statika').value,
@@ -2307,8 +2324,14 @@
                 document.getElementById('ws-raschet').value,
                 document.getElementById('ws-nasos').value
             );
-            if (v == null) { el.value = '—'; return; }
-            el.value = v.toFixed(2);
+            if (v == null) { el.value = '—'; } else { el.value = v.toFixed(2); }
+            if (elM) {
+                var vm = wellSurveyDebitFromMeasureLiters(
+                    document.getElementById('ws-measure-liters') && document.getElementById('ws-measure-liters').value,
+                    document.getElementById('ws-measure-seconds') && document.getElementById('ws-measure-seconds').value
+                );
+                elM.value = vm == null ? '—' : vm.toFixed(2);
+            }
         }
 
         function openWellSurveysModal() {
@@ -2342,10 +2365,17 @@
                 }
                 var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#e3f2fd;">';
                 html += '<th style="padding:6px;text-align:left;">Дата</th><th style="padding:6px;">Источник</th><th style="padding:6px;">Задача</th>';
-                html += '<th style="padding:6px;text-align:left;">Заголовок</th><th style="padding:6px;">Дебит</th><th style="padding:6px;text-align:left;">Вывод</th><th style="padding:6px;"></th></tr></thead><tbody>';
+                html += '<th style="padding:6px;text-align:left;">Заголовок</th><th style="padding:6px;" title="м³/ч: по замеру / по формуле насоса">Дебит</th><th style="padding:6px;text-align:left;">Вывод</th><th style="padding:6px;"></th></tr></thead><tbody>';
                 list.forEach(function(s) {
                     var comp = s.computed || {};
-                    var debit = (comp.debit_m3h != null && isFinite(Number(comp.debit_m3h))) ? Number(comp.debit_m3h).toFixed(2) : '—';
+                    var dDyn = comp.debit_m3h_dynamic != null && isFinite(Number(comp.debit_m3h_dynamic)) ? Number(comp.debit_m3h_dynamic) : null;
+                    var dPump = comp.debit_m3h != null && isFinite(Number(comp.debit_m3h)) ? Number(comp.debit_m3h) : null;
+                    var debit = '—';
+                    if (dDyn != null) {
+                        debit = dDyn.toFixed(2) + (dPump != null ? ' / ' + dPump.toFixed(2) : '');
+                    } else if (dPump != null) {
+                        debit = dPump.toFixed(2);
+                    }
                     var src = escHtml(s.source || '');
                     var conc = String(s.conclusion || '').trim();
                     var concShort = conc.length > 80 ? conc.slice(0, 80) + '…' : conc;
@@ -2376,6 +2406,8 @@
             var gl = parseFloat(String(document.getElementById('ws-glubina').value).replace(',', '.'));
             var nasos = parseFloat(String(document.getElementById('ws-nasos').value).replace(',', '.'));
             var raschet = parseFloat(String(document.getElementById('ws-raschet').value).replace(',', '.'));
+            var measureL = parseFloat(String(document.getElementById('ws-measure-liters').value).replace(',', '.'));
+            var measureSec = parseFloat(String(document.getElementById('ws-measure-seconds').value).replace(',', '.'));
             var conclusion = document.getElementById('ws-conclusion').value.trim();
             var inputs = {};
             if (isFinite(stat)) inputs.static_m = stat;
@@ -2383,7 +2415,14 @@
             if (isFinite(gl)) inputs.well_depth_m = gl;
             if (isFinite(nasos)) inputs.pump_m3h = nasos;
             if (isFinite(raschet)) inputs.calc_depth_m = raschet;
+            if (isFinite(measureL)) inputs.measure_liters = measureL;
+            if (isFinite(measureSec)) inputs.measure_seconds = measureSec;
             var computed = {};
+            var dvM = document.getElementById('ws-debit-measure-preview') && document.getElementById('ws-debit-measure-preview').value;
+            if (dvM && dvM !== '—') {
+                var dqm = parseFloat(dvM.replace(',', '.'));
+                if (isFinite(dqm)) computed.debit_m3h_dynamic = dqm;
+            }
             var dv = document.getElementById('ws-debit-preview').value;
             if (dv && dv !== '—') {
                 var dq = parseFloat(dv.replace(',', '.'));
@@ -2409,13 +2448,12 @@
                 }
                 document.getElementById('ws-title').value = '';
                 document.getElementById('ws-conclusion').value = '';
+                var mL = document.getElementById('ws-measure-liters');
+                var mS = document.getElementById('ws-measure-seconds');
+                if (mL) mL.value = '';
+                if (mS) mS.value = '';
+                wellSurveyRecalcDebit();
                 loadWellSurveysList();
-            } catch (e) {
-                alert('Ошибка: ' + e.message);
-            }
-        }
-
-        async function deleteWellSurvey(surveyId) {
             if (!wellSurveyObjectId || !surveyId) return;
             if (!confirm('Удалить эту запись замера?')) return;
             try {
