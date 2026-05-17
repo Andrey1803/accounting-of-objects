@@ -854,7 +854,16 @@ def manifest():
 
 @app.route('/health')
 def health_check():
-    return jsonify({"status": "ok", "timestamp": datetime.now().isoformat()}), 200
+    try:
+        from well_passport import libreoffice_pdf_available
+        pdf_ok = libreoffice_pdf_available()
+    except Exception:
+        pdf_ok = False
+    return jsonify({
+        "status": "ok",
+        "timestamp": datetime.now().isoformat(),
+        "passport_pdf": pdf_ok,
+    }), 200
 
 
 @app.route('/api/backup-database')

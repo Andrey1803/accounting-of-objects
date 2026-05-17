@@ -324,10 +324,78 @@ def fill_passport_docx(context: dict[str, Any], dest_path: Path) -> Path:
     return dest_path
 
 
+def find_libreoffice_binary() -> Optional[str]:
+    for name in ('soffice', 'libreoffice', 'lowriter'):
+        found = shutil.which(name)
+        if found:
+            return found
+    for path in ('/usr/bin/soffice', '/usr/bin/libreoffice'):
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def libreoffice_pdf_available() -> bool:
+    return find_libreoffice_binary() is not None
+
+
+def _convert_docx_with_libreoffice(docx_path: Path, pdf_path: Path) -> Path:
+    soffice = find_libreoffice_binary()
+    if not soffice:
+        raise PdfConversionError('LibreOffice не установлен на сервере')
+    out_dir = pdf_path.parent
+    profile = Path(tempfile.gettempdir()) / 'lo_profile_well_passport'
+    profile.mkdir(parents=True, exist_ok=True)
+    user_install = f'file://{profile.resolve().as_posix()}'
+    env = os.environ.copy()
+    env.setdefault('HOME', tempfile.gettempdir())
+    proc = subprocess.run(
+        [
+            soffice,
+            f'-env:UserInstallation={user_install}',
+            '--headless',
+            '--norestore',
+            '--invisible',
+            '--convert-to',
+            'pdf',
+            '--outdir',
+            str(out_dir),
+            str(docx_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=env,
+    )
+    if proc.returncode != 0:
+        logging.warning(
+            'LibreOffice PDF (code %s): %s',
+            proc.returncode,
+            (proc.stderr or proc.stdout or '').strip()[:500],
+        )
+    generated = out_dir / f'{docx_path.stem}.pdf'
+    if generated.is_file() and generated != pdf_path:
+        generated.replace(pdf_path)
+    if pdf_path.is_file() and pdf_path.stat().st_size > 0:
+        return pdf_path
+    raise PdfConversionError('LibreOffice не создал PDF-файл')
+
+
 def convert_docx_to_pdf(docx_path: Path, pdf_path: Path) -> Path:
     docx_path = Path(docx_path)
     pdf_path = Path(pdf_path)
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
+
+    import sys
+
+    if sys.platform != 'win32':
+        try:
+            return _convert_docx_with_libreoffice(docx_path, pdf_path)
+        except PdfConversionError:
+            raise
+        except Exception as e:
+            logging.warning('LibreOffice PDF: %s', e)
+
     try:
         from docx2pdf import convert as docx2pdf_convert
 
@@ -336,25 +404,14 @@ def convert_docx_to_pdf(docx_path: Path, pdf_path: Path) -> Path:
             return pdf_path
     except Exception as e:
         logging.debug('docx2pdf: %s', e)
-    soffice = shutil.which('soffice') or shutil.which('libreoffice')
-    if soffice:
-        out_dir = pdf_path.parent
-        proc = subprocess.run(
-            [
-                soffice, '--headless', '--norestore', '--convert-to', 'pdf',
-                '--outdir', str(out_dir), str(docx_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if proc.returncode != 0:
-            logging.warning('LibreOffice PDF: %s', proc.stderr or proc.stdout)
-        generated = out_dir / (docx_path.stem + '.pdf')
-        if generated.is_file() and generated != pdf_path:
-            generated.replace(pdf_path)
-        if pdf_path.is_file() and pdf_path.stat().st_size > 0:
-            return pdf_path
+
+    try:
+        return _convert_docx_with_libreoffice(docx_path, pdf_path)
+    except PdfConversionError:
+        pass
+    except Exception as e:
+        logging.warning('LibreOffice PDF: %s', e)
+
     raise PdfConversionError(
         'Не удалось создать PDF. Скачайте DOCX или установите Microsoft Word / LibreOffice.'
     )

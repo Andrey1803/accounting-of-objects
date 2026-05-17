@@ -1,0 +1,3 @@
+# DOCX → PDF для паспорта скважины (LibreOffice headless на Railway/Linux)
+[phases.setup]
+aptPkgs = ["...", "libreoffice", "fonts-dejavu-core"]
