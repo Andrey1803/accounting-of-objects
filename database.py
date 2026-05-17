@@ -216,6 +216,7 @@ def delete_user_data(user_id):
         ("DELETE FROM worker_account_entries WHERE user_id = ?", (user_id,)),
         ("DELETE FROM worker_assignments WHERE user_id = ?", (user_id,)),
         ("DELETE FROM workers WHERE user_id = ?", (user_id,)),
+        ("DELETE FROM object_well_surveys WHERE user_id = ?", (user_id,)),
         ("DELETE FROM objects WHERE user_id = ?", (user_id,)),
         ("DELETE FROM clients WHERE user_id = ?", (user_id,)),
         ("DELETE FROM categories WHERE user_id = ?", (user_id,)),
@@ -237,6 +238,7 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS idx_estimate_items_estimate ON estimate_items(estimate_id)",
         "CREATE INDEX IF NOT EXISTS idx_workers_user ON workers(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_worker_account_user_worker ON worker_account_entries(user_id, worker_id)",
+        "CREATE INDEX IF NOT EXISTS idx_well_surveys_object ON object_well_surveys(user_id, object_id)",
     ]
     try:
         for sql in stmts:
@@ -548,6 +550,20 @@ def init_db():
                 used_count INTEGER DEFAULT 0,
                 note TEXT DEFAULT '')
             """,
+            """
+            CREATE TABLE IF NOT EXISTS object_well_surveys (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                object_id INTEGER NOT NULL REFERENCES objects(id) ON DELETE CASCADE,
+                measured_at TIMESTAMP DEFAULT NOW(),
+                source TEXT DEFAULT 'manual',
+                task_id TEXT DEFAULT '',
+                title TEXT DEFAULT '',
+                inputs_json TEXT DEFAULT '{}',
+                computed_json TEXT DEFAULT '{}',
+                conclusion TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW())
+            """,
         ])
 
         for alter in (
@@ -659,6 +675,19 @@ def init_db():
                 max_uses INTEGER DEFAULT 1,
                 used_count INTEGER DEFAULT 0,
                 note TEXT DEFAULT '');
+
+            CREATE TABLE IF NOT EXISTS object_well_surveys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                object_id INTEGER NOT NULL,
+                measured_at TEXT DEFAULT '',
+                source TEXT DEFAULT 'manual',
+                task_id TEXT DEFAULT '',
+                title TEXT DEFAULT '',
+                inputs_json TEXT DEFAULT '{}',
+                computed_json TEXT DEFAULT '{}',
+                conclusion TEXT DEFAULT '',
+                created_at TEXT DEFAULT '');
         """)
 
     # Миграция для старых баз (добавляем parent_id если нет)

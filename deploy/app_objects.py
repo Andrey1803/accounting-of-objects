@@ -33,7 +33,7 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for, s
 from flask_login import LoginManager, login_required, current_user, logout_user
 
 # Импорт ядра базы данных и модулей
-from database import init_db, fetch_all, fetch_one, execute, execute_many, IS_POSTGRES, close_all_connections
+from database import init_db, fetch_all, fetch_one, execute, execute_rowcount, execute_many, IS_POSTGRES, close_all_connections
 from auth import auth_bp, User, hash_pw, check_pw
 from estimate_module import estimate_bp
 from extensions import limiter
@@ -1573,6 +1573,193 @@ def _recalc_salaries_for_user_id(uid):
     for obj in all_objs:
         recalc_object_salary(obj['id'], uid, calendar_counts=counts)
     return len(all_objs)
+
+def _json_obj(v, default=None):
+    d = {} if default is None else default
+    if v is None:
+        return dict(d)
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except Exception:
+            return dict(d)
+    return dict(d)
+
+
+def _well_survey_public(row):
+    if not row:
+        return None
+    out = dict(row)
+    out['inputs'] = _json_obj(out.get('inputs_json'), {})
+    out['computed'] = _json_obj(out.get('computed_json'), {})
+    out.pop('inputs_json', None)
+    out.pop('computed_json', None)
+    return out
+
+
+def _integration_resolve_object_for_survey(target_user_id, data):
+    """
+    object_id в теле — явная привязка; иначе объект с integration_source = taskmgr:{task_id}.
+    """
+    data = data or {}
+    oid_raw = data.get('object_id')
+    if oid_raw is not None and str(oid_raw).strip() != '':
+        try:
+            oid = int(oid_raw)
+        except (TypeError, ValueError):
+            return None, 'object_id must be an integer'
+        row = fetch_one('SELECT id FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
+        if not row:
+            return None, 'object not found'
+        return oid, None
+    task_id = (data.get('task_id') or '').strip()
+    if not task_id:
+        return None, 'task_id or object_id is required'
+    src = f'taskmgr:{task_id}'
+    row = fetch_one(
+        'SELECT id FROM objects WHERE user_id = ? AND integration_source = ?',
+        (target_user_id, src),
+    )
+    if not row:
+        return (
+            None,
+            'object for this task_id not found; create object via /api/integration/from-taskmgr/object first',
+        )
+    return row['id'], None
+
+
+@app.route('/api/objects/<int:obj_id>/well-surveys', methods=['GET'])
+@login_required
+def list_object_well_surveys(obj_id):
+    obj = fetch_one('SELECT id FROM objects WHERE id = ? AND user_id = ?', (obj_id, current_user.id))
+    if not obj:
+        return jsonify({'error': 'Not found'}), 404
+    rows = fetch_all(
+        """SELECT * FROM object_well_surveys WHERE object_id = ? AND user_id = ?
+           ORDER BY measured_at DESC, id DESC""",
+        (obj_id, current_user.id),
+    )
+    return jsonify({'surveys': [_well_survey_public(r) for r in rows]})
+
+
+@app.route('/api/objects/<int:obj_id>/well-surveys', methods=['POST'])
+@login_required
+@require_csrf
+def add_object_well_survey(obj_id):
+    obj = fetch_one('SELECT id FROM objects WHERE id = ? AND user_id = ?', (obj_id, current_user.id))
+    if not obj:
+        return jsonify({'error': 'Not found'}), 404
+    data = request.json or {}
+    measured_at = (data.get('measured_at') or '').strip()
+    if not measured_at:
+        measured_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    source = (data.get('source') or 'manual').strip() or 'manual'
+    task_id = (data.get('task_id') or '').strip()
+    title = (data.get('title') or '').strip()
+    conclusion = (data.get('conclusion') or '').strip()
+    inputs = _json_obj(data.get('inputs'), {})
+    computed = _json_obj(data.get('computed'), {})
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    sid = execute(
+        """INSERT INTO object_well_surveys
+        (user_id, object_id, measured_at, source, task_id, title, inputs_json, computed_json, conclusion, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            current_user.id,
+            obj_id,
+            measured_at,
+            source,
+            task_id,
+            title,
+            json.dumps(inputs, ensure_ascii=False),
+            json.dumps(computed, ensure_ascii=False),
+            conclusion,
+            now,
+        ),
+        return_id=True,
+    )
+    row = fetch_one(
+        'SELECT * FROM object_well_surveys WHERE id = ? AND user_id = ?',
+        (sid, current_user.id),
+    )
+    return jsonify(_well_survey_public(row)), 201
+
+
+@app.route('/api/objects/<int:obj_id>/well-surveys/<int:survey_id>', methods=['DELETE'])
+@login_required
+@require_csrf
+def delete_object_well_survey(obj_id, survey_id):
+    rc = execute_rowcount(
+        'DELETE FROM object_well_surveys WHERE id = ? AND object_id = ? AND user_id = ?',
+        (survey_id, obj_id, current_user.id),
+    )
+    if not rc:
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify({'ok': True})
+
+
+@app.route('/api/integration/from-taskmgr/well-survey', methods=['POST'])
+def integration_add_well_survey_from_taskmgr():
+    """
+    Запись замера/расчёта скважины из диспетчера (Bearer / X-Integration-Key = INTEGRATION_API_KEY).
+    Владелец данных — INTEGRATION_USER_ID. Объект: object_id или task_id (как у /from-taskmgr/object).
+    """
+    try:
+        if not _integration_api_key_matches():
+            return jsonify({'error': 'Unauthorized'}), 401
+        uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
+        if not uid_raw:
+            return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
+        try:
+            target_user_id = int(uid_raw)
+        except ValueError:
+            return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
+        if not fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,)):
+            return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
+
+        data = request.json or {}
+        obj_id, err = _integration_resolve_object_for_survey(target_user_id, data)
+        if err:
+            return jsonify({'error': err}), 400
+
+        measured_at = (data.get('measured_at') or '').strip()
+        if not measured_at:
+            measured_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        source = (data.get('source') or 'dispatcher').strip() or 'dispatcher'
+        task_id = (data.get('task_id') or '').strip()
+        title = (data.get('title') or '').strip()
+        conclusion = (data.get('conclusion') or '').strip()
+        inputs = _json_obj(data.get('inputs'), {})
+        computed = _json_obj(data.get('computed'), {})
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        sid = execute(
+            """INSERT INTO object_well_surveys
+            (user_id, object_id, measured_at, source, task_id, title, inputs_json, computed_json, conclusion, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                target_user_id,
+                obj_id,
+                measured_at,
+                source,
+                task_id,
+                title,
+                json.dumps(inputs, ensure_ascii=False),
+                json.dumps(computed, ensure_ascii=False),
+                conclusion,
+                now,
+            ),
+            return_id=True,
+        )
+        row = fetch_one(
+            'SELECT * FROM object_well_surveys WHERE id = ? AND user_id = ?',
+            (sid, target_user_id),
+        )
+        return jsonify({'ok': True, 'survey': _well_survey_public(row)}), 201
+    except Exception as exc:
+        logging.exception('integration: unhandled error in /api/integration/from-taskmgr/well-survey')
+        return jsonify({'error': 'Internal error', 'detail': str(exc)}), 500
 
 
 @app.route('/api/objects/recalc-all-salaries', methods=['POST'])

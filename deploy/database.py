@@ -216,6 +216,7 @@ def delete_user_data(user_id):
         ("DELETE FROM worker_account_entries WHERE user_id = ?", (user_id,)),
         ("DELETE FROM worker_assignments WHERE user_id = ?", (user_id,)),
         ("DELETE FROM workers WHERE user_id = ?", (user_id,)),
+        ("DELETE FROM object_well_surveys WHERE user_id = ?", (user_id,)),
         ("DELETE FROM objects WHERE user_id = ?", (user_id,)),
         ("DELETE FROM clients WHERE user_id = ?", (user_id,)),
         ("DELETE FROM categories WHERE user_id = ?", (user_id,)),
@@ -237,6 +238,7 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS idx_estimate_items_estimate ON estimate_items(estimate_id)",
         "CREATE INDEX IF NOT EXISTS idx_workers_user ON workers(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_worker_account_user_worker ON worker_account_entries(user_id, worker_id)",
+        "CREATE INDEX IF NOT EXISTS idx_well_surveys_object ON object_well_surveys(user_id, object_id)",
     ]
     try:
         for sql in stmts:
@@ -399,6 +401,9 @@ def init_db():
                 date_start TEXT, date_end TEXT, name TEXT NOT NULL, client TEXT, client_id INTEGER,
                 sum_work REAL DEFAULT 0, expenses REAL DEFAULT 0, status TEXT DEFAULT 'Ожидает старта',
                 advance REAL DEFAULT 0, salary REAL DEFAULT 0, notes TEXT,
+                is_regular_to INTEGER DEFAULT 0,
+                next_to_date TEXT,
+                next_to_note TEXT,
                 integration_source TEXT,
                 salary_allocation_mode TEXT DEFAULT 'all_workers',
                 created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW())
@@ -476,6 +481,20 @@ def init_db():
                 used_count INTEGER DEFAULT 0,
                 note TEXT DEFAULT '')
             """,
+            """
+            CREATE TABLE IF NOT EXISTS object_well_surveys (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                object_id INTEGER NOT NULL REFERENCES objects(id) ON DELETE CASCADE,
+                measured_at TIMESTAMP DEFAULT NOW(),
+                source TEXT DEFAULT 'manual',
+                task_id TEXT DEFAULT '',
+                title TEXT DEFAULT '',
+                inputs_json TEXT DEFAULT '{}',
+                computed_json TEXT DEFAULT '{}',
+                conclusion TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW())
+            """,
         ])
 
         for alter in (
@@ -488,6 +507,9 @@ def init_db():
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS client_id INTEGER",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS integration_source TEXT",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS salary_allocation_mode TEXT DEFAULT 'all_workers'",
+            "ALTER TABLE objects ADD COLUMN IF NOT EXISTS is_regular_to INTEGER DEFAULT 0",
+            "ALTER TABLE objects ADD COLUMN IF NOT EXISTS next_to_date TEXT",
+            "ALTER TABLE objects ADD COLUMN IF NOT EXISTS next_to_note TEXT",
         ):
             try:
                 cur.execute(alter)
@@ -517,6 +539,9 @@ def init_db():
                 date_start TEXT, date_end TEXT, name TEXT NOT NULL, client TEXT, client_id INTEGER,
                 sum_work REAL DEFAULT 0, expenses REAL DEFAULT 0, status TEXT DEFAULT 'Ожидает старта',
                 advance REAL DEFAULT 0, salary REAL DEFAULT 0, notes TEXT,
+                is_regular_to INTEGER DEFAULT 0,
+                next_to_date TEXT,
+                next_to_note TEXT,
                 integration_source TEXT,
                 salary_allocation_mode TEXT DEFAULT 'all_workers',
                 created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '');
@@ -579,6 +604,19 @@ def init_db():
                 max_uses INTEGER DEFAULT 1,
                 used_count INTEGER DEFAULT 0,
                 note TEXT DEFAULT '');
+
+            CREATE TABLE IF NOT EXISTS object_well_surveys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                object_id INTEGER NOT NULL,
+                measured_at TEXT DEFAULT '',
+                source TEXT DEFAULT 'manual',
+                task_id TEXT DEFAULT '',
+                title TEXT DEFAULT '',
+                inputs_json TEXT DEFAULT '{}',
+                computed_json TEXT DEFAULT '{}',
+                conclusion TEXT DEFAULT '',
+                created_at TEXT DEFAULT '');
         """)
 
     # Миграция для старых баз (добавляем parent_id если нет)
@@ -669,6 +707,24 @@ def init_db():
             conn.execute(
                 "ALTER TABLE objects ADD COLUMN salary_allocation_mode TEXT DEFAULT 'all_workers'"
             )
+            conn.commit()
+    except Exception:
+        pass
+    try:
+        if not IS_POSTGRES:
+            conn.execute("ALTER TABLE objects ADD COLUMN is_regular_to INTEGER DEFAULT 0")
+            conn.commit()
+    except Exception:
+        pass
+    try:
+        if not IS_POSTGRES:
+            conn.execute("ALTER TABLE objects ADD COLUMN next_to_date TEXT")
+            conn.commit()
+    except Exception:
+        pass
+    try:
+        if not IS_POSTGRES:
+            conn.execute("ALTER TABLE objects ADD COLUMN next_to_note TEXT")
             conn.commit()
     except Exception:
         pass

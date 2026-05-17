@@ -329,6 +329,7 @@
                     <div style="display:flex; gap:8px; align-items:center;">
                         <input type="number" id="salary" step="0.01" value="0" style="flex:1;" readonly title="Рассчитывается автоматически">
                         <button type="button" class="btn" style="background:#9C27B0; color:white; font-size:11px; padding:6px 10px;" onclick="openWorkersModal(editingId)">👷 Рабочие</button>
+                        <button type="button" class="btn" style="background:#00796B; color:white; font-size:11px; padding:6px 10px;" onclick="openWellSurveysModal()" title="Опытные замеры и расчёт дебита">🔬 Замеры</button>
                     </div>
                     <small id="salary-info" style="color:#666; display:block; margin-top:3px;"></small>
                 </div>
@@ -410,6 +411,40 @@
             
             <div class="modal-actions" style="display:flex; gap:10px; margin-top:15px; justify-content:flex-end;">
                 <button class="btn" style="background:#999" onclick="closeWorkersModal()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Замеры / обследование скважины -->
+    <div class="modal" id="wellSurveysModal">
+        <div class="modal-content" style="width: min(96vw, 920px); max-height: 92vh; overflow-y: auto;">
+            <h2>🔬 Замеры и расчёты скважины</h2>
+            <p style="color:#666; margin:5px 0 12px; font-size:13px;">История опытных замеров и расчётов (в т.ч. из диспетчера). Формула дебита как в калькуляторе: Q = Qнасос × (hрасч − hст) / (hдин − hст).</p>
+            <div id="well-surveys-list" style="margin-bottom:18px;"></div>
+            <h3 style="font-size:15px; color:#2E75B6; margin:12px 0 8px;">Новая запись</h3>
+            <div class="form-row">
+                <div class="form-group" style="flex:2;"><label>Заголовок</label><input type="text" id="ws-title" placeholder="Например: Обследование перед монтажом"></div>
+                <div class="form-group"><label>Источник</label>
+                    <select id="ws-source"><option value="manual">Вручную</option><option value="calculator">Калькулятор (ПК)</option><option value="dispatcher">Диспетчер</option></select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Статика, м</label><input type="number" id="ws-statika" step="0.1" placeholder="статика"></div>
+                <div class="form-group"><label>Динамика, м</label><input type="number" id="ws-dinamika" step="0.1" placeholder="динамика"></div>
+                <div class="form-group"><label>Глубина, м</label><input type="number" id="ws-glubina" step="0.1" placeholder="глина"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Насос м³/ч</label><input type="number" id="ws-nasos" step="0.01" placeholder="расход насоса"></div>
+                <div class="form-group"><label>Расчётная глубина, м</label><input type="number" id="ws-raschet" step="0.1" placeholder="точка расчёта"></div>
+                <div class="form-group"><label>Дебит м³/ч (расчёт)</label><input type="text" id="ws-debit-preview" readonly style="background:#f5f5f5;" title="Нажмите «Пересчитать»"></div>
+            </div>
+            <div style="margin-bottom:10px;">
+                <button type="button" class="btn" style="background:#2E75B6;color:white;" onclick="wellSurveyRecalcDebit()">Пересчитать дебит</button>
+            </div>
+            <div class="form-group"><label>Вывод / заключение</label><textarea id="ws-conclusion" rows="3" placeholder="Итоги обследования, рекомендации…"></textarea></div>
+            <div class="modal-actions" style="display:flex; gap:10px; margin-top:12px; justify-content:flex-end; flex-wrap:wrap;">
+                <button type="button" class="btn btn-primary" onclick="submitWellSurvey()">💾 Добавить запись</button>
+                <button type="button" class="btn" style="background:#999" onclick="closeWellSurveysModal()">Закрыть</button>
             </div>
         </div>
     </div>
@@ -1882,6 +1917,10 @@
         if (estModal) estModal.addEventListener('click', function(e) {
             if (e.target.id === 'estimates-modal') closeEstimates();
         });
+        var wsModalEl = document.getElementById('wellSurveysModal');
+        if (wsModalEl) wsModalEl.addEventListener('click', function(e) {
+            if (e.target.id === 'wellSurveysModal') closeWellSurveysModal();
+        });
 
         // Функция включения поиска
         function enableSearch() {
@@ -2245,6 +2284,144 @@
                 notifyObjectsDataChangedExternally();
                 void loadData(currentPage);
             } catch(e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // === Замеры скважины (обследование / дебит) ===
+        let wellSurveyObjectId = null;
+
+        function wellSurveyDebitFromInputs(stat, dyn, calcD, pump) {
+            var s = Number(stat), d = Number(dyn), h = Number(calcD), q = Number(pump);
+            if (!isFinite(s) || !isFinite(d) || !isFinite(h) || !isFinite(q)) return null;
+            if (Math.abs(d - s) < 1e-9) return null;
+            return q / (d - s) * (h - s);
+        }
+
+        function wellSurveyRecalcDebit() {
+            var el = document.getElementById('ws-debit-preview');
+            if (!el) return;
+            var v = wellSurveyDebitFromInputs(
+                document.getElementById('ws-statika').value,
+                document.getElementById('ws-dinamika').value,
+                document.getElementById('ws-raschet').value,
+                document.getElementById('ws-nasos').value
+            );
+            if (v == null) { el.value = '—'; return; }
+            el.value = v.toFixed(2);
+        }
+
+        function openWellSurveysModal() {
+            if (!editingId) {
+                alert('Сначала сохраните объект, чтобы вести замеры');
+                return;
+            }
+            wellSurveyObjectId = editingId;
+            document.getElementById('wellSurveysModal').classList.add('active');
+            loadWellSurveysList();
+            wellSurveyRecalcDebit();
+        }
+
+        function closeWellSurveysModal() {
+            document.getElementById('wellSurveysModal').classList.remove('active');
+            wellSurveyObjectId = null;
+        }
+
+        async function loadWellSurveysList() {
+            var box = document.getElementById('well-surveys-list');
+            if (!wellSurveyObjectId || !box) return;
+            box.innerHTML = '<p style="text-align:center;color:#999;">Загрузка…</p>';
+            try {
+                var res = await fetch('/api/objects/' + wellSurveyObjectId + '/well-surveys');
+                if (!res.ok) { box.innerHTML = '<p style="color:#f44336;">Не удалось загрузить записи</p>'; return; }
+                var data = await res.json();
+                var list = data.surveys || [];
+                if (list.length === 0) {
+                    box.innerHTML = '<p style="text-align:center;color:#999;padding:12px;">Пока нет записей. Добавьте первую ниже или из диспетчера.</p>';
+                    return;
+                }
+                var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#e3f2fd;">';
+                html += '<th style="padding:6px;text-align:left;">Дата</th><th style="padding:6px;">Источник</th><th style="padding:6px;">Задача</th>';
+                html += '<th style="padding:6px;text-align:left;">Заголовок</th><th style="padding:6px;">Дебит</th><th style="padding:6px;text-align:left;">Вывод</th><th style="padding:6px;"></th></tr></thead><tbody>';
+                list.forEach(function(s) {
+                    var comp = s.computed || {};
+                    var debit = (comp.debit_m3h != null && isFinite(Number(comp.debit_m3h))) ? Number(comp.debit_m3h).toFixed(2) : '—';
+                    var src = escHtml(s.source || '');
+                    var conc = String(s.conclusion || '').trim();
+                    var concShort = conc.length > 80 ? conc.slice(0, 80) + '…' : conc;
+                    html += '<tr style="border-bottom:1px solid #eee;">';
+                    html += '<td style="padding:6px;">' + escHtml(String(s.measured_at || '')) + '</td>';
+                    html += '<td style="padding:6px;text-align:center;">' + src + '</td>';
+                    html += '<td style="padding:6px;text-align:center;font-size:11px;">' + escHtml(String(s.task_id || '—')) + '</td>';
+                    html += '<td style="padding:6px;">' + escHtml(String(s.title || '—')) + '</td>';
+                    html += '<td style="padding:6px;text-align:center;">' + debit + '</td>';
+                    html += '<td style="padding:6px;">' + escHtml(concShort) + '</td>';
+                    html += '<td style="padding:6px;text-align:center;"><button type="button" onclick="deleteWellSurvey(' + s.id + ')" style="background:#f44336;color:white;border:none;border-radius:3px;padding:3px 8px;cursor:pointer;font-size:11px;">✕</button></td>';
+                    html += '</tr>';
+                });
+                html += '</tbody></table>';
+                box.innerHTML = html;
+            } catch (e) {
+                box.innerHTML = '<p style="color:#f44336;">Ошибка загрузки</p>';
+            }
+        }
+
+        async function submitWellSurvey() {
+            if (!wellSurveyObjectId) return;
+            wellSurveyRecalcDebit();
+            var title = document.getElementById('ws-title').value.trim();
+            var source = document.getElementById('ws-source').value || 'manual';
+            var stat = parseFloat(String(document.getElementById('ws-statika').value).replace(',', '.'));
+            var dyn = parseFloat(String(document.getElementById('ws-dinamika').value).replace(',', '.'));
+            var gl = parseFloat(String(document.getElementById('ws-glubina').value).replace(',', '.'));
+            var nasos = parseFloat(String(document.getElementById('ws-nasos').value).replace(',', '.'));
+            var raschet = parseFloat(String(document.getElementById('ws-raschet').value).replace(',', '.'));
+            var conclusion = document.getElementById('ws-conclusion').value.trim();
+            var inputs = {};
+            if (isFinite(stat)) inputs.static_m = stat;
+            if (isFinite(dyn)) inputs.dynamic_m = dyn;
+            if (isFinite(gl)) inputs.well_depth_m = gl;
+            if (isFinite(nasos)) inputs.pump_m3h = nasos;
+            if (isFinite(raschet)) inputs.calc_depth_m = raschet;
+            var computed = {};
+            var dv = document.getElementById('ws-debit-preview').value;
+            if (dv && dv !== '—') {
+                var dq = parseFloat(dv.replace(',', '.'));
+                if (isFinite(dq)) computed.debit_m3h = dq;
+                if (isFinite(raschet)) computed.recommended_head_m = raschet + 80;
+            }
+            try {
+                var res = await fetchCsrf('/api/objects/' + wellSurveyObjectId + '/well-surveys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: title,
+                        source: source,
+                        conclusion: conclusion,
+                        inputs: inputs,
+                        computed: computed
+                    })
+                });
+                if (!res.ok) {
+                    var err = await res.json().catch(function() { return {}; });
+                    alert('Ошибка: ' + (err.error || res.status));
+                    return;
+                }
+                document.getElementById('ws-title').value = '';
+                document.getElementById('ws-conclusion').value = '';
+                loadWellSurveysList();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function deleteWellSurvey(surveyId) {
+            if (!wellSurveyObjectId || !surveyId) return;
+            if (!confirm('Удалить эту запись замера?')) return;
+            try {
+                await fetchCsrf('/api/objects/' + wellSurveyObjectId + '/well-surveys/' + surveyId, { method: 'DELETE' });
+                loadWellSurveysList();
+            } catch (e) {
                 alert('Ошибка: ' + e.message);
             }
         }
