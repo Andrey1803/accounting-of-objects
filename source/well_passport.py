@@ -4,8 +4,12 @@
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -13,26 +17,79 @@ from typing import Any, Optional
 
 from docx import Document
 
-from well_inspection_act import (
-    PdfConversionError,
-    _debit_from_measure,
-    _debit_from_pump,
-    _num,
-    _set_paragraph_text,
-    convert_docx_to_pdf,
-    fmt_num_comma,
-    format_duration_ru,
-    parse_measured_at,
-    survey_row_for_act,
-)
-
 _BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = _BASE_DIR / 'static' / 'templates' / 'well_passport_template.docx'
 
 DEFAULT_EXECUTOR = os.environ.get(
-    'WELL_PASSPORT_EXECUTOR',
-    os.environ.get('WELL_ACT_EXECUTOR', 'Индивидуальный предприниматель Емельянов А.Н.'),
+    'WELL_PASSPORT_EXECUTOR', 'Индивидуальный предприниматель Емельянов А.Н.'
 )
+
+
+class PdfConversionError(RuntimeError):
+    pass
+
+
+def _num(v: Any) -> Optional[float]:
+    if v is None or v == '':
+        return None
+    try:
+        x = float(str(v).replace(',', '.'))
+        return x if x == x else None
+    except (TypeError, ValueError):
+        return None
+
+
+def fmt_num_comma(val: Optional[float], decimals: int = 1) -> str:
+    if val is None:
+        return '—'
+    s = f'{val:.{decimals}f}'.rstrip('0').rstrip('.')
+    return s.replace('.', ',')
+
+
+def format_duration_ru(seconds: Optional[float]) -> str:
+    if seconds is None or seconds <= 0:
+        return '1 часа'
+    sec = float(seconds)
+    if sec >= 3600:
+        h = sec / 3600
+        hi = int(round(h))
+        if hi == 1:
+            return '1 часа'
+        if 2 <= hi <= 4:
+            return f'{hi} часа'
+        return f'{hi} часов'
+    minutes = max(1, int(round(sec / 60)))
+    if minutes == 1:
+        return '1 минуты'
+    if 2 <= minutes <= 4:
+        return f'{minutes} минуты'
+    return f'{minutes} минут'
+
+
+def _debit_from_measure(inputs: dict) -> Optional[float]:
+    liters = _num(inputs.get('measure_liters'))
+    seconds = _num(inputs.get('measure_seconds'))
+    if liters is None or seconds is None or seconds <= 0:
+        return None
+    return (liters / 1000) / (seconds / 3600)
+
+
+def _debit_from_pump(inputs: dict) -> Optional[float]:
+    stat = _num(inputs.get('static_m'))
+    dyn = _num(inputs.get('dynamic_m'))
+    calc = _num(inputs.get('calc_depth_m'))
+    pump = _num(inputs.get('pump_m3h'))
+    if None in (stat, dyn, calc, pump) or abs(dyn - stat) < 1e-9:
+        return None
+    return pump / (dyn - stat) * (calc - stat)
+
+
+def _pick_str(overrides: dict, inputs: dict, key: str, default: str = '') -> str:
+    for src in (overrides, inputs):
+        v = src.get(key)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return default
 
 
 def _field_line(label: str, value: str, min_pad: int = 44) -> str:
@@ -44,7 +101,6 @@ def _field_line(label: str, value: str, min_pad: int = 44) -> str:
 
 
 def parse_address_parts(address: str) -> dict[str, str]:
-    """Разбить адрес по запятым: область, район, н.п., улица, дом."""
     keys = ('region', 'district', 'settlement', 'street', 'house')
     out = {k: '' for k in keys}
     if not address or not str(address).strip():
@@ -105,7 +161,7 @@ def build_passport_context(
     if inline_conclusion is not None:
         conclusion = inline_conclusion.strip()
 
-    address = (overrides.get('address') or '').strip()
+    address = _pick_str(overrides, inputs, 'address')
     if not address and client_row:
         address = (client_row.get('address') or '').strip()
     if not address:
@@ -113,8 +169,9 @@ def build_passport_context(
 
     addr_parts = parse_address_parts(address)
     for key in ('region', 'district', 'settlement', 'street', 'house'):
-        if overrides.get(key):
-            addr_parts[key] = str(overrides[key]).strip()
+        v = _pick_str(overrides, inputs, key)
+        if v:
+            addr_parts[key] = v
 
     static_m = _num(inputs.get('static_m'))
     dynamic_m = _num(inputs.get('dynamic_m'))
@@ -126,9 +183,9 @@ def build_passport_context(
     if debit_dyn is None:
         debit_dyn = _debit_from_measure(inputs)
 
-    pump_mark = (overrides.get('pump_mark') or '').strip()
-    pipe_text = (overrides.get('pipe') or '').strip()
-    casing = (overrides.get('casing_diameter') or '').strip()
+    pump_mark = _pick_str(overrides, inputs, 'pump_mark')
+    pipe_text = _pick_str(overrides, inputs, 'pipe')
+    casing = _pick_str(overrides, inputs, 'casing_diameter')
     if not casing and pipe_text:
         m = re.search(r'ду\s*(\d+)', pipe_text, re.I)
         if m:
@@ -136,13 +193,12 @@ def build_passport_context(
         elif '89' in pipe_text:
             casing = '89 мм'
 
-    material = (overrides.get('pipe_material') or '').strip() or 'сталь'
-    filter_iv = (overrides.get('filter_interval') or '').strip()
-    sump_iv = (overrides.get('sump_interval') or '').strip()
-
-    executor = (overrides.get('executor') or '').strip() or DEFAULT_EXECUTOR
+    material = _pick_str(overrides, inputs, 'pipe_material') or 'сталь'
+    filter_iv = _pick_str(overrides, inputs, 'filter_interval')
+    sump_iv = _pick_str(overrides, inputs, 'sump_interval')
+    executor = _pick_str(overrides, inputs, 'executor') or DEFAULT_EXECUTOR
     rec_lines = _split_recommendations(
-        (overrides.get('conclusion') or '').strip() or conclusion, 3
+        _pick_str(overrides, inputs, 'conclusion') or conclusion, 3
     )
 
     depth_s = f'{fmt_num_comma(depth_m)}м' if depth_m is not None else ''
@@ -186,6 +242,15 @@ def build_passport_context(
     }
 
 
+def _set_paragraph_text(paragraph, text: str) -> None:
+    if not paragraph.runs:
+        paragraph.add_run(text)
+        return
+    paragraph.runs[0].text = text
+    for run in paragraph.runs[1:]:
+        run.text = ''
+
+
 def fill_passport_docx(context: dict[str, Any], dest_path: Path) -> Path:
     if not TEMPLATE_PATH.is_file():
         raise FileNotFoundError(f'Шаблон паспорта не найден: {TEMPLATE_PATH}')
@@ -197,6 +262,42 @@ def fill_passport_docx(context: dict[str, Any], dest_path: Path) -> Path:
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(dest_path))
     return dest_path
+
+
+def convert_docx_to_pdf(docx_path: Path, pdf_path: Path) -> Path:
+    docx_path = Path(docx_path)
+    pdf_path = Path(pdf_path)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from docx2pdf import convert as docx2pdf_convert
+
+        docx2pdf_convert(str(docx_path), str(pdf_path))
+        if pdf_path.is_file() and pdf_path.stat().st_size > 0:
+            return pdf_path
+    except Exception as e:
+        logging.debug('docx2pdf: %s', e)
+    soffice = shutil.which('soffice') or shutil.which('libreoffice')
+    if soffice:
+        out_dir = pdf_path.parent
+        proc = subprocess.run(
+            [
+                soffice, '--headless', '--norestore', '--convert-to', 'pdf',
+                '--outdir', str(out_dir), str(docx_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            logging.warning('LibreOffice PDF: %s', proc.stderr or proc.stdout)
+        generated = out_dir / (docx_path.stem + '.pdf')
+        if generated.is_file() and generated != pdf_path:
+            generated.replace(pdf_path)
+        if pdf_path.is_file() and pdf_path.stat().st_size > 0:
+            return pdf_path
+    raise PdfConversionError(
+        'Не удалось создать PDF. Скачайте DOCX или установите Microsoft Word / LibreOffice.'
+    )
 
 
 def generate_passport_files(
@@ -217,3 +318,22 @@ def generate_passport_files(
         except PdfConversionError:
             pdf_path = None
     return docx_path, pdf_path
+
+
+def survey_row_for_passport(row: dict) -> dict:
+    def _json_field(val, default):
+        if isinstance(val, dict):
+            return val
+        if not val:
+            return default
+        try:
+            return json.loads(val)
+        except Exception:
+            return default
+
+    return {
+        'measured_at': row.get('measured_at'),
+        'conclusion': row.get('conclusion'),
+        'inputs': _json_field(row.get('inputs_json'), {}),
+        'computed': _json_field(row.get('computed_json'), {}),
+    }

@@ -428,6 +428,16 @@
                     <select id="ws-source"><option value="manual">Вручную</option><option value="calculator">Калькулятор (ПК)</option><option value="dispatcher">Диспетчер</option></select>
                 </div>
             </div>
+            <h4 style="font-size:13px; color:#444; margin:10px 0 6px;">Местоположение</h4>
+            <div class="form-row">
+                <div class="form-group"><label>Область</label><input type="text" id="ws-region" placeholder="Минская область"></div>
+                <div class="form-group"><label>Район</label><input type="text" id="ws-district" placeholder="Дзержинский р-н"></div>
+                <div class="form-group"><label>Нас. пункт</label><input type="text" id="ws-settlement"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Улица</label><input type="text" id="ws-street"></div>
+                <div class="form-group"><label>Дом / участок</label><input type="text" id="ws-house" placeholder="43"></div>
+            </div>
             <h4 style="font-size:13px; color:#444; margin:10px 0 6px;">Уровни воды и глубина скважины</h4>
             <div class="form-row">
                 <div class="form-group"><label title="Уровень воды от устья в покое">Статический уровень, м</label><input type="number" id="ws-statika" step="0.1" placeholder="от устья" oninput="wellSurveyRecalcDebit()"></div>
@@ -447,51 +457,28 @@
                 <div class="form-group"><label>Расчётная глубина, м</label><input type="number" id="ws-raschet" step="0.1" placeholder="точка подвеса / расчёт" oninput="wellSurveyRecalcDebit()"></div>
                 <div class="form-group"><label>Дебит по формуле насоса, м³/ч</label><input type="text" id="ws-debit-preview" readonly style="background:#f5f5f5;" title="По уровням и расходу насоса"></div>
             </div>
+            
+            <div class="form-row">
+                <div class="form-group"><label>Марка насоса</label><input type="text" id="ws-pump-mark" placeholder="ЭЦВ 8-25-120"></div>
+                <div class="form-group" style="flex:2;"><label>Труба / присоединение</label><input type="text" id="ws-pipe" placeholder="ду 89, длина 36 м, фланец…"></div>
+            </div>
+            <h4 style="font-size:13px; color:#444; margin:10px 0 6px;">Конструкция скважины</h4>
+            <div class="form-row">
+                <div class="form-group"><label>Диаметр обсадной трубы</label><input type="text" id="ws-casing" placeholder="89 мм"></div>
+                <div class="form-group"><label>Материал трубы</label><input type="text" id="ws-material" placeholder="сталь"></div>
+                <div class="form-group"><label>Интервал фильтра</label><input type="text" id="ws-filter"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Интервал отстойника</label><input type="text" id="ws-sump"></div>
+                <div class="form-group" style="flex:2;"><label>Исполнитель</label><input type="text" id="ws-executor" placeholder="ИП Емельянов А.Н."></div>
+            </div>
             <div style="margin-bottom:10px;">
                 <button type="button" class="btn" style="background:#2E75B6;color:white;" onclick="wellSurveyRecalcDebit()">Пересчитать</button>
             </div>
-            <div class="form-group"><label>Вывод / заключение</label><textarea id="ws-conclusion" rows="3" placeholder="Итоги обследования, рекомендации…"></textarea></div>
-            <h3 style="font-size:15px; color:#2E75B6; margin:16px 0 8px;">Паспорт скважины</h3>
-            <p style="font-size:12px; color:#666; margin:0 0 8px;">Адрес разбивается по полям шаблона. Уровни и дебит — из замеров выше.</p>
-            <div class="form-row">
-                <div class="form-group"><label>Область</label><input type="text" id="ws-pass-region" placeholder="Минская область"></div>
-                <div class="form-group"><label>Район</label><input type="text" id="ws-pass-district" placeholder="Дзержинский р-н"></div>
-                <div class="form-group"><label>Нас. пункт</label><input type="text" id="ws-pass-settlement"></div>
-            </div>
-            <div class="form-row">
-                <div class="form-group"><label>Улица</label><input type="text" id="ws-pass-street"></div>
-                <div class="form-group"><label>Дом / участок</label><input type="text" id="ws-pass-house" placeholder="43"></div>
-                <div class="form-group"><label>Диаметр обсадной трубы</label><input type="text" id="ws-pass-casing" placeholder="89 мм"></div>
-            </div>
-            <div class="form-row">
-                <div class="form-group"><label>Материал трубы</label><input type="text" id="ws-pass-material" placeholder="сталь"></div>
-                <div class="form-group"><label>Интервал фильтра</label><input type="text" id="ws-pass-filter"></div>
-                <div class="form-group"><label>Интервал отстойника</label><input type="text" id="ws-pass-sump"></div>
-            </div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin:0 0 14px;">
+            <div class="form-group"><label>Рекомендации / заключение</label><textarea id="ws-conclusion" rows="3" placeholder="Итоги обследования, рекомендации…"></textarea></div>
+            <div class="modal-actions" style="display:flex; gap:10px; margin-top:12px; justify-content:flex-end; flex-wrap:wrap;">
                 <button type="button" class="btn" style="background:#6a1b9a;color:white;" onclick="downloadWellPassport('pdf')">📘 Паспорт PDF</button>
                 <button type="button" class="btn" style="background:#4527a0;color:white;" onclick="downloadWellPassport('docx')">📘 Паспорт DOCX</button>
-            </div>
-            <h3 style="font-size:15px; color:#2E75B6; margin:16px 0 8px;">Акт обследования скважины</h3>
-            <p style="font-size:12px; color:#666; margin:0 0 10px;">Данные для Word/PDF по вашему шаблону. Заказчик и адрес подставляются из карточки клиента.</p>
-            <div class="form-row">
-                <div class="form-group" style="flex:1;"><label>Заказчик</label><input type="text" id="ws-act-customer" placeholder="ООО «…»"></div>
-                <div class="form-group" style="flex:2;"><label>Адрес объекта</label><input type="text" id="ws-act-address" placeholder="область, район, населённый пункт"></div>
-            </div>
-            <div class="form-row">
-                <div class="form-group" style="flex:2;"><label>Труба / присоединение</label><input type="text" id="ws-act-pipe" placeholder="ду 89, длина, фланец…"></div>
-                <div class="form-group" style="flex:1;"><label>Марка насоса</label><input type="text" id="ws-act-pump" placeholder="ЭЦВ 8-25-120"></div>
-            </div>
-            <div class="form-row">
-                <div class="form-group" style="flex:2;"><label>Видеоинспекция (текст в акте)</label><input type="text" id="ws-act-video" placeholder="илистые отложения на глубине…"></div>
-                <div class="form-group"><label>Телефон (Viber)</label><input type="text" id="ws-act-phone" placeholder="+375…"></div>
-                <div class="form-group" style="flex:1;"><label>Исполнитель</label><input type="text" id="ws-act-executor" placeholder="ИП …"></div>
-            </div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px;">
-                <button type="button" class="btn" style="background:#c62828;color:white;" onclick="downloadWellInspectionAct('pdf')">📄 Акт PDF</button>
-                <button type="button" class="btn" style="background:#1565c0;color:white;" onclick="downloadWellInspectionAct('docx')">📝 Акт DOCX</button>
-            </div>
-            <div class="modal-actions" style="display:flex; gap:10px; margin-top:12px; justify-content:flex-end; flex-wrap:wrap;">
                 <button type="button" class="btn btn-primary" onclick="submitWellSurvey()">💾 Добавить запись</button>
                 <button type="button" class="btn" style="background:#999" onclick="closeWellSurveysModal()">Закрыть</button>
             </div>
@@ -2388,40 +2375,27 @@
             }
         }
 
-        function fillWellActFieldsFromObject() {
+        function fillWellSurveyFieldsFromObject() {
             var obj = objects.find(function(o) { return o.id === wellSurveyObjectId; });
             if (!obj) return;
-            var custEl = document.getElementById('ws-act-customer');
-            var addrEl = document.getElementById('ws-act-address');
-            var phoneEl = document.getElementById('ws-act-phone');
-            var execEl = document.getElementById('ws-act-executor');
-            var pipeEl = document.getElementById('ws-act-pipe');
-            var pumpEl = document.getElementById('ws-act-pump');
-            var clientName = obj.client || '';
+            var execEl = document.getElementById('ws-executor');
+            var pipeEl = document.getElementById('ws-pipe');
+            var pumpEl = document.getElementById('ws-pump-mark');
+            var matEl = document.getElementById('ws-material');
             var clientAddr = '';
-            var clientPhone = '';
             if (obj.client_id != null && obj.client_id !== '') {
                 var c = clients.find(function(x) { return Number(x.id) === Number(obj.client_id); });
-                if (c) {
-                    if (c.name) clientName = c.name;
-                    clientAddr = c.address || '';
-                    clientPhone = c.phone || '';
-                }
+                if (c && c.address) clientAddr = c.address;
             }
-            if (custEl && !custEl.value) custEl.value = clientName;
-            if (addrEl && !addrEl.value) addrEl.value = clientAddr || (obj.name || '');
-            if (phoneEl && !phoneEl.value) phoneEl.value = clientPhone;
+            splitAddressToPassportFields(clientAddr || obj.name || '');
+            if (matEl && !matEl.value) matEl.value = 'сталь';
             try {
-                var saved = JSON.parse(localStorage.getItem('wellActDefaults') || '{}');
+                var saved = JSON.parse(localStorage.getItem('wellSurveyDefaults') || '{}');
                 if (execEl && !execEl.value && saved.executor) execEl.value = saved.executor;
                 if (pipeEl && !pipeEl.value && saved.pipe) pipeEl.value = saved.pipe;
                 if (pumpEl && !pumpEl.value && saved.pump_mark) pumpEl.value = saved.pump_mark;
             } catch (e) {}
-            var addrForPass = (addrEl && addrEl.value) ? addrEl.value : (clientAddr || obj.name || '');
-            splitAddressToPassportFields(addrForPass);
-            var casingEl = document.getElementById('ws-pass-casing');
-            var matEl = document.getElementById('ws-pass-material');
-            if (matEl && !matEl.value) matEl.value = 'сталь';
+            var casingEl = document.getElementById('ws-casing');
             if (pipeEl && pipeEl.value && casingEl && !casingEl.value) {
                 var dm = pipeEl.value.match(/ду\s*(\d+)/i);
                 if (dm) casingEl.value = dm[1] + ' мм';
@@ -2430,52 +2404,43 @@
 
         function splitAddressToPassportFields(addr) {
             var chunks = String(addr || '').split(/[,;]/).map(function(s) { return s.trim(); }).filter(Boolean);
-            var ids = ['ws-pass-region', 'ws-pass-district', 'ws-pass-settlement', 'ws-pass-street', 'ws-pass-house'];
+            var ids = ['ws-region', 'ws-district', 'ws-settlement', 'ws-street', 'ws-house'];
             for (var i = 0; i < ids.length; i++) {
                 var el = document.getElementById(ids[i]);
                 if (el && !el.value && chunks[i]) el.value = chunks[i];
             }
         }
 
-        function wellActOverridesPayload() {
+        function wellPassportOverridesPayload() {
             var o = {};
             function setIf(id, key) {
                 var el = document.getElementById(id);
                 if (el && String(el.value || '').trim()) o[key] = el.value.trim();
             }
-            setIf('ws-act-customer', 'customer');
-            setIf('ws-act-address', 'address');
-            setIf('ws-act-pipe', 'pipe');
-            setIf('ws-act-pump', 'pump_mark');
-            setIf('ws-act-video', 'video_note');
-            setIf('ws-act-phone', 'phone');
-            setIf('ws-act-executor', 'executor');
+            setIf('ws-region', 'region');
+            setIf('ws-district', 'district');
+            setIf('ws-settlement', 'settlement');
+            setIf('ws-street', 'street');
+            setIf('ws-house', 'house');
+            setIf('ws-casing', 'casing_diameter');
+            setIf('ws-material', 'pipe_material');
+            setIf('ws-filter', 'filter_interval');
+            setIf('ws-sump', 'sump_interval');
+            setIf('ws-pipe', 'pipe');
+            setIf('ws-pump-mark', 'pump_mark');
+            setIf('ws-executor', 'executor');
             try {
-                localStorage.setItem('wellActDefaults', JSON.stringify({
-                    executor: (document.getElementById('ws-act-executor') || {}).value || '',
-                    pipe: (document.getElementById('ws-act-pipe') || {}).value || '',
-                    pump_mark: (document.getElementById('ws-act-pump') || {}).value || ''
+                localStorage.setItem('wellSurveyDefaults', JSON.stringify({
+                    executor: (document.getElementById('ws-executor') || {}).value || '',
+                    pipe: (document.getElementById('ws-pipe') || {}).value || '',
+                    pump_mark: (document.getElementById('ws-pump-mark') || {}).value || ''
                 }));
             } catch (e) {}
             return o;
         }
 
-        function wellPassportOverridesPayload() {
-            var o = wellActOverridesPayload();
-            function setIf(id, key) {
-                var el = document.getElementById(id);
-                if (el && String(el.value || '').trim()) o[key] = el.value.trim();
-            }
-            setIf('ws-pass-region', 'region');
-            setIf('ws-pass-district', 'district');
-            setIf('ws-pass-settlement', 'settlement');
-            setIf('ws-pass-street', 'street');
-            setIf('ws-pass-house', 'house');
-            setIf('ws-pass-casing', 'casing_diameter');
-            setIf('ws-pass-material', 'pipe_material');
-            setIf('ws-pass-filter', 'filter_interval');
-            setIf('ws-pass-sump', 'sump_interval');
-            return o;
+        function wellSurveyPassportInputs() {
+            return wellPassportOverridesPayload();
         }
 
         function wellSurveyFormPayload() {
@@ -2495,6 +2460,8 @@
             if (isFinite(raschet)) inputs.calc_depth_m = raschet;
             if (isFinite(measureL)) inputs.measure_liters = measureL;
             if (isFinite(measureSec)) inputs.measure_seconds = measureSec;
+            var pass = wellSurveyPassportInputs();
+            Object.keys(pass).forEach(function(k) { inputs[k] = pass[k]; });
             var computed = {};
             var dvM = document.getElementById('ws-debit-measure-preview') && document.getElementById('ws-debit-measure-preview').value;
             if (dvM && dvM !== '—') {
@@ -2511,52 +2478,6 @@
                 computed: computed,
                 conclusion: document.getElementById('ws-conclusion').value.trim()
             };
-        }
-
-        async function downloadWellInspectionAct(format, surveyId) {
-            if (!wellSurveyObjectId) return;
-            wellSurveyRecalcDebit();
-            var fmt = format === 'docx' ? 'docx' : 'pdf';
-            var url;
-            var opts = { method: 'GET' };
-            if (surveyId) {
-                var q = new URLSearchParams({ format: fmt });
-                var ov = wellActOverridesPayload();
-                Object.keys(ov).forEach(function(k) { q.set(k, ov[k]); });
-                url = '/api/objects/' + wellSurveyObjectId + '/well-surveys/' + surveyId + '/inspection-act?' + q.toString();
-            } else {
-                var body = wellSurveyFormPayload();
-                body.overrides = wellActOverridesPayload();
-                url = '/api/objects/' + wellSurveyObjectId + '/inspection-act?format=' + encodeURIComponent(fmt);
-                opts = {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                };
-            }
-            try {
-                var res = surveyId ? await fetch(url, opts) : await fetchCsrf(url, opts);
-                if (!res.ok) {
-                    var err = await res.json().catch(function() { return {}; });
-                    alert(err.error || ('Ошибка ' + res.status));
-                    if (res.status === 503 && fmt === 'pdf') {
-                        if (confirm('Скачать DOCX вместо PDF?')) downloadWellInspectionAct('docx', surveyId);
-                    }
-                    return;
-                }
-                var blob = await res.blob();
-                var disp = res.headers.get('Content-Disposition') || '';
-                var m = /filename\*?=(?:UTF-8'')?["']?([^"';]+)/i.exec(disp);
-                var fname = (m && m[1]) ? decodeURIComponent(m[1]) : ('akt_obledovaniya.' + fmt);
-                var a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = fname;
-                document.body.appendChild(a);
-                a.click();
-                setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 500);
-            } catch (e) {
-                alert('Ошибка: ' + e.message);
-            }
         }
 
         async function downloadWellPassport(format, surveyId) {
@@ -2612,7 +2533,7 @@
             }
             wellSurveyObjectId = editingId;
             document.getElementById('wellSurveysModal').classList.add('active');
-            fillWellActFieldsFromObject();
+            fillWellSurveyFieldsFromObject();
             loadWellSurveysList();
             wellSurveyRecalcDebit();
         }
@@ -2637,7 +2558,7 @@
                 }
                 var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#e3f2fd;">';
                 html += '<th style="padding:6px;text-align:left;">Дата</th><th style="padding:6px;">Источник</th><th style="padding:6px;">Задача</th>';
-                html += '<th style="padding:6px;text-align:left;">Заголовок</th><th style="padding:6px;" title="м³/ч: по замеру / по формуле насоса">Дебит</th><th style="padding:6px;text-align:left;">Вывод</th><th style="padding:6px;">Акт</th><th style="padding:6px;">Паспорт</th><th style="padding:6px;"></th></tr></thead><tbody>';
+                html += '<th style="padding:6px;text-align:left;">Заголовок</th><th style="padding:6px;" title="м³/ч: по замеру / по формуле насоса">Дебит</th><th style="padding:6px;text-align:left;">Вывод</th><th style="padding:6px;">Паспорт</th><th style="padding:6px;"></th></tr></thead><tbody>';
                 list.forEach(function(s) {
                     var comp = s.computed || {};
                     var dDyn = comp.debit_m3h_dynamic != null && isFinite(Number(comp.debit_m3h_dynamic)) ? Number(comp.debit_m3h_dynamic) : null;
@@ -2658,10 +2579,6 @@
                     html += '<td style="padding:6px;">' + escHtml(String(s.title || '—')) + '</td>';
                     html += '<td style="padding:6px;text-align:center;">' + debit + '</td>';
                     html += '<td style="padding:6px;">' + escHtml(concShort) + '</td>';
-                    html += '<td style="padding:6px;text-align:center;white-space:nowrap;">';
-                    html += '<button type="button" title="PDF" onclick="downloadWellInspectionAct(\'pdf\',' + s.id + ')" style="background:#c62828;color:white;border:none;border-radius:3px;padding:3px 6px;cursor:pointer;font-size:11px;margin-right:2px;">PDF</button>';
-                    html += '<button type="button" title="DOCX" onclick="downloadWellInspectionAct(\'docx\',' + s.id + ')" style="background:#1565c0;color:white;border:none;border-radius:3px;padding:3px 6px;cursor:pointer;font-size:11px;">DOC</button>';
-                    html += '</td>';
                     html += '<td style="padding:6px;text-align:center;white-space:nowrap;">';
                     html += '<button type="button" title="Паспорт PDF" onclick="downloadWellPassport(\'pdf\',' + s.id + ')" style="background:#6a1b9a;color:white;border:none;border-radius:3px;padding:3px 6px;cursor:pointer;font-size:11px;margin-right:2px;">PDF</button>';
                     html += '<button type="button" title="Паспорт DOCX" onclick="downloadWellPassport(\'docx\',' + s.id + ')" style="background:#4527a0;color:white;border:none;border-radius:3px;padding:3px 6px;cursor:pointer;font-size:11px;">DOC</button>';
@@ -2697,6 +2614,8 @@
             if (isFinite(raschet)) inputs.calc_depth_m = raschet;
             if (isFinite(measureL)) inputs.measure_liters = measureL;
             if (isFinite(measureSec)) inputs.measure_seconds = measureSec;
+            var pass = wellSurveyPassportInputs();
+            Object.keys(pass).forEach(function(k) { inputs[k] = pass[k]; });
             var computed = {};
             var dvM = document.getElementById('ws-debit-measure-preview') && document.getElementById('ws-debit-measure-preview').value;
             if (dvM && dvM !== '—') {
