@@ -458,6 +458,14 @@
                 <div class="form-group"><label>Дебит по формуле насоса, м³/ч</label><input type="text" id="ws-debit-preview" readonly style="background:#f5f5f5;" title="По уровням и расходу насоса"></div>
             </div>
             
+
+            <div class="form-row" style="background:#e8f5e9; padding:10px; border-radius:6px; margin:8px 0 12px; align-items:flex-end;">
+                <div class="form-group" style="flex:1; margin:0;">
+                    <label><strong>Дебит скважины, м³/ч</strong></label>
+                    <input type="text" id="ws-debit-m3h" inputmode="decimal" placeholder="Пересчитать или ввести вручную" oninput="wellSurveyDebitM3hTouched()" style="font-weight:600; font-size:15px; width:100%; padding:8px; border:1px solid #81c784; border-radius:4px;">
+                    <small style="color:#666;display:block;margin-top:4px;font-size:11px;">Подставляется из замера (л/с) или формулы насоса; можно изменить вручную.</small>
+                </div>
+            </div>
             <div class="form-row">
                 <div class="form-group"><label>Марка насоса</label><input type="text" id="ws-pump-mark" placeholder="ЭЦВ 8-25-120"></div>
                 <div class="form-group" style="flex:2;"><label>Труба / присоединение</label><input type="text" id="ws-pipe" placeholder="ду 89, длина 36 м, фланец…"></div>
@@ -473,7 +481,7 @@
                 <div class="form-group" style="flex:2;"><label>Исполнитель</label><input type="text" id="ws-executor" placeholder="ИП Емельянов А.Н."></div>
             </div>
             <div style="margin-bottom:10px;">
-                <button type="button" class="btn" style="background:#2E75B6;color:white;" onclick="wellSurveyRecalcDebit()">Пересчитать</button>
+                <button type="button" class="btn" style="background:#2E75B6;color:white;" onclick="wellSurveyInputsChanged()">Пересчитать</button>
             </div>
             <div class="form-group"><label>Рекомендации / заключение</label><textarea id="ws-conclusion" rows="3" placeholder="Итоги обследования, рекомендации…"></textarea></div>
             <div class="modal-actions" style="display:flex; gap:10px; margin-top:12px; justify-content:flex-end; flex-wrap:wrap;">
@@ -2340,6 +2348,7 @@
 
         // === Замеры скважины (обследование / дебит) ===
         let wellSurveyObjectId = null;
+        let wellSurveyDebitM3hManual = false;
 
         function wellSurveyDebitFromInputs(stat, dyn, calcD, pump) {
             var s = Number(stat), d = Number(dyn), h = Number(calcD), q = Number(pump);
@@ -2353,6 +2362,57 @@
             var L = Number(liters), t = Number(seconds);
             if (!isFinite(L) || !isFinite(t) || L < 0 || t <= 0) return null;
             return (L / 1000) / (t / 3600);
+        }
+
+        function wellSurveySuggestedDebitM3h() {
+            var vm = wellSurveyDebitFromMeasureLiters(
+                document.getElementById('ws-measure-liters') && document.getElementById('ws-measure-liters').value,
+                document.getElementById('ws-measure-seconds') && document.getElementById('ws-measure-seconds').value
+            );
+            if (vm != null) return vm;
+            return wellSurveyDebitFromInputs(
+                document.getElementById('ws-statika').value,
+                document.getElementById('ws-dinamika').value,
+                document.getElementById('ws-raschet').value,
+                document.getElementById('ws-nasos').value
+            );
+        }
+
+        function wellSurveyInputsChanged() {
+            wellSurveyDebitM3hManual = false;
+            wellSurveyRecalcDebit();
+        }
+
+        function wellSurveyDebitM3hTouched() {
+            wellSurveyDebitM3hManual = true;
+        }
+
+        function wellSurveyComputedPayload() {
+            var computed = {};
+            var raschet = parseFloat(String(document.getElementById('ws-raschet').value).replace(',', '.'));
+            var dv = document.getElementById('ws-debit-preview').value;
+            if (dv && dv !== '—') {
+                var dq = parseFloat(dv.replace(',', '.'));
+                if (isFinite(dq)) computed.debit_m3h = dq;
+            }
+            var debitMain = document.getElementById('ws-debit-m3h');
+            var rawMain = debitMain && String(debitMain.value || '').trim();
+            if (rawMain) {
+                var dMain = parseFloat(rawMain.replace(',', '.'));
+                if (isFinite(dMain) && dMain > 0) {
+                    computed.debit_m3h_dynamic = dMain;
+                }
+            } else {
+                var dvM = document.getElementById('ws-debit-measure-preview') && document.getElementById('ws-debit-measure-preview').value;
+                if (dvM && dvM !== '—') {
+                    var dqm = parseFloat(dvM.replace(',', '.'));
+                    if (isFinite(dqm)) computed.debit_m3h_dynamic = dqm;
+                }
+            }
+            if (isFinite(raschet) && computed.debit_m3h != null) {
+                computed.recommended_head_m = raschet + 80;
+            }
+            return computed;
         }
 
         function wellSurveyRecalcDebit() {
@@ -2372,6 +2432,11 @@
                     document.getElementById('ws-measure-seconds') && document.getElementById('ws-measure-seconds').value
                 );
                 elM.value = vm == null ? '—' : vm.toFixed(2);
+            }
+            var elMain = document.getElementById('ws-debit-m3h');
+            if (elMain && !wellSurveyDebitM3hManual) {
+                var suggested = wellSurveySuggestedDebitM3h();
+                elMain.value = suggested == null ? '' : suggested.toFixed(2);
             }
         }
 
@@ -2462,17 +2527,7 @@
             if (isFinite(measureSec)) inputs.measure_seconds = measureSec;
             var pass = wellSurveyPassportInputs();
             Object.keys(pass).forEach(function(k) { inputs[k] = pass[k]; });
-            var computed = {};
-            var dvM = document.getElementById('ws-debit-measure-preview') && document.getElementById('ws-debit-measure-preview').value;
-            if (dvM && dvM !== '—') {
-                var dqm = parseFloat(dvM.replace(',', '.'));
-                if (isFinite(dqm)) computed.debit_m3h_dynamic = dqm;
-            }
-            var dv = document.getElementById('ws-debit-preview').value;
-            if (dv && dv !== '—') {
-                var dq = parseFloat(dv.replace(',', '.'));
-                if (isFinite(dq)) computed.debit_m3h = dq;
-            }
+            var computed = wellSurveyComputedPayload();
             return {
                 inputs: inputs,
                 computed: computed,
@@ -2532,6 +2587,7 @@
                 return;
             }
             wellSurveyObjectId = editingId;
+            wellSurveyDebitM3hManual = false;
             document.getElementById('wellSurveysModal').classList.add('active');
             fillWellSurveyFieldsFromObject();
             loadWellSurveysList();
@@ -2598,36 +2654,7 @@
             wellSurveyRecalcDebit();
             var title = document.getElementById('ws-title').value.trim();
             var source = document.getElementById('ws-source').value || 'manual';
-            var stat = parseFloat(String(document.getElementById('ws-statika').value).replace(',', '.'));
-            var dyn = parseFloat(String(document.getElementById('ws-dinamika').value).replace(',', '.'));
-            var gl = parseFloat(String(document.getElementById('ws-glubina').value).replace(',', '.'));
-            var nasos = parseFloat(String(document.getElementById('ws-nasos').value).replace(',', '.'));
-            var raschet = parseFloat(String(document.getElementById('ws-raschet').value).replace(',', '.'));
-            var measureL = parseFloat(String(document.getElementById('ws-measure-liters').value).replace(',', '.'));
-            var measureSec = parseFloat(String(document.getElementById('ws-measure-seconds').value).replace(',', '.'));
-            var conclusion = document.getElementById('ws-conclusion').value.trim();
-            var inputs = {};
-            if (isFinite(stat)) inputs.static_m = stat;
-            if (isFinite(dyn)) inputs.dynamic_m = dyn;
-            if (isFinite(gl)) inputs.well_depth_m = gl;
-            if (isFinite(nasos)) inputs.pump_m3h = nasos;
-            if (isFinite(raschet)) inputs.calc_depth_m = raschet;
-            if (isFinite(measureL)) inputs.measure_liters = measureL;
-            if (isFinite(measureSec)) inputs.measure_seconds = measureSec;
-            var pass = wellSurveyPassportInputs();
-            Object.keys(pass).forEach(function(k) { inputs[k] = pass[k]; });
-            var computed = {};
-            var dvM = document.getElementById('ws-debit-measure-preview') && document.getElementById('ws-debit-measure-preview').value;
-            if (dvM && dvM !== '—') {
-                var dqm = parseFloat(dvM.replace(',', '.'));
-                if (isFinite(dqm)) computed.debit_m3h_dynamic = dqm;
-            }
-            var dv = document.getElementById('ws-debit-preview').value;
-            if (dv && dv !== '—') {
-                var dq = parseFloat(dv.replace(',', '.'));
-                if (isFinite(dq)) computed.debit_m3h = dq;
-                if (isFinite(raschet)) computed.recommended_head_m = raschet + 80;
-            }
+            var payload = wellSurveyFormPayload();
             try {
                 var res = await fetchCsrf('/api/objects/' + wellSurveyObjectId + '/well-surveys', {
                     method: 'POST',
@@ -2635,9 +2662,9 @@
                     body: JSON.stringify({
                         title: title,
                         source: source,
-                        conclusion: conclusion,
-                        inputs: inputs,
-                        computed: computed
+                        conclusion: payload.conclusion,
+                        inputs: payload.inputs,
+                        computed: payload.computed
                     })
                 });
                 if (!res.ok) {
@@ -2651,6 +2678,9 @@
                 var mS = document.getElementById('ws-measure-seconds');
                 if (mL) mL.value = '';
                 if (mS) mS.value = '';
+                var debitMain = document.getElementById('ws-debit-m3h');
+                if (debitMain) debitMain.value = '';
+                wellSurveyDebitM3hManual = false;
                 wellSurveyRecalcDebit();
                 loadWellSurveysList();
             } catch (e) {
