@@ -100,17 +100,77 @@ def _field_line(label: str, value: str, min_pad: int = 44) -> str:
     return f'{label}{"_" * pad}'
 
 
+def _classify_address_chunk(ch: str) -> Optional[str]:
+    s = (ch or '').strip()
+    if not s:
+        return None
+    low = s.lower()
+    if re.search(r'\bобласть\b|\bобл\.?\s*$', low) or re.match(r'^минск(ая|ий)\s+обл', s, re.I):
+        return 'region'
+    if re.search(r'\bрайон\b|\bр-н\b|\bр\.\s*н\.?', low):
+        return 'district'
+    if re.match(r'^ул\.|^\s*улица\b|^пр\.|^\s*проспект\b|^пер\.|^\s*переулок\b|^б-р\b|^\s*бульвар\b', s, re.I):
+        return 'street'
+    if re.match(r'^д\.\s*[A-Za-zА-Яа-яЁё]', s) and not re.match(r'^д\.\s*\d', s):
+        return 'settlement'
+    if re.match(r'^аг\.|^п\.|^пос\.|^г\.|^с\.|^дер\.|^\s*деревня\b|^\s*посёлок\b|^\s*поселок\b', s, re.I):
+        return 'settlement'
+    if re.match(r'^\d+[a-zA-Zа-яА-ЯЁё/-]*$', s) and len(s) <= 10:
+        return 'house'
+    return None
+
+
+def _split_street_house(ch: str) -> tuple[str, str]:
+    m = re.match(r'^(.+?)\s+(\d+[a-zA-Zа-яА-ЯЁё/-]*)$', ch)
+    if m and re.search(r'ул\.|улица|пр\.|пер\.|бульвар|б-р', m.group(1), re.I):
+        return m.group(1).strip(), m.group(2)
+    return ch, ''
+
+
 def parse_address_parts(address: str) -> dict[str, str]:
     keys = ('region', 'district', 'settlement', 'street', 'house')
     out = {k: '' for k in keys}
     if not address or not str(address).strip():
         return out
     chunks = [c.strip() for c in re.split(r'[,;]', str(address)) if c.strip()]
-    for i, ch in enumerate(chunks[:5]):
-        out[keys[i]] = ch
     if len(chunks) == 1:
         out['settlement'] = chunks[0]
         out['region'] = ''
+        return out
+
+    leftovers: list[str] = []
+    for raw in chunks:
+        ch = raw
+        extra_house = ''
+        street_part, hh = _split_street_house(ch)
+        if hh:
+            ch = street_part
+            extra_house = hh
+        kind = _classify_address_chunk(ch)
+        if kind and not out[kind]:
+            out[kind] = ch
+            if extra_house and not out['house']:
+                out['house'] = extra_house
+        elif kind == 'house' and not out['house']:
+            out['house'] = ch
+        else:
+            leftovers.append(raw)
+
+    for ch in leftovers:
+        kind = _classify_address_chunk(ch)
+        if kind and not out[kind]:
+            out[kind] = ch
+            continue
+        if re.match(r'^\d+[a-zA-Zа-яА-ЯЁё/-]*$', ch):
+            if not out['house']:
+                out['house'] = ch
+            else:
+                out['house'] = f"{out['house']}/{ch}"
+            continue
+        for key in keys:
+            if not out[key]:
+                out[key] = ch
+                break
     return out
 
 

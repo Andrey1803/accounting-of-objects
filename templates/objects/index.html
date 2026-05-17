@@ -542,6 +542,7 @@
     <button class="sync-btn" id="syncBtn" onclick="syncNow()">🔄 Синхронизация</button>
 
     <script src="/static/js/utils.js?v=5"></script>
+    <script src="/static/js/addressParse.js?v=1"></script>
     <script src="/static/js/offline.js?v=3"></script>
     <script src="/static/js/table-pan.js?v=1"></script>
     <script>
@@ -2468,18 +2469,11 @@
         }
 
         function splitAddressToPassportFields(addr) {
-            var chunks = String(addr || '').split(/[,;]/).map(function(s) { return s.trim(); }).filter(Boolean);
+            var parts = typeof parseAddressToPassportParts === 'function'
+                ? parseAddressToPassportParts(addr)
+                : {};
             var keys = ['region', 'district', 'settlement', 'street', 'house'];
             var ids = ['ws-region', 'ws-district', 'ws-settlement', 'ws-street', 'ws-house'];
-            var parts = {};
-            if (chunks.length === 1) {
-                parts.settlement = chunks[0];
-                parts.region = '';
-            } else {
-                for (var i = 0; i < keys.length && i < chunks.length; i++) {
-                    parts[keys[i]] = chunks[i];
-                }
-            }
             for (var j = 0; j < ids.length; j++) {
                 var el = document.getElementById(ids[j]);
                 var val = parts[keys[j]];
