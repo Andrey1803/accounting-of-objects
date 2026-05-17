@@ -440,21 +440,21 @@
             </div>
             <h4 style="font-size:13px; color:#444; margin:10px 0 6px;">Уровни воды и глубина скважины</h4>
             <div class="form-row">
-                <div class="form-group"><label title="Уровень воды от устья в покое">Статический уровень, м</label><input type="number" id="ws-statika" step="0.1" placeholder="от устья" oninput="wellSurveyRecalcDebit()"></div>
-                <div class="form-group"><label title="Уровень воды от устья при работе насоса">Динамический уровень, м</label><input type="number" id="ws-dinamika" step="0.1" placeholder="на режиме насоса" oninput="wellSurveyRecalcDebit()"></div>
-                <div class="form-group"><label>Глубина скважины, м</label><input type="number" id="ws-glubina" step="0.1" placeholder="глубина" oninput="wellSurveyRecalcDebit()"></div>
+                <div class="form-group"><label title="Уровень воды от устья в покое">Статический уровень, м</label><input type="number" id="ws-statika" step="0.1" placeholder="от устья" oninput="wellSurveyInputsChanged()"></div>
+                <div class="form-group"><label title="Уровень воды от устья при работе насоса">Динамический уровень, м</label><input type="number" id="ws-dinamika" step="0.1" placeholder="на режиме насоса" oninput="wellSurveyInputsChanged()"></div>
+                <div class="form-group"><label>Глубина скважины, м</label><input type="number" id="ws-glubina" step="0.1" placeholder="глубина" oninput="wellSurveyInputsChanged()"></div>
             </div>
             <h4 style="font-size:13px; color:#444; margin:10px 0 6px;">Опытный дебит — на динамическом уровне (замер)</h4>
             <p style="font-size:12px; color:#666; margin:-4px 0 6px;">Сколько литров снято за время замера — это производительность скважины при текущем динамическом уровне (перевод в м³/ч).</p>
             <div class="form-row">
-                <div class="form-group"><label>Объём воды, л</label><input type="number" id="ws-measure-liters" step="0.01" min="0" placeholder="литры" oninput="wellSurveyRecalcDebit()"></div>
-                <div class="form-group"><label>Время замера, с</label><input type="number" id="ws-measure-seconds" step="1" min="1" placeholder="секунды" oninput="wellSurveyRecalcDebit()"></div>
+                <div class="form-group"><label>Объём воды, л</label><input type="number" id="ws-measure-liters" step="0.01" min="0" placeholder="литры" oninput="wellSurveyInputsChanged()"></div>
+                <div class="form-group"><label>Время замера, с</label><input type="number" id="ws-measure-seconds" step="1" min="1" placeholder="секунды" oninput="wellSurveyInputsChanged()"></div>
                 <div class="form-group"><label>Дебит по замеру, м³/ч</label><input type="text" id="ws-debit-measure-preview" readonly style="background:#e8f5e9;" title="(л / 1000) / (с / 3600)"></div>
             </div>
             <h4 style="font-size:13px; color:#444; margin:10px 0 6px;">Расчёт дебита по насосу</h4>
             <div class="form-row">
-                <div class="form-group"><label>Насос, м³/ч</label><input type="number" id="ws-nasos" step="0.01" placeholder="номинальный расход" oninput="wellSurveyRecalcDebit()"></div>
-                <div class="form-group"><label>Расчётная глубина, м</label><input type="number" id="ws-raschet" step="0.1" placeholder="точка подвеса / расчёт" oninput="wellSurveyRecalcDebit()"></div>
+                <div class="form-group"><label>Насос, м³/ч</label><input type="number" id="ws-nasos" step="0.01" placeholder="номинальный расход" oninput="wellSurveyInputsChanged()"></div>
+                <div class="form-group"><label>Расчётная глубина, м</label><input type="number" id="ws-raschet" step="0.1" placeholder="точка подвеса / расчёт" oninput="wellSurveyInputsChanged()"></div>
                 <div class="form-group"><label>Дебит по формуле насоса, м³/ч</label><input type="text" id="ws-debit-preview" readonly style="background:#f5f5f5;" title="По уровням и расходу насоса"></div>
             </div>
             
@@ -2469,10 +2469,21 @@
 
         function splitAddressToPassportFields(addr) {
             var chunks = String(addr || '').split(/[,;]/).map(function(s) { return s.trim(); }).filter(Boolean);
+            var keys = ['region', 'district', 'settlement', 'street', 'house'];
             var ids = ['ws-region', 'ws-district', 'ws-settlement', 'ws-street', 'ws-house'];
-            for (var i = 0; i < ids.length; i++) {
-                var el = document.getElementById(ids[i]);
-                if (el && !el.value && chunks[i]) el.value = chunks[i];
+            var parts = {};
+            if (chunks.length === 1) {
+                parts.settlement = chunks[0];
+                parts.region = '';
+            } else {
+                for (var i = 0; i < keys.length && i < chunks.length; i++) {
+                    parts[keys[i]] = chunks[i];
+                }
+            }
+            for (var j = 0; j < ids.length; j++) {
+                var el = document.getElementById(ids[j]);
+                var val = parts[keys[j]];
+                if (el && !el.value && val) el.value = val;
             }
         }
 

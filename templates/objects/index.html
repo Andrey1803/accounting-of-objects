@@ -2469,10 +2469,21 @@
 
         function splitAddressToPassportFields(addr) {
             var chunks = String(addr || '').split(/[,;]/).map(function(s) { return s.trim(); }).filter(Boolean);
+            var keys = ['region', 'district', 'settlement', 'street', 'house'];
             var ids = ['ws-region', 'ws-district', 'ws-settlement', 'ws-street', 'ws-house'];
-            for (var i = 0; i < ids.length; i++) {
-                var el = document.getElementById(ids[i]);
-                if (el && !el.value && chunks[i]) el.value = chunks[i];
+            var parts = {};
+            if (chunks.length === 1) {
+                parts.settlement = chunks[0];
+                parts.region = '';
+            } else {
+                for (var i = 0; i < keys.length && i < chunks.length; i++) {
+                    parts[keys[i]] = chunks[i];
+                }
+            }
+            for (var j = 0; j < ids.length; j++) {
+                var el = document.getElementById(ids[j]);
+                var val = parts[keys[j]];
+                if (el && !el.value && val) el.value = val;
             }
         }
 
