@@ -110,6 +110,8 @@
 
 html {
     font-size: 16px;
+    /* Не уходить «назад» в браузере при горизонтальном жесте (в т.ч. выделение текста справа налево) */
+    overscroll-behavior-x: none;
 }
 
 body {
@@ -118,6 +120,7 @@ body {
     color: var(--color-text);
     line-height: 1.5;
     overflow-x: hidden;
+    overscroll-behavior-x: none;
 }
 
 /* ============================
@@ -305,7 +308,8 @@ body {
     -webkit-overflow-scrolling: touch;
     max-height: min(75vh, calc(100dvh - 200px));
     cursor: grab;
-    overscroll-behavior: contain;
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: contain;
 }
 .table-wrapper.table-pan-viewport.is-dragging,
 .tbl-wrap.table-pan-viewport.is-dragging {

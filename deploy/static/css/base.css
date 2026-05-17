@@ -110,6 +110,8 @@
 
 html {
     font-size: 16px;
+    /* Не уходить «назад» в браузере при горизонтальном жесте (в т.ч. выделение текста справа налево) */
+    overscroll-behavior-x: none;
 }
 
 body {
@@ -118,6 +120,7 @@ body {
     color: var(--color-text);
     line-height: 1.5;
     overflow-x: hidden;
+    overscroll-behavior-x: none;
 }
 
 /* ============================
@@ -296,6 +299,42 @@ body {
     border-radius: var(--radius-2xl);
     overflow: hidden;
     box-shadow: var(--shadow-md);
+}
+
+/* Широкие таблицы: скролл, тач, перетаскивание мышью (класс table-pan-viewport на .table-wrapper или .tbl-wrap) */
+.table-wrapper.table-pan-viewport,
+.tbl-wrap.table-pan-viewport {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    max-height: min(75vh, calc(100dvh - 200px));
+    cursor: grab;
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: contain;
+}
+.table-wrapper.table-pan-viewport.is-dragging,
+.tbl-wrap.table-pan-viewport.is-dragging {
+    cursor: grabbing;
+}
+.table-wrapper.table-pan-viewport.is-dragging,
+.table-wrapper.table-pan-viewport.is-dragging *,
+.tbl-wrap.table-pan-viewport.is-dragging,
+.tbl-wrap.table-pan-viewport.is-dragging * {
+    user-select: none;
+}
+.table-wrapper.table-pan-viewport table,
+.tbl-wrap.table-pan-viewport table {
+    width: max-content;
+    min-width: 100%;
+}
+.table-wrapper.table-pan-viewport thead th,
+.tbl-wrap.table-pan-viewport thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+.card .table-wrapper.table-pan-viewport,
+.card .tbl-wrap.table-pan-viewport {
+    text-align: left;
 }
 
 .table-wrapper table,
