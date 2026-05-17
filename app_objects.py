@@ -37,6 +37,17 @@ from database import init_db, fetch_all, fetch_one, execute, execute_rowcount, e
 from auth import auth_bp, User, hash_pw, check_pw
 from estimate_module import estimate_bp
 from extensions import limiter
+from io import BytesIO
+
+from well_inspection_act import (
+    build_act_context,
+    generate_inspection_act_files,
+    survey_row_for_act,
+)
+from well_passport import (
+    build_passport_context,
+    generate_passport_files,
+)
 
 app = Flask(__name__)
 # Секретный ключ для сессий — генерируется при запуске или берётся из окружения
@@ -1698,6 +1709,225 @@ def delete_object_well_survey(obj_id, survey_id):
     if not rc:
         return jsonify({'error': 'Not found'}), 404
     return jsonify({'ok': True})
+
+
+def _object_and_client_for_act(obj_id, user_id):
+    obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (obj_id, user_id))
+    if not obj:
+        return None, None
+    client = None
+    cid = obj.get('client_id')
+    if cid is not None and str(cid).strip() != '':
+        client = fetch_one(
+            'SELECT * FROM clients WHERE id = ? AND user_id = ?',
+            (int(cid), user_id),
+        )
+    return obj, client
+
+
+def _well_survey_document_response(generate_files, basename: str, fmt):
+    fmt = (fmt or 'pdf').strip().lower()
+    if fmt not in ('pdf', 'docx'):
+        fmt = 'pdf'
+    try:
+        docx_path, pdf_path = generate_files(
+            want_pdf=(fmt == 'pdf'), basename=basename
+        )
+    except FileNotFoundError as e:
+        return jsonify({'error': str(e)}), 500
+    tmp_dir = docx_path.parent
+    try:
+        if fmt == 'pdf':
+            if not pdf_path or not pdf_path.is_file():
+                return jsonify({
+                    'error': 'Не удалось создать PDF. Скачайте DOCX или установите Word/LibreOffice.',
+                    'docx_available': docx_path.is_file(),
+                }), 503
+            payload = pdf_path.read_bytes()
+            mime = 'application/pdf'
+            filename = f'{basename}.pdf'
+        else:
+            payload = docx_path.read_bytes()
+            mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            filename = f'{basename}.docx'
+        return send_file(
+            BytesIO(payload),
+            as_attachment=True,
+            download_name=filename,
+            mimetype=mime,
+        )
+    finally:
+        try:
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def _passport_overrides_from_request_args():
+    keys = (
+        'address', 'region', 'district', 'settlement', 'street', 'house',
+        'casing_diameter', 'pipe_material', 'filter_interval', 'sump_interval',
+        'pipe', 'pump_mark', 'executor', 'conclusion', 'measured_at',
+    )
+    overrides = {}
+    for key in keys:
+        v = request.args.get(key)
+        if v is not None and str(v).strip() != '':
+            overrides[key] = str(v).strip()
+    return overrides
+
+
+@app.route('/api/objects/<int:obj_id>/well-surveys/<int:survey_id>/inspection-act', methods=['GET'])
+@login_required
+def export_well_inspection_act_from_survey(obj_id, survey_id):
+    """Скачать акт обследования по сохранённой записи замера (?format=pdf|docx)."""
+    obj, client = _object_and_client_for_act(obj_id, current_user.id)
+    if not obj:
+        return jsonify({'error': 'Not found'}), 404
+    row = fetch_one(
+        """SELECT * FROM object_well_surveys
+           WHERE id = ? AND object_id = ? AND user_id = ?""",
+        (survey_id, obj_id, current_user.id),
+    )
+    if not row:
+        return jsonify({'error': 'Survey not found'}), 404
+    overrides = {}
+    for key in (
+        'customer', 'address', 'pipe', 'pump_mark', 'video_note',
+        'phone', 'executor', 'conclusion', 'measured_at',
+    ):
+        v = request.args.get(key)
+        if v is not None and str(v).strip() != '':
+            overrides[key] = str(v).strip()
+    ctx = build_act_context(
+        object_row=dict(obj),
+        client_row=dict(client) if client else None,
+        survey_row=survey_row_for_act(dict(row)),
+        overrides=overrides,
+    )
+    basename = f'akt_obledovaniya_{obj_id}'
+    return _well_survey_document_response(
+        lambda want_pdf, basename=basename: generate_inspection_act_files(
+            ctx, want_pdf=want_pdf, basename=basename
+        ),
+        basename,
+        request.args.get('format'),
+    )
+
+
+@app.route('/api/objects/<int:obj_id>/inspection-act', methods=['POST'])
+@login_required
+@require_csrf
+def export_well_inspection_act_preview(obj_id):
+    """
+    Акт по данным формы (текущие поля замера) или survey_id в теле.
+    JSON: survey_id?, overrides?, inputs?, computed?, conclusion?
+    Query: format=pdf|docx
+    """
+    obj, client = _object_and_client_for_act(obj_id, current_user.id)
+    if not obj:
+        return jsonify({'error': 'Not found'}), 404
+    data = request.json or {}
+    survey_row = None
+    sid = data.get('survey_id')
+    if sid is not None and str(sid).strip() != '':
+        row = fetch_one(
+            """SELECT * FROM object_well_surveys
+               WHERE id = ? AND object_id = ? AND user_id = ?""",
+            (int(sid), obj_id, current_user.id),
+        )
+        if not row:
+            return jsonify({'error': 'Survey not found'}), 404
+        survey_row = survey_row_for_act(dict(row))
+    overrides = _json_obj(data.get('overrides'), {})
+    ctx = build_act_context(
+        object_row=dict(obj),
+        client_row=dict(client) if client else None,
+        survey_row=survey_row,
+        overrides=overrides,
+        inline_inputs=_json_obj(data.get('inputs'), {}),
+        inline_computed=_json_obj(data.get('computed'), {}),
+        inline_conclusion=data.get('conclusion'),
+    )
+    basename = f'akt_obledovaniya_{obj_id}'
+    return _well_survey_document_response(
+        lambda want_pdf, basename=basename: generate_inspection_act_files(
+            ctx, want_pdf=want_pdf, basename=basename
+        ),
+        basename,
+        request.args.get('format'),
+    )
+
+
+@app.route('/api/objects/<int:obj_id>/well-surveys/<int:survey_id>/passport', methods=['GET'])
+@login_required
+def export_well_passport_from_survey(obj_id, survey_id):
+    """Паспорт скважины по сохранённой записи замера (?format=pdf|docx)."""
+    obj, client = _object_and_client_for_act(obj_id, current_user.id)
+    if not obj:
+        return jsonify({'error': 'Not found'}), 404
+    row = fetch_one(
+        """SELECT * FROM object_well_surveys
+           WHERE id = ? AND object_id = ? AND user_id = ?""",
+        (survey_id, obj_id, current_user.id),
+    )
+    if not row:
+        return jsonify({'error': 'Survey not found'}), 404
+    ctx = build_passport_context(
+        object_row=dict(obj),
+        client_row=dict(client) if client else None,
+        survey_row=survey_row_for_act(dict(row)),
+        overrides=_passport_overrides_from_request_args(),
+    )
+    basename = f'pasport_skvazhiny_{obj_id}'
+    return _well_survey_document_response(
+        lambda want_pdf, basename=basename: generate_passport_files(
+            ctx, want_pdf=want_pdf, basename=basename
+        ),
+        basename,
+        request.args.get('format'),
+    )
+
+
+@app.route('/api/objects/<int:obj_id>/passport', methods=['POST'])
+@login_required
+@require_csrf
+def export_well_passport_preview(obj_id):
+    """Паспорт по данным формы или survey_id в теле. Query: format=pdf|docx."""
+    obj, client = _object_and_client_for_act(obj_id, current_user.id)
+    if not obj:
+        return jsonify({'error': 'Not found'}), 404
+    data = request.json or {}
+    survey_row = None
+    sid = data.get('survey_id')
+    if sid is not None and str(sid).strip() != '':
+        row = fetch_one(
+            """SELECT * FROM object_well_surveys
+               WHERE id = ? AND object_id = ? AND user_id = ?""",
+            (int(sid), obj_id, current_user.id),
+        )
+        if not row:
+            return jsonify({'error': 'Survey not found'}), 404
+        survey_row = survey_row_for_act(dict(row))
+    overrides = _json_obj(data.get('overrides'), {})
+    ctx = build_passport_context(
+        object_row=dict(obj),
+        client_row=dict(client) if client else None,
+        survey_row=survey_row,
+        overrides=overrides,
+        inline_inputs=_json_obj(data.get('inputs'), {}),
+        inline_computed=_json_obj(data.get('computed'), {}),
+        inline_conclusion=data.get('conclusion'),
+    )
+    basename = f'pasport_skvazhiny_{obj_id}'
+    return _well_survey_document_response(
+        lambda want_pdf, basename=basename: generate_passport_files(
+            ctx, want_pdf=want_pdf, basename=basename
+        ),
+        basename,
+        request.args.get('format'),
+    )
 
 
 @app.route('/api/integration/from-taskmgr/well-survey', methods=['POST'])

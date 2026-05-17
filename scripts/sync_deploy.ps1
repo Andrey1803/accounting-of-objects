@@ -5,7 +5,7 @@ $deploy = Join-Path $root "deploy"
 if (-not (Test-Path $src)) { Write-Error "Нет папки source"; exit 1 }
 
 $pyFiles = @(
-    "app_objects.py", "auth.py", "database.py", "estimate_module.py", "price_sync.py", "extensions.py"
+    "app_objects.py", "auth.py", "database.py", "estimate_module.py", "price_sync.py", "extensions.py", "well_inspection_act.py", "well_passport.py"
 )
 foreach ($f in $pyFiles) {
     $a = Join-Path $src $f
