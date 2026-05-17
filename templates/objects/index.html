@@ -625,7 +625,7 @@
 
         /** Маркер для других вкладок: данные по объектам изменились на сервере. */
         var OBJECTS_DATA_TS_KEY = 'accountingObjectsDataTs';
-        var OBJECTS_AUTO_POLL_MS = 15000;
+        var OBJECTS_AUTO_POLL_MS = 60000;
 
         function notifyObjectsDataChangedExternally() {
             try {
@@ -690,7 +690,9 @@
                 const params = new URLSearchParams({ page, per_page: perPage });
                 
                 console.log('loadData: fetching objects with params:', params.toString());
-                const res = await fetch(`/api/objects-with-estimates?${params}`);
+                const objectsPromise = fetch(`/api/objects-with-estimates?${params}`);
+                const clientsPromise = fetch('/api/clients');
+                const res = await objectsPromise;
                 if (!res.ok) {
                     if (res.status === 401) { window.location.href = '/login'; return; }
                     throw new Error(`HTTP ${res.status}`);
@@ -717,18 +719,13 @@
                 sortCol = -1;
                 resetTableSortHeaders();
 
-                // Кэшируем в IndexedDB
-                try {
-                    await OfflineDB.bulkPut('objects', objects);
-                    await OfflineDB.saveSetting('lastSync', new Date().toISOString());
-                } catch(e) { console.log('Cache error:', e); }
-
-                const clientsRes = await fetch('/api/clients');
+                const clientsRes = await clientsPromise;
                 if (clientsRes.ok) {
                     const ct2 = clientsRes.headers.get('content-type');
                     if (ct2 && ct2.includes('application/json')) {
                         clients = await clientsRes.json();
-                        try { await OfflineDB.bulkPut('clients', clients); } catch(e) {}
+                    } else {
+                        clients = [];
                     }
                 } else {
                     clients = [];
@@ -741,6 +738,21 @@
                 updateOnlineStatus();
                 tryOpenObjectFromQuery();
                 console.log('loadData: finished');
+
+                // Кэш IndexedDB — после отрисовки, чтобы страница не «висела» пустой
+                void Promise.resolve()
+                    .then(function() {
+                        return OfflineDB.bulkPut('objects', objects);
+                    })
+                    .then(function() {
+                        return OfflineDB.saveSetting('lastSync', new Date().toISOString());
+                    })
+                    .then(function() {
+                        return OfflineDB.bulkPut('clients', clients);
+                    })
+                    .catch(function(e) {
+                        console.log('Cache error:', e);
+                    });
             } catch (e) {
                 console.error('loadData error:', e);
                 // Загрузка из кэша
@@ -934,7 +946,8 @@
             console.log('renderTable: objects count =', objects.length);
             
             let filtered = objects.filter(obj => {
-                if (search && !obj.name.toLowerCase().includes(search)) return false;
+                var nameLc = String(obj.name || '').toLowerCase();
+                if (search && !nameLc.includes(search)) return false;
                 if (statusFilter && obj.status !== statusFilter) return false;
                 if (!objectMatchesClientFilter(obj, clientFilter)) return false;
                 if (regularToFilter === 'regular' && !obj.is_regular_to) return false;
@@ -977,14 +990,15 @@
 
                 const td0 = document.createElement('td'); td0.textContent = obj.id; tr.appendChild(td0);
                 const td1 = document.createElement('td'); td1.textContent = formatWorkDaysCell(obj); tr.appendChild(td1);
-                const td3 = document.createElement('td'); td3.style.textAlign = 'left'; td3.textContent = obj.name; tr.appendChild(td3);
+                const td3 = document.createElement('td'); td3.style.textAlign = 'left'; td3.textContent = obj.name != null ? obj.name : ''; tr.appendChild(td3);
                 const td4 = document.createElement('td'); td4.textContent = objectClientDisplay(obj); tr.appendChild(td4);
                 const td5 = document.createElement('td'); td5.textContent = formatMoney(objectTotalRevenue(obj)); tr.appendChild(td5);
                 const td6 = document.createElement('td'); td6.textContent = formatMoney(obj.total_expenses||obj.expenses); tr.appendChild(td6);
                 const td7 = document.createElement('td');
                     const span = document.createElement('span');
-                    span.className = 'status status-' + obj.status.replace(/ /g, '-');
-                    span.textContent = obj.status;
+                    var st = String(obj.status || '');
+                    span.className = 'status status-' + st.replace(/ /g, '-');
+                    span.textContent = st;
                     td7.appendChild(span);
                     if (obj.is_regular_to) {
                         const toMeta = document.createElement('div');
@@ -2454,6 +2468,12 @@
                 if (mS) mS.value = '';
                 wellSurveyRecalcDebit();
                 loadWellSurveysList();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        async function deleteWellSurvey(surveyId) {
             if (!wellSurveyObjectId || !surveyId) return;
             if (!confirm('Удалить эту запись замера?')) return;
             try {
