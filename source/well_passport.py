@@ -105,9 +105,9 @@ def _classify_address_chunk(ch: str) -> Optional[str]:
     if not s:
         return None
     low = s.lower()
-    if re.search(r'\bобласть\b|\bобл\.?\s*$', low) or re.match(r'^минск(ая|ий)\s+обл', s, re.I):
+    if re.search(r'область|обл\.\s*$', low) or re.match(r'^минск(ая|ий)\s+обл', s, re.I):
         return 'region'
-    if re.search(r'\bрайон\b|\bр-н\b|\bр\.\s*н\.?', low):
+    if re.search(r'район|р-н|р\.\s*н\.?', low):
         return 'district'
     if re.match(r'^ул\.|^\s*улица\b|^пр\.|^\s*проспект\b|^пер\.|^\s*переулок\b|^б-р\b|^\s*бульвар\b', s, re.I):
         return 'street'

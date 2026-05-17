@@ -2476,8 +2476,7 @@
             var ids = ['ws-region', 'ws-district', 'ws-settlement', 'ws-street', 'ws-house'];
             for (var j = 0; j < ids.length; j++) {
                 var el = document.getElementById(ids[j]);
-                var val = parts[keys[j]];
-                if (el && !el.value && val) el.value = val;
+                if (el) el.value = parts[keys[j]] || '';
             }
         }
 

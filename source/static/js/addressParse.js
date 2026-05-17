@@ -6,11 +6,11 @@
     var s = String(ch || '').trim();
     if (!s) return null;
     var low = s.toLowerCase();
-    if (/\bобласть\b|\bобл\.?\s*$/i.test(low) || /^минск(ая|ий)\s+обл/i.test(s)) return 'region';
-    if (/\bрайон\b|\bр-н\b|\bр\.\s*н\.?/i.test(low)) return 'district';
-    if (/^ул\.|^\s*улица\b|^пр\.|^\s*проспект\b|^пер\.|^\s*переулок\b|^б-р\b|^\s*бульвар\b/i.test(s)) return 'street';
+    if (/область|обл\.\s*$/i.test(low) || /^минск(ая|ий)\s+обл/i.test(s)) return 'region';
+    if (/район|р-н|р\.\s*н\.?/i.test(low)) return 'district';
+    if (/^ул\.|улица|^пр\.|проспект|^пер\.|переулок|^б-р|бульвар/i.test(s)) return 'street';
     if (/^д\.\s*[A-Za-zА-Яа-яЁё]/i.test(s) && !/^д\.\s*\d/.test(s)) return 'settlement';
-    if (/^аг\.|^п\.|^пос\.|^г\.|^с\.|^дер\.|^\s*деревня\b|^\s*посёлок\b|^\s*поселок\b/i.test(s)) return 'settlement';
+    if (/^аг\.|^п\.|^пос\.|^г\.|^с\.|^дер\.|деревня|посёлок|поселок/i.test(s)) return 'settlement';
     if (/^\d+[a-zA-Zа-яА-ЯЁё/-]*$/.test(s) && s.length <= 10) return 'house';
     return null;
   }
