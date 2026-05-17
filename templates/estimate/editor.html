@@ -1124,25 +1124,52 @@
             }).join('');
         }
 
-        function toggleSectionSelectAll(section, checked) {
+        /** На узком экране таблица скрыта (display:none), но строки в DOM — учитываем только видимый список. */
+        function estimateListUsesTableLayout() {
+            return window.matchMedia('(min-width: 769px)').matches;
+        }
+
+        function parseEstimateItemId(raw) {
+            if (raw == null || raw === '') return NaN;
+            var n = Number(String(raw).trim().replace(',', '.'));
+            return Number.isFinite(n) ? n : NaN;
+        }
+
+        function estimateItemIdEquals(a, b) {
+            return Number(a) === Number(b);
+        }
+
+        function estRowCheckboxSelector(section, checkedOnly) {
             var bodyId = section === 'material' ? 'mat-body' : 'work-body';
             var cardId = section === 'material' ? 'mat-cards' : 'work-cards';
-            document.querySelectorAll('#' + bodyId + ' .est-row-cb, #' + cardId + ' .est-row-cb').forEach(function(cb) {
+            var root = estimateListUsesTableLayout() ? ('#' + bodyId) : ('#' + cardId);
+            return root + ' .est-row-cb' + (checkedOnly ? ':checked' : '');
+        }
+
+        function syncEstRowCheckboxes(itemId, checked) {
+            var key = String(itemId);
+            document.querySelectorAll('.est-row-cb[data-item-id="' + key.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]').forEach(function(cb) {
                 cb.checked = !!checked;
             });
         }
 
+        function toggleSectionSelectAll(section, checked) {
+            document.querySelectorAll(estRowCheckboxSelector(section, false)).forEach(function(cb) {
+                cb.checked = !!checked;
+            });
+            var allId = section === 'material' ? 'mat-select-all' : 'work-select-all';
+            var hdr = document.getElementById(allId);
+            if (hdr) hdr.checked = !!checked;
+        }
+
         function getSelectedItemIdsInSection(section) {
-            var bodyId = section === 'material' ? 'mat-body' : 'work-body';
-            var cardId = section === 'material' ? 'mat-cards' : 'work-cards';
             var seen = {};
             var ids = [];
-            document.querySelectorAll('#' + bodyId + ' .est-row-cb:checked, #' + cardId + ' .est-row-cb:checked').forEach(function(cb) {
-                var id = parseInt(cb.getAttribute('data-item-id'), 10);
-                if (!isNaN(id) && !seen[id]) {
-                    seen[id] = true;
-                    ids.push(id);
-                }
+            document.querySelectorAll(estRowCheckboxSelector(section, true)).forEach(function(cb) {
+                var id = parseEstimateItemId(cb.getAttribute('data-item-id'));
+                if (!Number.isFinite(id) || seen[id]) return;
+                seen[id] = true;
+                ids.push(id);
             });
             return ids;
         }
@@ -1183,8 +1210,12 @@
             if (!ids.length) return;
             for (var i = 0; i < ids.length; i++) {
                 var id = ids[i];
-                items = items.filter(function(x) { return x.id !== id; });
+                items = items.filter(function(x) { return !estimateItemIdEquals(x.id, id); });
             }
+            ['mat-select-all', 'work-select-all'].forEach(function(hid) {
+                var h = document.getElementById(hid);
+                if (h) h.checked = false;
+            });
             render();
             await saveEstimateToDB();
             if (navigator.onLine) {
@@ -2965,6 +2996,16 @@
     if (sm) sm.addEventListener('click', function(e) { if (e.target === sm) closeSearch(); });
     var cm = document.getElementById('catModal');
     if (cm) cm.addEventListener('click', function(e) { if (e.target === cm) closeCatManager(); });
+    document.addEventListener('change', function(e) {
+        var cb = e.target;
+        if (!cb || !cb.classList || !cb.classList.contains('est-row-cb')) return;
+        var itemId = cb.getAttribute('data-item-id');
+        if (itemId == null || itemId === '') return;
+        document.querySelectorAll('.est-row-cb[data-item-id="' + String(itemId).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]').forEach(function(other) {
+            if (other !== cb) other.checked = cb.checked;
+        });
+    });
+
     document.addEventListener('keydown', function(e) {
         if (e.key !== 'Escape') return;
         if (document.getElementById('catModal').classList.contains('active')) { closeCatManager(); return; }
