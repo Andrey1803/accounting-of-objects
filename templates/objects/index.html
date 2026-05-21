@@ -79,9 +79,10 @@
             max-width: 300px;
         }
 
-        table {
+        table.objects-list-table {
             width: 100%;
             min-width: 900px;
+            table-layout: fixed;
         }
         th {
             padding: var(--pad-sm);
@@ -96,7 +97,73 @@
             font-size: var(--fs-sm);
             text-align: center;
         }
-        td:nth-child(3) { text-align: left; }
+        /* Дни / наименование / клиент — вдвое уже, обрезка; полный текст по удержанию курсора 1 с */
+        table.objects-list-table th.cell-compact:nth-child(2),
+        table.objects-list-table td.cell-compact:nth-child(2) {
+            width: 4.5rem;
+            max-width: 4.5rem;
+        }
+        table.objects-list-table th.cell-compact:nth-child(3),
+        table.objects-list-table td.cell-compact:nth-child(3) {
+            width: 7rem;
+            max-width: 7rem;
+        }
+        table.objects-list-table th.cell-compact:nth-child(4),
+        table.objects-list-table td.cell-compact:nth-child(4) {
+            width: 5.5rem;
+            max-width: 5.5rem;
+        }
+        td.cell-compact {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: middle;
+            cursor: default;
+        }
+        td.cell-compact.cell-compact-left { text-align: left; }
+        td.cell-compact .cell-compact-text {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        td.cell-compact.is-expand-hint { background: #e3f2fd; }
+        td.cell-link-client,
+        td.cell-link-name { cursor: pointer; transition: background 0.15s; }
+        td.cell-link-client:hover { background: rgba(156, 39, 176, 0.18); outline: 1px solid #9C27B0; }
+        td.cell-link-name { font-weight: 600; color: #1E5A8E; }
+        td.cell-link-name:hover { background: rgba(46, 117, 182, 0.14); outline: 1px solid #2E75B6; }
+        .info-detail-grid { display: grid; gap: 10px; margin-bottom: 16px; }
+        .info-detail-row { display: grid; grid-template-columns: 9rem 1fr; gap: 8px; font-size: 14px; align-items: start; }
+        .info-detail-label { color: #666; font-weight: 600; }
+        .info-detail-value { word-break: break-word; }
+        .client-info-objects-title { margin: 0 0 8px; font-size: 15px; color: #7B1FA2; }
+        .client-info-object-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .client-info-object-item:hover { background: #f3e5f5; }
+        .client-info-object-item:last-child { border-bottom: none; }
+        #cell-expand-popover {
+            position: fixed;
+            z-index: 10050;
+            display: none;
+            max-width: min(420px, 92vw);
+            padding: 8px 10px;
+            font-size: var(--fs-sm);
+            line-height: 1.35;
+            text-align: left;
+            white-space: normal;
+            word-break: break-word;
+            background: #fffde7;
+            border: 1px solid #2E75B6;
+            border-radius: 6px;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+            pointer-events: auto;
+        }
+        #cell-expand-popover.visible { display: block; }
 
         .debt-row td { font-weight: 600; }
         .balance-cell { font-weight: bold; text-align: right; }
@@ -255,13 +322,13 @@
             </select>
         </div>
         <div class="table-wrapper table-pan-viewport" title="Прокрутка колёсиком / тачем; мышью — зажмите и тяните по таблице">
-            <table>
+            <table class="objects-list-table">
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th onclick="sortTable(1)" style="cursor:pointer" title="Календарные дни выезда на объект">Дни на объекте ↕</th>
-                        <th onclick="sortTable(2)" style="cursor:pointer">Наименование ↕</th>
-                        <th onclick="sortTable(3)" style="cursor:pointer">Клиент ↕</th>
+                        <th class="cell-compact" onclick="sortTable(1)" style="cursor:pointer" title="Календарные дни выезда на объект">Дни на объекте ↕</th>
+                        <th class="cell-compact" onclick="sortTable(2)" style="cursor:pointer">Наименование ↕</th>
+                        <th class="cell-compact" onclick="sortTable(3)" style="cursor:pointer">Клиент ↕</th>
                         <th onclick="sortTable(4)" style="cursor:pointer">Статус ↕</th>
                         <th onclick="sortTable(5)" style="cursor:pointer">Аванс ↕</th>
                         <th onclick="sortTable(6)" style="cursor:pointer">Затраты на рабочих ↕</th>
@@ -277,6 +344,20 @@
         </div>
         <!-- Пагинация -->
         <div id="pagination" style="display:flex;justify-content:center;gap:5px;padding:15px;align-items:center;"></div>
+    </div>
+
+    <!-- Карточка клиента (просмотр) -->
+    <div class="modal" id="client-info-modal">
+        <div class="modal-content" style="width: min(92vw, 560px); max-height: 90vh; overflow-y: auto;">
+            <h2 id="client-info-title" style="color:#9C27B0;">Клиент</h2>
+            <div id="client-info-body" class="info-detail-grid"></div>
+            <h3 class="client-info-objects-title">Объекты клиента</h3>
+            <div id="client-info-objects" class="history-list" style="max-height:40vh;overflow:auto;border:1px solid #eee;border-radius:8px;"></div>
+            <div class="modal-buttons" style="margin-top:16px;">
+                <a href="/clients" class="btn btn-secondary" style="text-decoration:none;">👥 База клиентов</a>
+                <button type="button" class="btn btn-cancel" onclick="closeClientInfoModal()">Закрыть</button>
+            </div>
+        </div>
     </div>
 
     <!-- Модалка объекта -->
@@ -970,7 +1051,231 @@
             });
         }
 
+        var cellExpandTimer = null;
+        var cellExpandActiveTd = null;
+
+        function fillCompactCell(td, text, alignLeft, linkMeta) {
+            var t = text != null ? String(text) : '';
+            var cls = 'cell-compact' + (alignLeft ? ' cell-compact-left' : '');
+            if (linkMeta && linkMeta.type === 'object') {
+                cls += ' cell-link-name';
+            } else if (linkMeta && linkMeta.type === 'client') {
+                cls += ' cell-link-client';
+            }
+            td.className = cls;
+            td.setAttribute('data-full', t);
+            td.title = (linkMeta && linkMeta.type === 'object') ? 'Открыть карточку объекта'
+                : (linkMeta && linkMeta.type === 'client') ? 'Открыть данные клиента' : '';
+            if (linkMeta && linkMeta.type === 'object' && linkMeta.id != null) {
+                td.dataset.objectId = String(linkMeta.id);
+            }
+            if (linkMeta && linkMeta.type === 'client') {
+                if (linkMeta.clientId != null && linkMeta.clientId !== '') td.dataset.clientId = String(linkMeta.clientId);
+                if (linkMeta.clientName) td.dataset.clientName = String(linkMeta.clientName);
+            }
+            var span = document.createElement('span');
+            span.className = 'cell-compact-text';
+            span.textContent = t;
+            td.appendChild(span);
+        }
+
+        function resolveClientRecord(clientId, clientName) {
+            if (clientId != null && clientId !== '') {
+                var idNum = Number(clientId);
+                if (!Number.isNaN(idNum)) {
+                    var byId = clients.find(function(x) { return Number(x.id) === idNum; });
+                    if (byId) return byId;
+                }
+            }
+            var nm = String(clientName || '').trim();
+            if (!nm || nm === '-') return null;
+            return clients.find(function(x) { return String(x.name || '').trim() === nm; }) || null;
+        }
+
+        function clientInfoRow(label, value) {
+            return '<div class="info-detail-row"><span class="info-detail-label">' + escHtml(label) + '</span><span class="info-detail-value">' + escHtml(value != null && value !== '' ? String(value) : '—') + '</span></div>';
+        }
+
+        function objectsForClient(client, clientName) {
+            var cid = client ? client.id : null;
+            var nm = client ? String(client.name || '').trim() : String(clientName || '').trim();
+            return objects.filter(function(o) {
+                if (cid != null && o.client_id != null && Number(o.client_id) === Number(cid)) return true;
+                if (nm && String(o.client || '').trim() === nm) return true;
+                return false;
+            }).sort(function(a, b) {
+                return String(b.updated_at || b.date_start || '').localeCompare(String(a.updated_at || a.date_start || ''));
+            });
+        }
+
+        function openClientInfoModal(client, clientName) {
+            var c = client || resolveClientRecord(null, clientName);
+            var title = document.getElementById('client-info-title');
+            var body = document.getElementById('client-info-body');
+            var list = document.getElementById('client-info-objects');
+            if (!title || !body || !list) return;
+
+            if (c) {
+                title.textContent = 'Клиент: ' + (c.name || ('#' + c.id));
+                body.innerHTML =
+                    clientInfoRow('ID', c.id) +
+                    clientInfoRow('ФИО / организация', c.name) +
+                    clientInfoRow('Телефон', c.phone) +
+                    clientInfoRow('Email', c.email) +
+                    clientInfoRow('Адрес', c.address);
+            } else {
+                var nmOnly = String(clientName || '').trim();
+                if (!nmOnly || nmOnly === '-') {
+                    alert('Клиент не указан');
+                    return;
+                }
+                title.textContent = 'Клиент: ' + nmOnly;
+                body.innerHTML =
+                    clientInfoRow('Имя в объекте', nmOnly) +
+                    '<div class="info-detail-row"><span class="info-detail-label">Запись</span><span class="info-detail-value" style="color:#888;">Нет карточки в базе клиентов — только текст в объекте</span></div>';
+            }
+
+            var related = objectsForClient(c, c ? c.name : clientName);
+            if (related.length === 0) {
+                list.innerHTML = '<div style="padding:14px;color:#666;">Объектов не найдено</div>';
+            } else {
+                list.innerHTML = '';
+                related.forEach(function(o) {
+                    var item = document.createElement('div');
+                    item.className = 'client-info-object-item';
+                    var bal = Math.abs(o.balance || 0) < 0.005 ? 0 : (o.balance || 0);
+                    item.innerHTML =
+                        '<div style="font-weight:700;">' + escHtml(o.name || ('Объект #' + o.id)) + '</div>' +
+                        '<div style="color:#666;font-size:13px;margin-top:4px;">' +
+                        'ID ' + escHtml(String(o.id)) + ' · ' + escHtml(o.status || '—') +
+                        ' · остаток ' + escHtml(formatMoney(bal)) +
+                        '</div>';
+                    item.onclick = function() {
+                        closeClientInfoModal();
+                        openModal(o.id);
+                    };
+                    list.appendChild(item);
+                });
+            }
+            document.getElementById('client-info-modal').classList.add('active');
+        }
+
+        function openClientInfoFromCell(td) {
+            openClientInfoModal(
+                resolveClientRecord(td.dataset.clientId, td.dataset.clientName || td.getAttribute('data-full')),
+                td.dataset.clientName || td.getAttribute('data-full')
+            );
+        }
+
+        function closeClientInfoModal() {
+            var m = document.getElementById('client-info-modal');
+            if (m) m.classList.remove('active');
+        }
+
+        function initCompactCellLinks() {
+            var tbody = document.getElementById('table-body');
+            if (!tbody || tbody._compactLinksInit) return;
+            tbody._compactLinksInit = true;
+            tbody.addEventListener('click', function(e) {
+                var tdObj = e.target.closest('td.cell-link-name');
+                if (tdObj && tdObj.dataset.objectId) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    hideCellExpandPopover();
+                    openModal(Number(tdObj.dataset.objectId));
+                    return;
+                }
+                var tdCl = e.target.closest('td.cell-link-client');
+                if (tdCl) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    hideCellExpandPopover();
+                    openClientInfoFromCell(tdCl);
+                }
+            });
+        }
+
+        function compactCellIsOverflow(td) {
+            var inner = td.querySelector('.cell-compact-text');
+            if (!inner) return false;
+            return inner.scrollWidth > td.clientWidth + 1;
+        }
+
+        function ensureCellExpandPopover() {
+            var pop = document.getElementById('cell-expand-popover');
+            if (pop) return pop;
+            pop = document.createElement('div');
+            pop.id = 'cell-expand-popover';
+            pop.setAttribute('role', 'tooltip');
+            document.body.appendChild(pop);
+            pop.addEventListener('mouseenter', function() {
+                if (cellExpandTimer) { clearTimeout(cellExpandTimer); cellExpandTimer = null; }
+            });
+            pop.addEventListener('mouseleave', hideCellExpandPopover);
+            return pop;
+        }
+
+        function hideCellExpandPopover() {
+            if (cellExpandTimer) { clearTimeout(cellExpandTimer); cellExpandTimer = null; }
+            if (cellExpandActiveTd) {
+                cellExpandActiveTd.classList.remove('is-expand-hint');
+                cellExpandActiveTd = null;
+            }
+            var pop = document.getElementById('cell-expand-popover');
+            if (pop) pop.classList.remove('visible');
+        }
+
+        function showCellExpandPopover(td) {
+            var text = td.getAttribute('data-full') || '';
+            if (!text) return;
+            var pop = ensureCellExpandPopover();
+            pop.textContent = text;
+            pop.classList.add('visible');
+            var rect = td.getBoundingClientRect();
+            pop.style.left = '0';
+            pop.style.top = '0';
+            pop.style.maxWidth = Math.max(rect.width * 2, 200) + 'px';
+            var popH = pop.offsetHeight;
+            var popW = pop.offsetWidth;
+            var left = rect.left;
+            var top = rect.bottom + 4;
+            if (top + popH > window.innerHeight - 8) top = Math.max(8, rect.top - popH - 4);
+            if (left + popW > window.innerWidth - 8) left = Math.max(8, window.innerWidth - popW - 8);
+            pop.style.left = left + 'px';
+            pop.style.top = top + 'px';
+        }
+
+        function initCompactCellExpand() {
+            var tbody = document.getElementById('table-body');
+            if (!tbody || tbody._compactExpandInit) return;
+            tbody._compactExpandInit = true;
+            var compactHoverTd = null;
+            tbody.addEventListener('mouseover', function(e) {
+                var td = e.target.closest('td.cell-compact');
+                if (!td || !tbody.contains(td) || td === compactHoverTd) return;
+                compactHoverTd = td;
+                if (!compactCellIsOverflow(td)) return;
+                hideCellExpandPopover();
+                cellExpandActiveTd = td;
+                td.classList.add('is-expand-hint');
+                cellExpandTimer = setTimeout(function() {
+                    cellExpandTimer = null;
+                    if (!td.matches(':hover')) return;
+                    showCellExpandPopover(td);
+                }, 1000);
+            });
+            tbody.addEventListener('mouseout', function(e) {
+                var td = e.target.closest('td.cell-compact');
+                if (!td) return;
+                var rel = e.relatedTarget;
+                if (rel && (td.contains(rel) || rel.closest('#cell-expand-popover'))) return;
+                compactHoverTd = null;
+                hideCellExpandPopover();
+            });
+        }
+
         function renderTable() {
+            hideCellExpandPopover();
             const search = document.getElementById('filter-search').value.toLowerCase();
             const statusFilter = document.getElementById('filter-status').value;
             const clientFilter = document.getElementById('filter-client').value;
@@ -1023,9 +1328,21 @@
                 else if (obj.status === 'Приостановлен') tr.style.background = '#fff3f3';
 
                 const td0 = document.createElement('td'); td0.textContent = obj.id; tr.appendChild(td0);
-                const td1 = document.createElement('td'); td1.textContent = formatWorkDaysCell(obj); tr.appendChild(td1);
-                const td3 = document.createElement('td'); td3.style.textAlign = 'left'; td3.textContent = obj.name != null ? obj.name : ''; tr.appendChild(td3);
-                const td4 = document.createElement('td'); td4.textContent = objectClientDisplay(obj); tr.appendChild(td4);
+                const td1 = document.createElement('td');
+                fillCompactCell(td1, formatWorkDaysCell(obj), false);
+                tr.appendChild(td1);
+                const td3 = document.createElement('td');
+                fillCompactCell(td3, obj.name != null ? obj.name : '', true, { type: 'object', id: obj.id });
+                tr.appendChild(td3);
+                const td4 = document.createElement('td');
+                var clientLabel = objectClientDisplay(obj);
+                var hasClientLink = (obj.client_id != null && obj.client_id !== '') || String(obj.client || '').trim();
+                fillCompactCell(td4, clientLabel, false, hasClientLink ? {
+                    type: 'client',
+                    clientId: obj.client_id,
+                    clientName: String(obj.client || '').trim()
+                } : null);
+                tr.appendChild(td4);
                 const td7 = document.createElement('td');
                     const span = document.createElement('span');
                     var st = String(obj.status || '');
@@ -1963,6 +2280,11 @@
             if (e.target.id === 'modal') closeModal();
         });
 
+        var clientInfoModal = document.getElementById('client-info-modal');
+        if (clientInfoModal) clientInfoModal.addEventListener('click', function(e) {
+            if (e.target.id === 'client-info-modal') closeClientInfoModal();
+        });
+
         var passModal = document.getElementById('passwordModal');
         if (passModal) passModal.addEventListener('click', function(e) {
             if (e.target.id === 'passwordModal') closePasswordModal();
@@ -2061,6 +2383,8 @@
         console.log('Страница загружена');
         console.log('Фильтры очищены, загружаем данные...');
         loadData();
+        initCompactCellExpand();
+        initCompactCellLinks();
         initObjectsLiveAutoRefresh();
 
         // Принудительно загружаем данные через 2 секунды после автозаполнения
