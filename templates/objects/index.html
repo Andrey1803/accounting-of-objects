@@ -262,15 +262,13 @@
                         <th onclick="sortTable(1)" style="cursor:pointer" title="Календарные дни выезда на объект">Дни на объекте ↕</th>
                         <th onclick="sortTable(2)" style="cursor:pointer">Наименование ↕</th>
                         <th onclick="sortTable(3)" style="cursor:pointer">Клиент ↕</th>
-                        <th onclick="sortTable(4)" style="cursor:pointer" title="max(сумма работ, работы по смете) + материалы по смете">Выручка ↕</th>
-                        <th onclick="sortTable(5)" style="cursor:pointer" title="Закуп материалов по смете + прочие затраты (без двойного учёта розницы сметы)">Затраты ↕</th>
-                        <th onclick="sortTable(6)" style="cursor:pointer">Статус ↕</th>
-                        <th onclick="sortTable(7)" style="cursor:pointer">Аванс ↕</th>
-                        <th onclick="sortTable(8)" style="cursor:pointer">Затраты на рабочих ↕</th>
-                        <th onclick="sortTable(9)" style="cursor:pointer">Прибыль ↕</th>
-                        <th onclick="sortTable(10)" style="cursor:pointer">Прибыль с матер. ↕</th>
-                        <th onclick="sortTable(11)" style="cursor:pointer">Маржа ↕</th>
-                        <th onclick="sortTable(12)" style="cursor:pointer">Остаток ↕</th>
+                        <th onclick="sortTable(4)" style="cursor:pointer">Статус ↕</th>
+                        <th onclick="sortTable(5)" style="cursor:pointer">Аванс ↕</th>
+                        <th onclick="sortTable(6)" style="cursor:pointer">Затраты на рабочих ↕</th>
+                        <th onclick="sortTable(7)" style="cursor:pointer">Прибыль ↕</th>
+                        <th onclick="sortTable(8)" style="cursor:pointer">Прибыль с матер. ↕</th>
+                        <th onclick="sortTable(9)" style="cursor:pointer">Маржа ↕</th>
+                        <th onclick="sortTable(10)" style="cursor:pointer">Остаток ↕</th>
                         <th>Действия</th>
                     </tr>
                 </thead>
@@ -1004,7 +1002,7 @@
             if (filtered.length === 0) {
                 const tr = document.createElement('tr');
                 const td = document.createElement('td');
-                td.colSpan = 14;
+                td.colSpan = 12;
                 td.style.padding = '30px';
                 td.style.textAlign = 'center';
                 td.style.color = '#666';
@@ -1028,8 +1026,6 @@
                 const td1 = document.createElement('td'); td1.textContent = formatWorkDaysCell(obj); tr.appendChild(td1);
                 const td3 = document.createElement('td'); td3.style.textAlign = 'left'; td3.textContent = obj.name != null ? obj.name : ''; tr.appendChild(td3);
                 const td4 = document.createElement('td'); td4.textContent = objectClientDisplay(obj); tr.appendChild(td4);
-                const td5 = document.createElement('td'); td5.textContent = formatMoney(objectTotalRevenue(obj)); tr.appendChild(td5);
-                const td6 = document.createElement('td'); td6.textContent = formatMoney(obj.total_expenses||obj.expenses); tr.appendChild(td6);
                 const td7 = document.createElement('td');
                     const span = document.createElement('span');
                     var st = String(obj.status || '');
@@ -2031,17 +2027,12 @@
             objects.sort(function(a, b) {
                 var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
                 if (pa !== pb) return pa - pb;
-                var keys = ['id','__work_days__','name','client','__revenue__','__total_expenses__','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
+                var keys = ['id','__work_days__','name','client','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
                 var key = keys[colIdx] || 'name';
                 var va, vb;
                 if (key === '__work_days__') {
                     va = (parseWorkDatesFromObject(a)[0] || '');
                     vb = (parseWorkDatesFromObject(b)[0] || '');
-                } else if (key === '__revenue__') {
-                    va = objectTotalRevenue(a); vb = objectTotalRevenue(b);
-                } else if (key === '__total_expenses__') {
-                    va = Number(a.total_expenses != null && a.total_expenses !== '' ? a.total_expenses : a.expenses) || 0;
-                    vb = Number(b.total_expenses != null && b.total_expenses !== '' ? b.total_expenses : b.expenses) || 0;
                 } else {
                     va = a[key] || 0; vb = b[key] || 0;
                 }
