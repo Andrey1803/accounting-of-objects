@@ -4,7 +4,9 @@
  */
 (function () {
     function interactiveTarget(t) {
-        return t && t.closest && t.closest('button, a, input, select, textarea, label, th');
+        return t && t.closest && t.closest(
+            'button, a, input, select, textarea, label, th, td.cell-link-client, td.cell-link-name, .cell-compact-text'
+        );
     }
 
     function bindPan(el) {

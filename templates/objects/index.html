@@ -662,7 +662,7 @@
     <script src="/static/js/utils.js?v=5"></script>
     <script src="/static/js/addressParse.js?v=1"></script>
     <script src="/static/js/offline.js?v=3"></script>
-    <script src="/static/js/table-pan.js?v=1"></script>
+    <script src="/static/js/table-pan.js?v=2"></script>
     <script>
         let objects = [], clients = [], editingId = null, currentObjectId = null;
         let objectWorkDaysEdit = [];
@@ -1149,7 +1149,7 @@
         }
 
         function openObjectInfoModal(id) {
-            var obj = objects.find(function(o) { return Number(o.id) === Number(id); });
+            var obj = objects.find(function(o) { return String(o.id) === String(id); });
             if (!obj) return;
             objectInfoViewId = obj.id;
             var title = document.getElementById('object-info-title');
@@ -1283,27 +1283,38 @@
             if (m) m.classList.remove('active');
         }
 
+        function eventClickElement(e) {
+            var t = e.target;
+            if (!t) return null;
+            if (t.nodeType === 1) return t;
+            return t.parentElement || null;
+        }
+
+        function handleCompactCellLinkClick(e) {
+            var el = eventClickElement(e);
+            if (!el) return;
+            var tdObj = el.closest('td.cell-link-name');
+            if (tdObj && tdObj.dataset.objectId) {
+                e.preventDefault();
+                e.stopPropagation();
+                collapseInlineTextExpand();
+                openObjectInfoModal(tdObj.dataset.objectId);
+                return;
+            }
+            var tdCl = el.closest('td.cell-link-client');
+            if (tdCl) {
+                e.preventDefault();
+                e.stopPropagation();
+                collapseInlineTextExpand();
+                openClientInfoFromCell(tdCl);
+            }
+        }
+
         function initCompactCellLinks() {
-            var tbody = document.getElementById('table-body');
-            if (!tbody || tbody._compactLinksInit) return;
-            tbody._compactLinksInit = true;
-            tbody.addEventListener('click', function(e) {
-                var tdObj = e.target.closest('td.cell-link-name');
-                if (tdObj && tdObj.dataset.objectId) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    collapseInlineTextExpand();
-                    openObjectInfoModal(Number(tdObj.dataset.objectId));
-                    return;
-                }
-                var tdCl = e.target.closest('td.cell-link-client');
-                if (tdCl) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    collapseInlineTextExpand();
-                    openClientInfoFromCell(tdCl);
-                }
-            });
+            var tableWrap = document.querySelector('.table-wrapper.table-pan-viewport');
+            if (!tableWrap || tableWrap._compactLinksInit) return;
+            tableWrap._compactLinksInit = true;
+            tableWrap.addEventListener('click', handleCompactCellLinkClick);
         }
 
         function compactCellIsOverflow(td) {
