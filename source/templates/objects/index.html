@@ -97,11 +97,19 @@
             font-size: var(--fs-sm);
             text-align: center;
         }
-        /* Дни / наименование / клиент — узкие колонки; обрезанный текст раскрывается поверх ячейки */
+        /* ID — под три цифры; дата — под dd.mm.yyyy */
+        table.objects-list-table th.col-id,
+        table.objects-list-table td.col-id {
+            width: 2.75rem;
+            max-width: 2.75rem;
+            padding-left: 4px;
+            padding-right: 4px;
+        }
+        /* Дата / наименование / клиент — узкие колонки; обрезанный текст раскрывается поверх ячейки */
         table.objects-list-table th.cell-compact:nth-child(2),
         table.objects-list-table td.cell-compact:nth-child(2) {
-            width: 4.5rem;
-            max-width: 4.5rem;
+            width: 6.5rem;
+            max-width: 6.5rem;
         }
         table.objects-list-table th.cell-compact:nth-child(3),
         table.objects-list-table td.cell-compact:nth-child(3) {
@@ -351,8 +359,8 @@
             <table class="objects-list-table">
                 <thead>
                     <tr>
-                        <th>ID</th>
-                        <th class="cell-compact" onclick="sortTable(1)" style="cursor:pointer" title="Календарные дни выезда на объект">Дни на объекте ↕</th>
+                        <th class="col-id">ID</th>
+                        <th class="cell-compact" onclick="sortTable(1)" style="cursor:pointer" title="Календарные дни выезда на объект">Дата ↕</th>
                         <th class="cell-compact" onclick="sortTable(2)" style="cursor:pointer">Наименование ↕</th>
                         <th class="cell-compact" onclick="sortTable(3)" style="cursor:pointer">Клиент ↕</th>
                         <th onclick="sortTable(4)" style="cursor:pointer">Статус ↕</th>
@@ -703,6 +711,14 @@
             var d = parseWorkDatesFromObject(obj);
             if (!d.length) return '-';
             return d.map(formatDate).join(', ');
+        }
+
+        /** В таблице — одна (последняя) дата; полный список в data-full и при наведении. */
+        function formatWorkDaysCellTable(obj) {
+            var d = parseWorkDatesFromObject(obj).slice().sort();
+            if (!d.length) return '-';
+            if (d.length === 1) return formatDate(d[0]);
+            return formatDate(d[d.length - 1]) + ' (+' + (d.length - 1) + ')';
         }
 
         function renderWorkDaysEditor() {
@@ -1093,8 +1109,9 @@
         var compactHoverSpan = null;
         var objectInfoViewId = null;
 
-        function fillCompactCell(td, text, alignLeft, linkMeta) {
+        function fillCompactCell(td, text, alignLeft, linkMeta, fullText) {
             var t = text != null ? String(text) : '';
+            var full = fullText != null ? String(fullText) : t;
             var cls = 'cell-compact' + (alignLeft ? ' cell-compact-left' : '');
             if (linkMeta && linkMeta.type === 'object') {
                 cls += ' cell-link-name';
@@ -1102,7 +1119,7 @@
                 cls += ' cell-link-client';
             }
             td.className = cls;
-            td.setAttribute('data-full', t);
+            td.setAttribute('data-full', full);
             td.title = (linkMeta && linkMeta.type === 'object') ? 'Открыть карточку объекта'
                 : (linkMeta && linkMeta.type === 'client') ? 'Открыть данные клиента' : '';
             if (linkMeta && linkMeta.type === 'object' && linkMeta.id != null) {
@@ -1324,8 +1341,8 @@
         }
 
         function collapseInlineTextExpand() {
-            document.querySelectorAll('.cell-compact-text.is-text-expanded').forEach(function(span) {
-                span.classList.remove('is-text-expanded', 'is-text-hover');
+            document.querySelectorAll('.cell-compact-text.is-text-expanded, .cell-compact-text.is-text-hover').forEach(function(span) {
+                collapseInlineTextSpan(span);
             });
             document.querySelectorAll('td.cell-text-expanded').forEach(function(td) {
                 td.classList.remove('cell-text-expanded');
@@ -1342,8 +1359,12 @@
             tbody.querySelectorAll('td.cell-compact').forEach(function(td) {
                 var span = td.querySelector('.cell-compact-text');
                 if (!span) return;
+                var full = td.getAttribute('data-full') || span.textContent || '';
+                var short = span.textContent || '';
                 span.classList.remove('has-overflow');
-                if (compactCellIsOverflow(td)) span.classList.add('has-overflow');
+                if (full.length > short.length || compactCellIsOverflow(td)) {
+                    span.classList.add('has-overflow');
+                }
             });
         }
 
@@ -1351,9 +1372,21 @@
             if (!span || !span.classList.contains('has-overflow')) return;
             var td = span.closest('td.cell-compact');
             var tr = span.closest('tr');
+            var full = (td && td.getAttribute('data-full')) || span.textContent;
+            if (!span.dataset.collapsedText) span.dataset.collapsedText = span.textContent;
+            span.textContent = full;
             span.classList.add('is-text-expanded');
             if (td) td.classList.add('cell-text-expanded');
             if (tr) tr.classList.add('has-expanded-cell');
+        }
+
+        function collapseInlineTextSpan(span) {
+            if (!span) return;
+            if (span.dataset.collapsedText != null) {
+                span.textContent = span.dataset.collapsedText;
+                delete span.dataset.collapsedText;
+            }
+            span.classList.remove('is-text-hover', 'is-text-expanded');
         }
 
         function initCompactCellExpand() {
@@ -1374,7 +1407,7 @@
                 if (rel && span.contains(rel)) return;
                 var relSpan = rel && rel.closest ? rel.closest('.cell-compact-text') : null;
                 if (relSpan === span) return;
-                span.classList.remove('is-text-hover', 'is-text-expanded');
+                collapseInlineTextSpan(span);
                 var td = span.closest('td.cell-compact');
                 if (td) td.classList.remove('cell-text-expanded');
                 var tr = span.closest('tr');
@@ -1438,9 +1471,12 @@
                 else if (obj.status === 'В работе') tr.style.background = '#e8f4fd';
                 else if (obj.status === 'Приостановлен') tr.style.background = '#fff3f3';
 
-                const td0 = document.createElement('td'); td0.textContent = obj.id; tr.appendChild(td0);
+                const td0 = document.createElement('td');
+                td0.className = 'col-id';
+                td0.textContent = obj.id;
+                tr.appendChild(td0);
                 const td1 = document.createElement('td');
-                fillCompactCell(td1, formatWorkDaysCell(obj), false);
+                fillCompactCell(td1, formatWorkDaysCellTable(obj), false, null, formatWorkDaysCell(obj));
                 tr.appendChild(td1);
                 const td3 = document.createElement('td');
                 fillCompactCell(td3, obj.name != null ? obj.name : '', true, { type: 'object', id: obj.id });
