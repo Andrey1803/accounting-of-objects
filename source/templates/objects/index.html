@@ -97,7 +97,7 @@
             font-size: var(--fs-sm);
             text-align: center;
         }
-        /* Дни / наименование / клиент — вдвое уже, обрезка; полный текст по удержанию курсора 1 с */
+        /* Дни / наименование / клиент — узкие колонки; обрезанный текст раскрывается поверх ячейки */
         table.objects-list-table th.cell-compact:nth-child(2),
         table.objects-list-table td.cell-compact:nth-child(2) {
             width: 4.5rem;
@@ -114,25 +114,69 @@
             max-width: 5.5rem;
         }
         td.cell-compact {
+            position: relative;
+            overflow: hidden;
+            vertical-align: middle;
+            cursor: default;
+        }
+        td.cell-compact.cell-text-expanded { overflow: visible; z-index: 24; }
+        tr.has-expanded-cell { position: relative; z-index: 23; }
+        td.cell-compact.cell-compact-left { text-align: left; }
+        td.cell-compact .cell-compact-text {
+            display: inline-block;
+            max-width: 100%;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
             vertical-align: middle;
-            cursor: default;
+            border-radius: 3px;
+            transition: background 0.12s, box-shadow 0.12s;
         }
-        td.cell-compact.cell-compact-left { text-align: left; }
-        td.cell-compact .cell-compact-text {
-            display: block;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+        td.cell-compact .cell-compact-text.is-text-hover {
+            background: #fff9c4;
+            box-shadow: 0 0 0 1px rgba(255, 193, 7, 0.55);
         }
-        td.cell-compact.is-expand-hint { background: #e3f2fd; }
+        td.cell-link-client .cell-compact-text.is-text-hover {
+            background: rgba(156, 39, 176, 0.22);
+            box-shadow: 0 0 0 1px rgba(156, 39, 176, 0.45);
+        }
+        td.cell-link-name .cell-compact-text {
+            font-weight: 600;
+            color: #1E5A8E;
+        }
+        td.cell-link-name .cell-compact-text.is-text-hover {
+            background: rgba(46, 117, 182, 0.16);
+            box-shadow: 0 0 0 1px rgba(46, 117, 182, 0.45);
+        }
+        td.cell-compact .cell-compact-text.is-text-expanded {
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 30;
+            max-width: min(420px, 72vw);
+            min-width: calc(100% - 2px);
+            width: max-content;
+            white-space: normal;
+            word-break: break-word;
+            overflow: visible;
+            text-overflow: clip;
+            background: #fffde7;
+            border: 1px solid #2E75B6;
+            padding: 5px 8px;
+            border-radius: 4px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+        }
+        td.cell-link-client .cell-compact-text.is-text-expanded {
+            background: #f3e5f5;
+            border-color: #9C27B0;
+        }
+        td.cell-link-name .cell-compact-text.is-text-expanded {
+            background: #e3f2fd;
+            border-color: #2E75B6;
+        }
         td.cell-link-client,
-        td.cell-link-name { cursor: pointer; transition: background 0.15s; }
-        td.cell-link-client:hover { background: rgba(156, 39, 176, 0.18); outline: 1px solid #9C27B0; }
-        td.cell-link-name { font-weight: 600; color: #1E5A8E; }
-        td.cell-link-name:hover { background: rgba(46, 117, 182, 0.14); outline: 1px solid #2E75B6; }
+        td.cell-link-name { cursor: pointer; }
         .info-detail-grid { display: grid; gap: 10px; margin-bottom: 16px; }
         .info-detail-row { display: grid; grid-template-columns: 9rem 1fr; gap: 8px; font-size: 14px; align-items: start; }
         .info-detail-label { color: #666; font-weight: 600; }
@@ -146,24 +190,6 @@
         }
         .client-info-object-item:hover { background: #f3e5f5; }
         .client-info-object-item:last-child { border-bottom: none; }
-        #cell-expand-popover {
-            position: fixed;
-            z-index: 10050;
-            display: none;
-            max-width: min(420px, 92vw);
-            padding: 8px 10px;
-            font-size: var(--fs-sm);
-            line-height: 1.35;
-            text-align: left;
-            white-space: normal;
-            word-break: break-word;
-            background: #fffde7;
-            border: 1px solid #2E75B6;
-            border-radius: 6px;
-            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
-            pointer-events: auto;
-        }
-        #cell-expand-popover.visible { display: block; }
 
         .debt-row td { font-weight: 600; }
         .balance-cell { font-weight: bold; text-align: right; }
@@ -344,6 +370,19 @@
         </div>
         <!-- Пагинация -->
         <div id="pagination" style="display:flex;justify-content:center;gap:5px;padding:15px;align-items:center;"></div>
+    </div>
+
+    <!-- Карточка объекта (просмотр) -->
+    <div class="modal" id="object-info-modal">
+        <div class="modal-content" style="width: min(94vw, 640px); max-height: 90vh; overflow-y: auto;">
+            <h2 id="object-info-title" style="color:#2E75B6;">Объект</h2>
+            <div id="object-info-body" class="info-detail-grid"></div>
+            <div class="modal-buttons" style="margin-top:16px;">
+                <button type="button" class="btn btn-primary" id="object-info-edit-btn">✏️ Редактировать</button>
+                <button type="button" class="btn btn-estimate" id="object-info-est-btn" style="background:#FF6B35;color:#fff;">📊 Сметы</button>
+                <button type="button" class="btn btn-cancel" onclick="closeObjectInfoModal()">Закрыть</button>
+            </div>
+        </div>
     </div>
 
     <!-- Карточка клиента (просмотр) -->
@@ -1051,8 +1090,8 @@
             });
         }
 
-        var cellExpandTimer = null;
-        var cellExpandActiveTd = null;
+        var compactHoverSpan = null;
+        var objectInfoViewId = null;
 
         function fillCompactCell(td, text, alignLeft, linkMeta) {
             var t = text != null ? String(text) : '';
@@ -1092,8 +1131,80 @@
             return clients.find(function(x) { return String(x.name || '').trim() === nm; }) || null;
         }
 
-        function clientInfoRow(label, value) {
+        function infoDetailRow(label, value) {
             return '<div class="info-detail-row"><span class="info-detail-label">' + escHtml(label) + '</span><span class="info-detail-value">' + escHtml(value != null && value !== '' ? String(value) : '—') + '</span></div>';
+        }
+
+        function clientInfoRow(label, value) {
+            return infoDetailRow(label, value);
+        }
+
+        function salaryModeLabel(mode) {
+            var labels = {
+                all_workers: 'Все активные рабочие ÷ объекты за день',
+                assigned_workers: 'Только рабочие с объекта',
+                manual: 'Вручную'
+            };
+            return labels[mode] || mode || '—';
+        }
+
+        function openObjectInfoModal(id) {
+            var obj = objects.find(function(o) { return Number(o.id) === Number(id); });
+            if (!obj) return;
+            objectInfoViewId = obj.id;
+            var title = document.getElementById('object-info-title');
+            var body = document.getElementById('object-info-body');
+            if (!title || !body) return;
+
+            var revenue = objectTotalRevenue(obj);
+            var profit = obj.total_profit || 0;
+            var margin = revenue > 0 ? ((profit / revenue) * 100).toFixed(1) + '%' : '0.0%';
+            var bal = Math.abs(obj.balance || 0) < 0.005 ? 0 : (obj.balance || 0);
+
+            title.textContent = obj.name || ('Объект #' + obj.id);
+            body.innerHTML =
+                infoDetailRow('ID', obj.id) +
+                infoDetailRow('Наименование', obj.name) +
+                infoDetailRow('Клиент', objectClientDisplay(obj)) +
+                infoDetailRow('Статус', obj.status) +
+                infoDetailRow('Дни на объекте', formatWorkDaysCell(obj)) +
+                infoDetailRow('Сумма работ', formatMoney(obj.sum_work || 0)) +
+                infoDetailRow('Затраты (прочие)', formatMoney(obj.total_expenses != null ? obj.total_expenses : (obj.expenses || 0))) +
+                infoDetailRow('Аванс', formatMoney(obj.advance || 0)) +
+                infoDetailRow('Затраты на рабочих', formatMoney(obj.salary || 0)) +
+                infoDetailRow('Расчёт зарплаты', salaryModeLabel(obj.salary_allocation_mode)) +
+                infoDetailRow('Прибыль', formatMoney(profit)) +
+                infoDetailRow('Прибыль с материалов', formatMoney(obj.estimate_material_profit || 0)) +
+                infoDetailRow('Маржа', margin) +
+                infoDetailRow('Остаток', formatMoney(bal)) +
+                infoDetailRow('Дата начала', obj.date_start ? formatDate(obj.date_start) : '') +
+                infoDetailRow('Дата окончания', obj.date_end ? formatDate(obj.date_end) : '') +
+                (obj.is_regular_to
+                    ? infoDetailRow('Регулярное ТО', (obj.next_to_date ? formatDate(obj.next_to_date) : 'да') + (obj.next_to_note ? ' — ' + obj.next_to_note : ''))
+                    : '') +
+                infoDetailRow('Примечание', obj.notes);
+
+            var editBtn = document.getElementById('object-info-edit-btn');
+            var estBtn = document.getElementById('object-info-est-btn');
+            if (editBtn) {
+                editBtn.onclick = function() {
+                    closeObjectInfoModal();
+                    openModal(obj.id);
+                };
+            }
+            if (estBtn) {
+                estBtn.onclick = function() {
+                    closeObjectInfoModal();
+                    openEstimates(obj.id);
+                };
+            }
+            document.getElementById('object-info-modal').classList.add('active');
+        }
+
+        function closeObjectInfoModal() {
+            objectInfoViewId = null;
+            var m = document.getElementById('object-info-modal');
+            if (m) m.classList.remove('active');
         }
 
         function objectsForClient(client, clientName) {
@@ -1152,7 +1263,7 @@
                         '</div>';
                     item.onclick = function() {
                         closeClientInfoModal();
-                        openModal(o.id);
+                        openObjectInfoModal(o.id);
                     };
                     list.appendChild(item);
                 });
@@ -1181,15 +1292,15 @@
                 if (tdObj && tdObj.dataset.objectId) {
                     e.preventDefault();
                     e.stopPropagation();
-                    hideCellExpandPopover();
-                    openModal(Number(tdObj.dataset.objectId));
+                    collapseInlineTextExpand();
+                    openObjectInfoModal(Number(tdObj.dataset.objectId));
                     return;
                 }
                 var tdCl = e.target.closest('td.cell-link-client');
                 if (tdCl) {
                     e.preventDefault();
                     e.stopPropagation();
-                    hideCellExpandPopover();
+                    collapseInlineTextExpand();
                     openClientInfoFromCell(tdCl);
                 }
             });
@@ -1201,81 +1312,70 @@
             return inner.scrollWidth > td.clientWidth + 1;
         }
 
-        function ensureCellExpandPopover() {
-            var pop = document.getElementById('cell-expand-popover');
-            if (pop) return pop;
-            pop = document.createElement('div');
-            pop.id = 'cell-expand-popover';
-            pop.setAttribute('role', 'tooltip');
-            document.body.appendChild(pop);
-            pop.addEventListener('mouseenter', function() {
-                if (cellExpandTimer) { clearTimeout(cellExpandTimer); cellExpandTimer = null; }
+        function collapseInlineTextExpand() {
+            document.querySelectorAll('.cell-compact-text.is-text-expanded').forEach(function(span) {
+                span.classList.remove('is-text-expanded', 'is-text-hover');
             });
-            pop.addEventListener('mouseleave', hideCellExpandPopover);
-            return pop;
+            document.querySelectorAll('td.cell-text-expanded').forEach(function(td) {
+                td.classList.remove('cell-text-expanded');
+            });
+            document.querySelectorAll('tr.has-expanded-cell').forEach(function(tr) {
+                tr.classList.remove('has-expanded-cell');
+            });
+            compactHoverSpan = null;
         }
 
-        function hideCellExpandPopover() {
-            if (cellExpandTimer) { clearTimeout(cellExpandTimer); cellExpandTimer = null; }
-            if (cellExpandActiveTd) {
-                cellExpandActiveTd.classList.remove('is-expand-hint');
-                cellExpandActiveTd = null;
-            }
-            var pop = document.getElementById('cell-expand-popover');
-            if (pop) pop.classList.remove('visible');
+        function markCompactCellsOverflow() {
+            var tbody = document.getElementById('table-body');
+            if (!tbody) return;
+            tbody.querySelectorAll('td.cell-compact').forEach(function(td) {
+                var span = td.querySelector('.cell-compact-text');
+                if (!span) return;
+                span.classList.remove('has-overflow');
+                if (compactCellIsOverflow(td)) span.classList.add('has-overflow');
+            });
         }
 
-        function showCellExpandPopover(td) {
-            var text = td.getAttribute('data-full') || '';
-            if (!text) return;
-            var pop = ensureCellExpandPopover();
-            pop.textContent = text;
-            pop.classList.add('visible');
-            var rect = td.getBoundingClientRect();
-            pop.style.left = '0';
-            pop.style.top = '0';
-            pop.style.maxWidth = Math.max(rect.width * 2, 200) + 'px';
-            var popH = pop.offsetHeight;
-            var popW = pop.offsetWidth;
-            var left = rect.left;
-            var top = rect.bottom + 4;
-            if (top + popH > window.innerHeight - 8) top = Math.max(8, rect.top - popH - 4);
-            if (left + popW > window.innerWidth - 8) left = Math.max(8, window.innerWidth - popW - 8);
-            pop.style.left = left + 'px';
-            pop.style.top = top + 'px';
+        function expandInlineText(span) {
+            if (!span || !span.classList.contains('has-overflow')) return;
+            var td = span.closest('td.cell-compact');
+            var tr = span.closest('tr');
+            span.classList.add('is-text-expanded');
+            if (td) td.classList.add('cell-text-expanded');
+            if (tr) tr.classList.add('has-expanded-cell');
         }
 
         function initCompactCellExpand() {
             var tbody = document.getElementById('table-body');
             if (!tbody || tbody._compactExpandInit) return;
             tbody._compactExpandInit = true;
-            var compactHoverTd = null;
             tbody.addEventListener('mouseover', function(e) {
-                var td = e.target.closest('td.cell-compact');
-                if (!td || !tbody.contains(td) || td === compactHoverTd) return;
-                compactHoverTd = td;
-                if (!compactCellIsOverflow(td)) return;
-                hideCellExpandPopover();
-                cellExpandActiveTd = td;
-                td.classList.add('is-expand-hint');
-                cellExpandTimer = setTimeout(function() {
-                    cellExpandTimer = null;
-                    if (!td.matches(':hover')) return;
-                    showCellExpandPopover(td);
-                }, 1000);
+                var span = e.target.closest('.cell-compact-text');
+                if (!span || !tbody.contains(span) || span === compactHoverSpan) return;
+                compactHoverSpan = span;
+                span.classList.add('is-text-hover');
+                expandInlineText(span);
             });
             tbody.addEventListener('mouseout', function(e) {
-                var td = e.target.closest('td.cell-compact');
-                if (!td) return;
+                var span = e.target.closest('.cell-compact-text');
+                if (!span) return;
                 var rel = e.relatedTarget;
-                if (rel && (td.contains(rel) || rel.closest('#cell-expand-popover'))) return;
-                compactHoverTd = null;
-                hideCellExpandPopover();
+                if (rel && span.contains(rel)) return;
+                var relSpan = rel && rel.closest ? rel.closest('.cell-compact-text') : null;
+                if (relSpan === span) return;
+                span.classList.remove('is-text-hover', 'is-text-expanded');
+                var td = span.closest('td.cell-compact');
+                if (td) td.classList.remove('cell-text-expanded');
+                var tr = span.closest('tr');
+                if (tr && !tr.querySelector('.cell-compact-text.is-text-expanded')) {
+                    tr.classList.remove('has-expanded-cell');
+                }
+                if (compactHoverSpan === span) compactHoverSpan = null;
             });
         }
 
         function renderTable() {
-            hideCellExpandPopover();
+            collapseInlineTextExpand();
             const search = document.getElementById('filter-search').value.toLowerCase();
             const statusFilter = document.getElementById('filter-status').value;
             const clientFilter = document.getElementById('filter-client').value;
@@ -1411,6 +1511,7 @@
 
                 tbody.appendChild(tr);
             });
+            markCompactCellsOverflow();
         }
 
         function formatDate(dateStr) { if (!dateStr) return '-'; const parts = dateStr.split('-'); return `${parts[2]}.${parts[1]}.${parts[0]}`; }
@@ -2283,6 +2384,11 @@
         var clientInfoModal = document.getElementById('client-info-modal');
         if (clientInfoModal) clientInfoModal.addEventListener('click', function(e) {
             if (e.target.id === 'client-info-modal') closeClientInfoModal();
+        });
+
+        var objectInfoModal = document.getElementById('object-info-modal');
+        if (objectInfoModal) objectInfoModal.addEventListener('click', function(e) {
+            if (e.target.id === 'object-info-modal') closeObjectInfoModal();
         });
 
         var passModal = document.getElementById('passwordModal');
