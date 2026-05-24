@@ -1183,7 +1183,12 @@ def integration_create_object_from_taskmgr():
             obj_status = str(status_val).strip()
         else:
             obj_status = OBJECT_STATUS_WAITING
-        advance_new = 0 if advance_payload is None else advance_payload
+        if advance_delta_payload is not None:
+            advance_new = float(advance_delta_payload)
+        elif advance_payload is not None:
+            advance_new = advance_payload
+        else:
+            advance_new = 0
 
         extra_notes = (data.get('notes') or '').strip()
         line = f'Задача диспетчера: {task_id}'
