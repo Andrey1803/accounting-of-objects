@@ -30,9 +30,11 @@ var ClientsPage = (function(API, UI) {
         }
 
         tbody.innerHTML = filtered.map(function(client) {
+            var clientName = (client.name || '').trim();
+            var idSafe = String(client.id).replace(/'/g, "\\'");
             return '<tr>' +
                 '<td>' + API.esc(String(client.id)) + '</td>' +
-                '<td style="text-align:left;font-weight:600;">' + API.esc(client.name) + '</td>' +
+                '<td class="client-row" data-client-id="' + API.esc(String(client.id)) + '" onmousedown="openClientHistoryById(\'' + idSafe + '\'); return false;" style="text-align:left;font-weight:600;">' + API.esc(clientName) + '</td>' +
                 '<td>' + API.esc(client.phone || '-') + '</td>' +
                 '<td>' + API.esc(client.email || '-') + '</td>' +
                 '<td style="text-align:left;">' + API.esc(client.address || '-') + '</td>' +
@@ -42,6 +44,71 @@ var ClientsPage = (function(API, UI) {
                 '</td>' +
             '</tr>';
         }).join('');
+    }
+
+    function openHistory(id) {
+        var client = clients.find(function(x) { return String(x.id) === String(id); });
+        if (!client) return;
+        var title = document.getElementById('history-title');
+        if (title) title.textContent = 'История клиента: ' + (client.name || ('#' + String(id)));
+        var list = document.getElementById('history-list');
+        if (!list) return;
+
+        var related = objects.filter(function(o) {
+            return o.client_id != null && String(o.client_id) === String(id);
+        }).sort(function(a, b) {
+            return String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
+        });
+
+        if (related.length === 0) {
+            list.innerHTML = '<div class="history-empty">По этому клиенту пока нет объектов.</div>';
+        } else {
+            list.innerHTML = related.map(function(o) {
+                var status = o.status || '-';
+                function parseWd(x) {
+                    if (!x) return [];
+                    if (x.work_dates != null && x.work_dates !== '') {
+                        try {
+                            var a = typeof x.work_dates === 'string' ? JSON.parse(x.work_dates) : x.work_dates;
+                            if (Array.isArray(a)) {
+                                var u = [];
+                                a.forEach(function(z) {
+                                    var s = String(z).trim().slice(0, 10);
+                                    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) u.push(s);
+                                });
+                                u.sort();
+                                if (u.length) return u;
+                            }
+                        } catch (e) {}
+                    }
+                    var ds = String(x.date_start || '').trim().slice(0, 10);
+                    var de = String(x.date_end || '').trim().slice(0, 10);
+                    if (!ds) return [];
+                    if (!de || de < ds) de = ds;
+                    var out = [], c = new Date(ds + 'T12:00:00'), last = new Date(de + 'T12:00:00');
+                    while (c <= last) {
+                        out.push(c.toISOString().slice(0, 10));
+                        c.setDate(c.getDate() + 1);
+                    }
+                    return out;
+                }
+                var days = parseWd(o);
+                var daysLabel = days.length ? days.join(', ') : '-';
+                var titleText = o.name || ('Объект #' + String(o.id));
+                return '<div class="history-item">' +
+                    '<div class="history-title">' + API.esc(titleText) + '</div>' +
+                    '<div class="history-meta">Статус: ' + API.esc(String(status)) + ' | Дни на объекте: ' + API.esc(daysLabel) + '</div>' +
+                '</div>';
+            }).join('');
+        }
+
+        var modal = document.getElementById('history-modal');
+        if (modal) modal.classList.add('active');
+    }
+
+    function closeHistoryModal() {
+        var modal = document.getElementById('history-modal');
+        if (modal) modal.classList.remove('active');
     }
 
     function loadData() {
@@ -189,10 +256,29 @@ var ClientsPage = (function(API, UI) {
         if (form) form.addEventListener('submit', saveClient);
         var search = document.getElementById('search');
         if (search) search.addEventListener('input', renderTable);
+        document.addEventListener('click', function(e) {
+            var target = e.target;
+            if (!target) return;
+            if (target.nodeType === 3 && target.parentElement) {
+                target = target.parentElement;
+            }
+            if (!(target instanceof Element)) return;
+            var cell = target.closest('.client-row');
+            if (!cell) return;
+            var id = cell.getAttribute('data-client-id') || '';
+            if (!id) return;
+            openHistory(id);
+        }, true);
         var modal = document.getElementById('modal');
         if (modal) {
             modal.addEventListener('click', function(e) {
                 if (e.target.id === 'modal') closeModal();
+            });
+        }
+        var historyModal = document.getElementById('history-modal');
+        if (historyModal) {
+            historyModal.addEventListener('click', function(e) {
+                if (e.target.id === 'history-modal') closeHistoryModal();
             });
         }
         loadData();
@@ -203,6 +289,8 @@ var ClientsPage = (function(API, UI) {
         renderTable: renderTable,
         openModal: openModal,
         closeModal: closeModal,
+        openHistory: openHistory,
+        closeHistoryModal: closeHistoryModal,
         editClient: editClient,
         deleteClient: deleteClient,
         saveClient: saveClient
@@ -211,3 +299,5 @@ var ClientsPage = (function(API, UI) {
 
 window.openModal = function(id) { ClientsPage.openModal(id); };
 window.closeModal = function() { ClientsPage.closeModal(); };
+window.closeHistoryModal = function() { ClientsPage.closeHistoryModal(); };
+window.openClientHistoryById = function(id) { ClientsPage.openHistory(id); };

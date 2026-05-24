@@ -16,6 +16,14 @@
         .search-bar { display: flex; gap: 10px; margin-bottom: 15px; }
         .search-bar input { flex: 1; padding: 10px 15px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
         .modal-content h2 { color: #9C27B0; }
+        .client-row { cursor: pointer; }
+        .client-row:hover { background: rgba(156, 39, 176, 0.08); }
+        .history-list { max-height: 55vh; overflow: auto; border: 1px solid #eee; border-radius: 8px; }
+        .history-item { padding: 10px 12px; border-bottom: 1px solid #f1f1f1; }
+        .history-item:last-child { border-bottom: none; }
+        .history-title { font-weight: 700; }
+        .history-meta { color: #666; font-size: 13px; margin-top: 4px; }
+        .history-empty { padding: 14px; color: #666; }
     </style>
 </head>
 <body>
@@ -53,10 +61,19 @@
             </form>
         </div>
     </div>
+    <div class="modal" id="history-modal">
+        <div class="modal-content">
+            <h2 id="history-title">История клиента</h2>
+            <div id="history-list" class="history-list"></div>
+            <div class="modal-buttons">
+                <button type="button" class="btn btn-cancel" onclick="closeHistoryModal()">Закрыть</button>
+            </div>
+        </div>
+    </div>
     <script src="/static/js/offline.js?v=3"></script>
     <script src="/static/js/api.js?v=2"></script>
     <script src="/static/js/ui.js?v=1"></script>
-    <script src="/static/js/clients.js?v=2"></script>
+    <script src="/static/js/clients.js?v=3"></script>
     <script src="/static/js/table-pan.js?v=1"></script>
 </body>
 </html>

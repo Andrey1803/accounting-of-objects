@@ -44,7 +44,7 @@
             </div>
             <div class="table-wrapper table-pan-viewport" title="Прокрутка и перетаскивание мышью по таблице">
                 <table>
-                    <thead><tr><th>№</th><th>Дни на объекте</th><th>Объект</th><th>Клиент</th><th>Выручка</th><th>Затраты</th><th>Зарплата</th><th>Приб.мат</th><th>Прибыль</th><th>Статус</th></tr></thead>
+                    <thead><tr><th>№</th><th>Дата</th><th>Объект</th><th>Клиент</th><th>Выручка</th><th>Затраты</th><th>Зарплата</th><th>Приб.мат</th><th>Прибыль</th><th>Статус</th></tr></thead>
                     <tbody id="table-body"></tbody>
                 </table>
             </div>
@@ -54,21 +54,6 @@
     <script>
         function formatMoney(v){return Number(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' BYN';}
         function formatDate(d){if(!d)return'-';const p=d.split('-');return `${p[2]}.${p[1]}.${p[0]}`;}
-        function parseWorkDatesFromObject(o){
-            if(!o)return[];
-            if(o.work_dates!=null&&o.work_dates!==''){
-                try{var a=typeof o.work_dates==='string'?JSON.parse(o.work_dates):o.work_dates;
-                    if(Array.isArray(a)){var u=[];a.forEach(function(x){var s=String(x).trim().slice(0,10);if(/^\d{4}-\d{2}-\d{2}$/.test(s))u.push(s);});u.sort();if(u.length)return u;}
-                }catch(e){}
-            }
-            var ds=String(o.date_start||'').trim().slice(0,10),de=String(o.date_end||'').trim().slice(0,10);
-            if(!ds||!/^\d{4}-\d{2}-\d{2}$/.test(ds))return[];
-            if(!de||!/^\d{4}-\d{2}-\d{2}$/.test(de)||de<ds)de=ds;
-            var out=[],c=new Date(ds+'T12:00:00'),last=new Date(de+'T12:00:00');
-            while(c<=last){out.push(c.toISOString().slice(0,10));c.setDate(c.getDate()+1);}
-            return out;
-        }
-        function formatWorkDaysCell(o){var d=parseWorkDatesFromObject(o);if(!d.length)return'-';return d.map(formatDate).join(', ');}
         async function loadReport(){
             const start=document.getElementById('start-date').value;
             const end=document.getElementById('end-date').value;
@@ -106,7 +91,7 @@
                 data.objects.forEach((o,i)=>{
                     const tr=document.createElement('tr');
                     const f0=document.createElement('td'); f0.textContent=i+1; tr.appendChild(f0);
-                    const f1=document.createElement('td'); f1.textContent=formatWorkDaysCell(o); tr.appendChild(f1);
+                    const f1=document.createElement('td'); f1.textContent=formatDate(o.date_start); tr.appendChild(f1);
                     const f2=document.createElement('td'); f2.style.textAlign='left'; f2.textContent=o.name; tr.appendChild(f2);
                     const f3=document.createElement('td'); f3.textContent=o.client||'-'; tr.appendChild(f3);
                     const f4=document.createElement('td'); f4.textContent=formatMoney(o.total_revenue); tr.appendChild(f4);

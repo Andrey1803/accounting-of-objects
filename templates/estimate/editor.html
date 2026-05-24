@@ -318,6 +318,8 @@
         let estimateId = {{ estimate_id | tojson }};
         let prefilledObjectId = null;
         let items = [];
+        /** Выбранные строки сметы (галочки): сохраняем при перерисовке после правки кол-ва и т.д. */
+        let selectedEstimateItemIds = Object.create(null);
         let catalog = { material: [], work: [] };
         let currentType = 'material';
         let sortMode = 'name';
@@ -1001,7 +1003,54 @@
             render();
         }
 
+        function setEstimateItemSelected(itemId, checked) {
+            var key = String(itemId);
+            if (key === '' || key === 'undefined' || key === 'null') return;
+            if (checked) selectedEstimateItemIds[key] = true;
+            else delete selectedEstimateItemIds[key];
+        }
+
+        function isEstimateItemSelected(itemId) {
+            return !!selectedEstimateItemIds[String(itemId)];
+        }
+
+        function captureEstimateSelectionFromDom() {
+            document.querySelectorAll('.est-row-cb').forEach(function(cb) {
+                var id = cb.getAttribute('data-item-id');
+                if (id == null || id === '') return;
+                setEstimateItemSelected(id, cb.checked);
+            });
+        }
+
+        function restoreEstimateSelectionToDom() {
+            document.querySelectorAll('.est-row-cb').forEach(function(cb) {
+                var id = cb.getAttribute('data-item-id');
+                if (id == null || id === '') return;
+                cb.checked = isEstimateItemSelected(id);
+            });
+            syncSectionSelectAllHeaders();
+        }
+
+        function syncSectionSelectAllHeaders() {
+            ['material', 'work'].forEach(function(section) {
+                var allId = section === 'material' ? 'mat-select-all' : 'work-select-all';
+                var hdr = document.getElementById(allId);
+                if (!hdr) return;
+                var boxes = document.querySelectorAll(estRowCheckboxSelector(section, false));
+                if (!boxes.length) {
+                    hdr.checked = false;
+                    hdr.indeterminate = false;
+                    return;
+                }
+                var checkedCount = 0;
+                boxes.forEach(function(cb) { if (cb.checked) checkedCount++; });
+                hdr.checked = checkedCount === boxes.length;
+                hdr.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+            });
+        }
+
         function render() {
+            captureEstimateSelectionFromDom();
             var mats = items.filter(i => i.section === 'material');
             mats.forEach(function(it) {
                 var q = parseFloat(it.quantity) || 0, p = parseFloat(it.price) || 0;
@@ -1014,6 +1063,7 @@
             renderList('mat-body', 'mat-cards', mats, 'material');
             var works = items.filter(i => i.section === 'work');
             renderList('work-body', 'work-cards', works, 'work');
+            restoreEstimateSelectionToDom();
 
             var sMat = mats.reduce((s, i) => s + (i.total || 0), 0);
             var sWork = works.reduce((s, i) => s + (i.total || 0), 0);
@@ -1114,7 +1164,7 @@
                     '<td><input type="number" value="'+item.quantity+'" step="0.1" onchange="updateItem('+item.id+', \'quantity\', this.value)"></td>'+
                     priceCells +
                     '<td style="font-weight:bold; text-align:right">'+item.total.toFixed(2)+'</td>'+
-                    '<td style="text-align:center;vertical-align:middle;"><input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'" aria-label="Выбрать строку"></td>'+
+                    '<td style="text-align:center;vertical-align:middle;"><input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'"'+(isEstimateItemSelected(item.id)?' checked':'')+' aria-label="Выбрать строку"></td>'+
                 '</tr>';
             }).join('');
 
@@ -1138,7 +1188,7 @@
                     (cardWarnStyle ? '<div style="padding:4px 8px;border-radius:6px;margin-bottom:8px;font-size:11px;'+cardWarnStyle+'">'+(cardWarnStyle.indexOf('#ef9a9a')>=0?'Отрицательная маржа':'Низкая маржа')+'</div>' : '')+
                     '<div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:10px;">'+
                     '<label class="est-card-cb-wrap" style="display:flex;align-items:center;gap:8px;font-size:13px;color:#555;cursor:pointer;margin:0;">'+
-                    '<span>Выбрать</span><input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'" aria-label="Выбрать для удаления"></label></div>'+
+                    '<span>Выбрать</span><input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'"'+(isEstimateItemSelected(item.id)?' checked':'')+' aria-label="Выбрать для удаления"></label></div>'+
                     '<div class="field"><label>Наименование</label><input type="text" value="'+esc(item.name)+'" onchange="updateItem('+item.id+', \'name\', this.value)"></div>'+
                     '<div style="display:flex; gap:10px;">'+
                         '<div class="field" style="flex:1"><label>Ед.</label><select onchange="updateItem('+item.id+', \'unit\', this.value)">'+
@@ -1184,10 +1234,15 @@
         function toggleSectionSelectAll(section, checked) {
             document.querySelectorAll(estRowCheckboxSelector(section, false)).forEach(function(cb) {
                 cb.checked = !!checked;
+                var id = cb.getAttribute('data-item-id');
+                if (id != null && id !== '') setEstimateItemSelected(id, !!checked);
             });
             var allId = section === 'material' ? 'mat-select-all' : 'work-select-all';
             var hdr = document.getElementById(allId);
-            if (hdr) hdr.checked = !!checked;
+            if (hdr) {
+                hdr.checked = !!checked;
+                hdr.indeterminate = false;
+            }
         }
 
         function getSelectedItemIdsInSection(section) {
@@ -1240,9 +1295,13 @@
                 var id = ids[i];
                 items = items.filter(function(x) { return !estimateItemIdEquals(x.id, id); });
             }
+            ids.forEach(function(id) { delete selectedEstimateItemIds[String(id)]; });
             ['mat-select-all', 'work-select-all'].forEach(function(hid) {
                 var h = document.getElementById(hid);
-                if (h) h.checked = false;
+                if (h) {
+                    h.checked = false;
+                    h.indeterminate = false;
+                }
             });
             render();
             await saveEstimateToDB();
@@ -3044,9 +3103,11 @@
         if (!cb || !cb.classList || !cb.classList.contains('est-row-cb')) return;
         var itemId = cb.getAttribute('data-item-id');
         if (itemId == null || itemId === '') return;
+        setEstimateItemSelected(itemId, cb.checked);
         document.querySelectorAll('.est-row-cb[data-item-id="' + String(itemId).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]').forEach(function(other) {
             if (other !== cb) other.checked = cb.checked;
         });
+        syncSectionSelectAllHeaders();
     });
 
     document.addEventListener('keydown', function(e) {
