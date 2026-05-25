@@ -217,6 +217,7 @@ def delete_user_data(user_id):
         ("DELETE FROM worker_assignments WHERE user_id = ?", (user_id,)),
         ("DELETE FROM workers WHERE user_id = ?", (user_id,)),
         ("DELETE FROM object_well_surveys WHERE user_id = ?", (user_id,)),
+        ("DELETE FROM object_expense_entries WHERE user_id = ?", (user_id,)),
         ("DELETE FROM objects WHERE user_id = ?", (user_id,)),
         ("DELETE FROM clients WHERE user_id = ?", (user_id,)),
         ("DELETE FROM categories WHERE user_id = ?", (user_id,)),
@@ -475,6 +476,8 @@ def init_db():
                 next_to_note TEXT,
                 integration_source TEXT,
                 salary_allocation_mode TEXT DEFAULT 'all_workers',
+                settlement_type TEXT DEFAULT 'cash',
+                tax_regime TEXT DEFAULT 'none',
                 created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW())
             """,
             """
@@ -551,6 +554,14 @@ def init_db():
                 note TEXT DEFAULT '')
             """,
             """
+            CREATE TABLE IF NOT EXISTS object_expense_entries (
+                id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                object_id INTEGER NOT NULL REFERENCES objects(id) ON DELETE CASCADE,
+                entry_date TEXT NOT NULL, amount REAL NOT NULL,
+                category TEXT DEFAULT 'other', title TEXT DEFAULT '', note TEXT DEFAULT '',
+                source TEXT DEFAULT 'manual', created_at TIMESTAMP DEFAULT NOW())
+            """,
+            """
             CREATE TABLE IF NOT EXISTS object_well_surveys (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -580,6 +591,8 @@ def init_db():
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS next_to_date TEXT",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS next_to_note TEXT",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS work_dates TEXT DEFAULT '[]'",
+            "ALTER TABLE objects ADD COLUMN IF NOT EXISTS settlement_type TEXT DEFAULT 'cash'",
+            "ALTER TABLE objects ADD COLUMN IF NOT EXISTS tax_regime TEXT DEFAULT 'none'",
         ):
             try:
                 cur.execute(alter)
@@ -615,6 +628,8 @@ def init_db():
                 next_to_note TEXT,
                 integration_source TEXT,
                 salary_allocation_mode TEXT DEFAULT 'all_workers',
+                settlement_type TEXT DEFAULT 'cash',
+                tax_regime TEXT DEFAULT 'none',
                 created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '');
 
             CREATE TABLE IF NOT EXISTS clients (
@@ -675,6 +690,13 @@ def init_db():
                 max_uses INTEGER DEFAULT 1,
                 used_count INTEGER DEFAULT 0,
                 note TEXT DEFAULT '');
+
+            CREATE TABLE IF NOT EXISTS object_expense_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+                object_id INTEGER NOT NULL,
+                entry_date TEXT NOT NULL, amount REAL NOT NULL,
+                category TEXT DEFAULT 'other', title TEXT DEFAULT '', note TEXT DEFAULT '',
+                source TEXT DEFAULT 'manual', created_at TEXT DEFAULT '');
 
             CREATE TABLE IF NOT EXISTS object_well_surveys (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -806,6 +828,41 @@ def init_db():
             conn.commit()
     except Exception:
         pass
+
+    try:
+        if IS_POSTGRES:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS object_expense_entries (
+                    id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL,
+                    object_id INTEGER NOT NULL,
+                    entry_date TEXT NOT NULL, amount REAL NOT NULL,
+                    category TEXT DEFAULT 'other', title TEXT DEFAULT '', note TEXT DEFAULT '',
+                    source TEXT DEFAULT 'manual', created_at TIMESTAMP DEFAULT NOW())
+            """)
+            conn.commit()
+        else:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS object_expense_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+                    object_id INTEGER NOT NULL,
+                    entry_date TEXT NOT NULL, amount REAL NOT NULL,
+                    category TEXT DEFAULT 'other', title TEXT DEFAULT '', note TEXT DEFAULT '',
+                    source TEXT DEFAULT 'manual', created_at TEXT DEFAULT '')
+            """)
+            conn.commit()
+    except Exception:
+        pass
+
+    for col_sql in (
+        "ALTER TABLE objects ADD COLUMN settlement_type TEXT DEFAULT 'cash'",
+        "ALTER TABLE objects ADD COLUMN tax_regime TEXT DEFAULT 'none'",
+    ):
+        try:
+            if not IS_POSTGRES:
+                conn.execute(col_sql)
+                conn.commit()
+        except Exception:
+            pass
 
     # Миграция: подотчёт / выручка у рабочих
     try:

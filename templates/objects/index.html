@@ -435,7 +435,23 @@
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label>Сумма работ</label><input type="number" id="sum-work" step="0.01" value="0"></div>
-                    <div class="form-group"><label>Затраты</label><input type="number" id="expenses" step="0.01" value="0"></div>
+                    <div class="form-group"><label>Прочие затраты (сводно)</label><input type="number" id="expenses" step="0.01" value="0" title="Сумма вне сметы; доп. строки учитываются отдельно ниже"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Расчёт с заказчиком</label>
+                        <select id="settlement-type" onchange="syncSettlementTaxUi()">
+                            <option value="cash">Наличные / без налога</option>
+                            <option value="cashless">Безнал (резерв налога)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="tax-regime-group"><label>Налог при безнале</label>
+                        <select id="tax-regime">
+                            <option value="none">Без резерва</option>
+                            <option value="ip">ИП — 25%</option>
+                            <option value="chpu">ЧТУП — 17%</option>
+                        </select>
+                        <small id="tax-regime-hint" style="color:#666;display:block;margin-top:4px;font-size:12px;"></small>
+                    </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label>Статус</label>
@@ -458,6 +474,30 @@
                         <button type="button" class="btn" style="background:#00796B; color:white; font-size:11px; padding:6px 10px;" onclick="openWellSurveysModal()" title="Опытные замеры и расчёт дебита">🔬 Замеры</button>
                     </div>
                     <small id="salary-info" style="color:#666; display:block; margin-top:3px;"></small>
+                </div>
+                <div class="form-group" id="object-expense-section" style="display:none; border:1px solid #e0e0e0; border-radius:8px; padding:10px; background:#fafafa;">
+                    <label style="display:block; margin-bottom:6px;">Дополнительные расходы по объекту</label>
+                    <div id="object-expense-list" style="max-height:160px; overflow-y:auto; font-size:13px; margin-bottom:8px;"></div>
+                    <div class="form-row" style="margin-bottom:0;">
+                        <div class="form-group" style="flex:0 0 110px;"><label style="font-size:12px;">Дата</label><input type="date" id="obj-exp-date"></div>
+                        <div class="form-group" style="flex:0 0 90px;"><label style="font-size:12px;">Сумма</label><input type="number" id="obj-exp-amount" step="0.01" min="0"></div>
+                        <div class="form-group" style="flex:1;"><label style="font-size:12px;">Категория</label>
+                            <select id="obj-exp-category">
+                                <option value="fuel">Топливо</option>
+                                <option value="subcontract">Субподряд</option>
+                                <option value="equipment">Аренда техники</option>
+                                <option value="materials">Материалы вне сметы</option>
+                                <option value="other">Прочее</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row" style="margin-bottom:0;">
+                        <div class="form-group" style="flex:1;"><label style="font-size:12px;">Название</label><input type="text" id="obj-exp-title" placeholder="Кратко"></div>
+                        <div class="form-group" style="flex:0 0 auto; align-self:flex-end;">
+                            <button type="button" class="btn" style="background:#2E75B6;color:white;padding:6px 12px;font-size:13px;" onclick="addObjectExpenseEntry()">+ Расход</button>
+                        </div>
+                    </div>
+                    <small id="object-expense-total" style="color:#666;display:block;margin-top:6px;font-size:12px;"></small>
                 </div>
                 <div class="form-group"><label>Примечания</label><textarea id="notes" rows="2" placeholder="Дополнительная информация..."></textarea></div>
                 <div class="form-group" style="display:flex; align-items:center; gap:8px;">
@@ -673,6 +713,17 @@
     <script src="/static/js/table-pan.js?v=2"></script>
     <script>
         let objects = [], clients = [], editingId = null, currentObjectId = null;
+        let objectExpenseEntries = [];
+        const OBJECT_EXPENSE_CAT_LABELS = {
+            fuel: 'Топливо', subcontract: 'Субподряд', equipment: 'Аренда техники',
+            materials: 'Материалы вне сметы', other: 'Прочее'
+        };
+        const SETTLEMENT_LABELS = { cash: 'Наличные', cashless: 'Безнал' };
+        const TAX_REGIME_LABELS = { none: 'Без резерва', ip: 'ИП (25%)', chpu: 'ЧТУП (17%)' };
+
+        function escapeHtml(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
         let objectWorkDaysEdit = [];
         let currentPage = 1;
         const perPage = 50;
@@ -1175,8 +1226,16 @@
 
             var revenue = objectTotalRevenue(obj);
             var profit = obj.total_profit || 0;
+            var pbt = obj.profit_before_tax != null ? obj.profit_before_tax : profit;
             var margin = revenue > 0 ? ((profit / revenue) * 100).toFixed(1) + '%' : '0.0%';
             var bal = Math.abs(obj.balance || 0) < 0.005 ? 0 : (obj.balance || 0);
+            var st = obj.settlement_type || 'cash';
+            var taxHtml = '';
+            if (st === 'cashless' && (obj.tax_amount || 0) > 0) {
+                taxHtml = infoDetailRow('Прибыль до налога', formatMoney(pbt)) +
+                    infoDetailRow('Налог (' + (TAX_REGIME_LABELS[obj.tax_regime] || obj.tax_regime) + ')', '−' + formatMoney(obj.tax_amount)) +
+                    infoDetailRow('Прибыль после налога', formatMoney(profit));
+            }
 
             title.textContent = obj.name || ('Объект #' + obj.id);
             body.innerHTML =
@@ -1184,13 +1243,17 @@
                 infoDetailRow('Наименование', obj.name) +
                 infoDetailRow('Клиент', objectClientDisplay(obj)) +
                 infoDetailRow('Статус', obj.status) +
+                infoDetailRow('Расчёт', SETTLEMENT_LABELS[st] || st) +
+                (st === 'cashless' ? infoDetailRow('Налог', TAX_REGIME_LABELS[obj.tax_regime] || obj.tax_regime || '—') : '') +
                 infoDetailRow('Дни на объекте', formatWorkDaysCell(obj)) +
                 infoDetailRow('Сумма работ', formatMoney(obj.sum_work || 0)) +
-                infoDetailRow('Затраты (прочие)', formatMoney(obj.total_expenses != null ? obj.total_expenses : (obj.expenses || 0))) +
+                infoDetailRow('Затраты всего', formatMoney(obj.total_expenses != null ? obj.total_expenses : (obj.expenses || 0))) +
+                (obj.extra_expenses ? infoDetailRow('Доп. расходы (журнал)', formatMoney(obj.extra_expenses)) : '') +
+                infoDetailRow('Прочие (поле)', formatMoney(obj.expenses || 0)) +
                 infoDetailRow('Аванс', formatMoney(obj.advance || 0)) +
                 infoDetailRow('Затраты на рабочих', formatMoney(obj.salary || 0)) +
                 infoDetailRow('Расчёт зарплаты', salaryModeLabel(obj.salary_allocation_mode)) +
-                infoDetailRow('Прибыль', formatMoney(profit)) +
+                (taxHtml || infoDetailRow('Прибыль', formatMoney(profit))) +
                 infoDetailRow('Прибыль с материалов', formatMoney(obj.estimate_material_profit || 0)) +
                 infoDetailRow('Маржа', margin) +
                 infoDetailRow('Остаток', formatMoney(bal)) +
@@ -1590,6 +1653,96 @@
             sal.title = m === 'manual' ? 'Сумма задаётся вручную; автопересчёт отключён' : 'Рассчитывается автоматически (если не режим «вручную»)';
         }
 
+        function syncSettlementTaxUi() {
+            var stSel = document.getElementById('settlement-type');
+            var taxSel = document.getElementById('tax-regime');
+            var hint = document.getElementById('tax-regime-hint');
+            if (!stSel || !taxSel) return;
+            var cashless = stSel.value === 'cashless';
+            taxSel.disabled = !cashless;
+            if (!cashless) taxSel.value = 'none';
+            if (hint) {
+                hint.textContent = cashless
+                    ? 'Налог считается от прибыли до налога только для безнала.'
+                    : 'Для наличных расчётов налог не резервируется.';
+            }
+        }
+
+        function renderObjectExpenseEntries() {
+            var list = document.getElementById('object-expense-list');
+            var totalEl = document.getElementById('object-expense-total');
+            if (!list) return;
+            if (!objectExpenseEntries.length) {
+                list.innerHTML = '<div style="color:#888;padding:4px 0;">Нет записей</div>';
+            } else {
+                list.innerHTML = objectExpenseEntries.map(function(e) {
+                    var cat = OBJECT_EXPENSE_CAT_LABELS[e.category] || e.category;
+                    var title = (e.title || '').trim();
+                    var line = formatDate(e.entry_date) + ' — ' + formatMoney(e.amount) + ' (' + cat + ')';
+                    if (title) line += ' — ' + escapeHtml(title);
+                    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #eee;">' +
+                        '<span>' + line + '</span>' +
+                        '<button type="button" class="btn" style="padding:2px 8px;font-size:11px;background:#f44336;color:white;" onclick="deleteObjectExpenseEntry(' + e.id + ')">×</button></div>';
+                }).join('');
+            }
+            var sum = objectExpenseEntries.reduce(function(s, e) { return s + (parseFloat(e.amount) || 0); }, 0);
+            if (totalEl) totalEl.textContent = 'Сумма по журналу: ' + formatMoney(sum);
+        }
+
+        async function loadObjectExpenseEntries(objId) {
+            objectExpenseEntries = [];
+            var section = document.getElementById('object-expense-section');
+            if (!objId) {
+                if (section) section.style.display = 'none';
+                renderObjectExpenseEntries();
+                return;
+            }
+            if (section) section.style.display = 'block';
+            var dateInp = document.getElementById('obj-exp-date');
+            if (dateInp && !dateInp.value) dateInp.value = new Date().toISOString().split('T')[0];
+            try {
+                var res = await fetch('/api/objects/' + objId + '/expense-entries');
+                if (res.ok) objectExpenseEntries = await res.json();
+            } catch (err) {
+                console.error(err);
+            }
+            renderObjectExpenseEntries();
+        }
+
+        async function addObjectExpenseEntry() {
+            if (!editingId) { alert('Сначала сохраните объект'); return; }
+            var amount = parseFloat(document.getElementById('obj-exp-amount').value);
+            if (!amount || amount <= 0) { alert('Укажите сумму больше 0'); return; }
+            var payload = {
+                entry_date: document.getElementById('obj-exp-date').value || new Date().toISOString().split('T')[0],
+                amount: amount,
+                category: document.getElementById('obj-exp-category').value,
+                title: (document.getElementById('obj-exp-title').value || '').trim()
+            };
+            try {
+                var res = await fetchCsrf('/api/objects/' + editingId + '/expense-entries', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) { var e = await res.json(); alert(e.error || 'Ошибка'); return; }
+                document.getElementById('obj-exp-amount').value = '';
+                document.getElementById('obj-exp-title').value = '';
+                await loadObjectExpenseEntries(editingId);
+                refreshObjectsDataAfterMutation(currentPage);
+            } catch (err) { alert('Ошибка: ' + err.message); }
+        }
+
+        async function deleteObjectExpenseEntry(entryId) {
+            if (!editingId || !confirm('Удалить запись расхода?')) return;
+            try {
+                var res = await fetchCsrf('/api/objects/' + editingId + '/expense-entries/' + entryId, { method: 'DELETE' });
+                if (!res.ok) { var e = await res.json(); alert(e.error || 'Ошибка'); return; }
+                await loadObjectExpenseEntries(editingId);
+                refreshObjectsDataAfterMutation(currentPage);
+            } catch (err) { alert('Ошибка: ' + err.message); }
+        }
+
         function openModal(id = null) {
             editingId = id;
             document.getElementById('modal').classList.add('active');
@@ -1613,6 +1766,10 @@
                 document.getElementById('is-regular-to').checked = !!obj.is_regular_to;
                 document.getElementById('next-to-date').value = obj.next_to_date || '';
                 document.getElementById('next-to-note').value = obj.next_to_note || '';
+                document.getElementById('settlement-type').value = obj.settlement_type || 'cash';
+                document.getElementById('tax-regime').value = obj.tax_regime || 'none';
+                syncSettlementTaxUi();
+                loadObjectExpenseEntries(obj.id);
 
                 // Автозаполнение из сметы
                 loadEstimateData(obj.id, function(estTotals) {
@@ -1630,6 +1787,10 @@
                 renderWorkDaysEditor();
                 document.getElementById('salary-allocation-mode').value = 'all_workers';
                 syncSalaryAllocationUi();
+                document.getElementById('settlement-type').value = 'cash';
+                document.getElementById('tax-regime').value = 'none';
+                syncSettlementTaxUi();
+                loadObjectExpenseEntries(null);
                 document.getElementById('salary-info').textContent = '';
                 // Автозаполнение для нового объекта: покажем предполагаемую зарплату
                 showExpectedSalary();
@@ -1812,6 +1973,8 @@
             document.getElementById('object-form').reset();
             objectWorkDaysEdit = [];
             editingId = null;
+            objectExpenseEntries = [];
+            loadObjectExpenseEntries(null);
         }
 
         async function duplicateObject() {
@@ -1837,7 +2000,9 @@
                 notes: obj.notes || '',
                 is_regular_to: !!obj.is_regular_to,
                 next_to_date: obj.next_to_date || '',
-                next_to_note: obj.next_to_note || ''
+                next_to_note: obj.next_to_note || '',
+                settlement_type: obj.settlement_type || 'cash',
+                tax_regime: obj.tax_regime || 'none'
             };
 
             try {
@@ -1888,7 +2053,9 @@
                 notes: document.getElementById('notes').value,
                 is_regular_to: document.getElementById('is-regular-to').checked,
                 next_to_date: document.getElementById('next-to-date').value,
-                next_to_note: document.getElementById('next-to-note').value
+                next_to_note: document.getElementById('next-to-note').value,
+                settlement_type: document.getElementById('settlement-type').value,
+                tax_regime: document.getElementById('tax-regime').value
             };
 
             try {

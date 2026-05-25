@@ -419,6 +419,21 @@ def _build_salary_calendar_counts(uid):
 CASHBOOK_KINDS = frozenset({'client_payment', 'expense', 'handover'})
 CASHBOOK_EXPENSE_CATS = frozenset({'lunch', 'fuel', 'repair', 'other'})
 
+# Дополнительные расходы по объекту (журнал)
+OBJECT_EXPENSE_CATEGORIES = frozenset({'fuel', 'subcontract', 'equipment', 'materials', 'other'})
+OBJECT_EXPENSE_CATEGORY_LABELS = {
+    'fuel': 'Топливо',
+    'subcontract': 'Субподряд',
+    'equipment': 'Аренда техники',
+    'materials': 'Материалы вне сметы',
+    'other': 'Прочее',
+}
+
+SETTLEMENT_TYPES = frozenset({'cash', 'cashless'})
+TAX_REGIMES = frozenset({'none', 'ip', 'chpu'})
+TAX_RATE_BY_REGIME = {'ip': 0.25, 'chpu': 0.17}
+TAX_REGIME_LABELS = {'none': 'Без резерва', 'ip': 'ИП (25%)', 'chpu': 'ЧТУП (17%)'}
+
 
 def _sql_fragment_order_objects_by_status(prefix: str) -> str:
     """Фрагмент ORDER BY: статус (этап работ), затем дата начала (новее выше), затем название."""
@@ -482,6 +497,41 @@ def _work_revenue_once(sum_work, estimate_works):
     return max(sw, ew)
 
 
+def _norm_settlement_type(value):
+    s = (str(value or 'cash')).strip().lower()
+    return s if s in SETTLEMENT_TYPES else 'cash'
+
+
+def _norm_tax_regime(value):
+    s = (str(value or 'none')).strip().lower()
+    if s in ('chp', 'chtup', 'чтуп', 'чп'):
+        return 'chpu'
+    if s in ('ip', 'ип'):
+        return 'ip'
+    return s if s in TAX_REGIMES else 'none'
+
+
+def _sum_extra_expenses_for_object(object_id, user_id):
+    row = fetch_one(
+        "SELECT COALESCE(SUM(amount), 0) AS s FROM object_expense_entries WHERE object_id = ? AND user_id = ?",
+        (object_id, user_id),
+    )
+    return float(row['s'] or 0) if row else 0.0
+
+
+def _compute_tax_on_profit(profit_before_tax, settlement_type, tax_regime):
+    st = _norm_settlement_type(settlement_type)
+    tr = _norm_tax_regime(tax_regime)
+    if st != 'cashless' or tr not in TAX_RATE_BY_REGIME:
+        return 0.0, 0.0, round(float(profit_before_tax or 0), 2)
+    rate = TAX_RATE_BY_REGIME[tr]
+    pbt = float(profit_before_tax or 0)
+    if pbt <= 0:
+        return rate, 0.0, round(pbt, 2)
+    tax_amt = round(pbt * rate, 2)
+    return rate, tax_amt, round(pbt - tax_amt, 2)
+
+
 def _compute_object_financials(
     sum_work,
     estimate_works,
@@ -490,6 +540,7 @@ def _compute_object_financials(
     expenses,
     salary,
     estimate_material_cost=None,
+    extra_expenses=0.0,
 ):
     """
     Выручка, затраты и прибыль объекта без двойного учёта материалов по смете.
@@ -513,8 +564,9 @@ def _compute_object_financials(
         emc = float(estimate_material_cost or 0)
         raw_exp = float(expenses or 0)
         sal = float(salary or 0)
+        extra = float(extra_expenses or 0)
     except (TypeError, ValueError):
-        ew = em = emp = emc = raw_exp = sal = 0.0
+        ew = em = emp = emc = raw_exp = sal = extra = 0.0
 
     work_rev = _work_revenue_once(sum_work, ew)
     total_revenue = work_rev + em
@@ -529,9 +581,43 @@ def _compute_object_financials(
     else:
         other_exp = raw_exp
 
-    total_expenses = mat_cogs + other_exp
+    total_expenses = mat_cogs + other_exp + max(0.0, extra)
     total_profit = total_revenue - total_expenses - sal
     return total_revenue, total_expenses, total_profit
+
+
+def _apply_object_financial_enrichment(obj, user_id):
+    """Добавляет в dict объекта выручку, затраты, доп. расходы, налог (безнал) и прибыль после налога."""
+    oid = obj.get('id')
+    extra = _sum_extra_expenses_for_object(oid, user_id) if oid else 0.0
+    ew = obj.get('estimate_works', 0) or 0
+    em = obj.get('estimate_materials', 0) or 0
+    emp = obj.get('estimate_material_profit', 0) or 0
+    tr, te, tp = _compute_object_financials(
+        obj.get('sum_work'),
+        ew,
+        em,
+        emp,
+        obj.get('expenses'),
+        obj.get('salary'),
+        obj.get('estimate_material_cost'),
+        extra_expenses=extra,
+    )
+    obj['extra_expenses'] = round(extra, 2)
+    obj['total_revenue'] = tr
+    obj['total_expenses'] = te
+    obj['profit_before_tax'] = round(tp, 2)
+    rate, tax_amt, profit_after = _compute_tax_on_profit(
+        tp, obj.get('settlement_type'), obj.get('tax_regime'),
+    )
+    obj['tax_rate'] = rate
+    obj['tax_amount'] = tax_amt
+    obj['total_profit'] = profit_after
+    obj['balance'] = round(tr - float(obj.get('advance', 0) or 0), 2)
+    st = _norm_settlement_type(obj.get('settlement_type'))
+    trg = _norm_tax_regime(obj.get('tax_regime'))
+    obj['settlement_type'] = st
+    obj['tax_regime'] = trg
 
 
 def _object_client_fields_from_payload(user_id, data, existing=None):
@@ -967,17 +1053,7 @@ def get_objects_with_estimates():
     )
 
     for obj in objects:
-        ew = obj.get('estimate_works', 0) or 0
-        em = obj.get('estimate_materials', 0) or 0
-        emp = obj.get('estimate_material_profit', 0) or 0
-
-        tr, te, tp = _compute_object_financials(
-            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), obj.get('estimate_material_cost')
-        )
-        obj['total_revenue'] = tr
-        obj['total_expenses'] = te
-        obj['total_profit'] = tp
-        obj['balance'] = tr - float(obj.get('advance', 0) or 0)
+        _apply_object_financial_enrichment(obj, current_user.id)
 
     # Подсчёт по статусам
     in_progress = sum(1 for o in objects if o.get('status') == OBJECT_STATUS_ACTIVE)
@@ -1015,15 +1091,19 @@ def add_object():
     next_to_date = (data.get('next_to_date') or '').strip() or None
     next_to_note = (data.get('next_to_note') or '').strip() or None
     _days, work_dates_json, ds_b, de_b = _resolve_work_dates_bounds_for_save(data, None)
+    settlement_ins = _norm_settlement_type(data.get('settlement_type'))
+    tax_ins = _norm_tax_regime(data.get('tax_regime'))
     oid = execute("""INSERT INTO objects 
-        (user_id, date_start, date_end, work_dates, name, client, client_id, sum_work, expenses, status, advance, salary, notes, is_regular_to, next_to_date, next_to_note, created_at, updated_at, salary_allocation_mode) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+        (user_id, date_start, date_end, work_dates, name, client, client_id, sum_work, expenses, status, advance, salary, notes, is_regular_to, next_to_date, next_to_note, created_at, updated_at, salary_allocation_mode, settlement_type, tax_regime) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
         (current_user.id, ds_b, de_b, work_dates_json, name,
          client_name, client_id, data.get('sum_work', 0), data.get('expenses', 0), data.get('status'),
          data.get('advance', 0), data.get('salary', 0), data.get('notes'),
-         is_regular_to, next_to_date, next_to_note, now, now, mode_ins), return_id=True)
+         is_regular_to, next_to_date, next_to_note, now, now, mode_ins, settlement_ins, tax_ins), return_id=True)
     _recalc_salaries_for_user_id(current_user.id)
     obj = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (oid, current_user.id))
+    if obj:
+        _apply_object_financial_enrichment(obj, current_user.id)
     return jsonify(obj), 201
 
 
@@ -1286,21 +1366,32 @@ def update_object(obj_id):
     date_payload = {k: data[k] for k in ('work_dates', 'date_start', 'date_end') if k in data}
     _days, work_dates_json, ds_b, de_b = _resolve_work_dates_bounds_for_save(date_payload, ex)
 
+    settlement_out = _norm_settlement_type(
+        data['settlement_type'] if 'settlement_type' in data else ex.get('settlement_type'),
+    )
+    tax_out = _norm_tax_regime(
+        data['tax_regime'] if 'tax_regime' in data else ex.get('tax_regime'),
+    )
+
     execute("""UPDATE objects SET date_start=?, date_end=?, work_dates=?, name=?, client=?, client_id=?, sum_work=?,
-           expenses=?, status=?, advance=?, salary=?, notes=?, is_regular_to=?, next_to_date=?, next_to_note=?, salary_allocation_mode=?, updated_at=? WHERE id=? AND user_id=?""",
+           expenses=?, status=?, advance=?, salary=?, notes=?, is_regular_to=?, next_to_date=?, next_to_note=?, salary_allocation_mode=?, settlement_type=?, tax_regime=?, updated_at=? WHERE id=? AND user_id=?""",
         (ds_b, de_b, work_dates_json, name, client_name, client_id,
          pickf('sum_work'), pickf('expenses'), pick('status'), pickf('advance'),
          pickf('salary'), pick('notes'),
          pick_bool01('is_regular_to'),
          pick('next_to_date'),
          pick('next_to_note'),
-         mode_out, now, obj_id, current_user.id))
+         mode_out, settlement_out, tax_out, now, obj_id, current_user.id))
 
     if any(k in data for k in ('status', 'date_start', 'date_end', 'work_dates', 'salary_allocation_mode')):
         _recalc_salaries_for_user_id(current_user.id)
 
     row = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id))
-    return jsonify(dict(row) if row else {"ok": True})
+    if row:
+        obj_out = dict(row)
+        _apply_object_financial_enrichment(obj_out, current_user.id)
+        return jsonify(obj_out)
+    return jsonify({"ok": True})
 
 @app.route('/api/objects/<int:obj_id>', methods=['DELETE'])
 @login_required
@@ -1315,6 +1406,7 @@ def delete_object(obj_id):
         queries.append(("DELETE FROM estimate_items WHERE estimate_id = ?", (est['id'],)))
     queries.append(("DELETE FROM estimates WHERE object_id = ? AND user_id = ?", (obj_id, current_user.id)))
     queries.append(("UPDATE worker_account_entries SET object_id = NULL WHERE object_id = ? AND user_id = ?", (obj_id, current_user.id)))
+    queries.append(("DELETE FROM object_expense_entries WHERE object_id = ? AND user_id = ?", (obj_id, current_user.id)))
     queries.append(("DELETE FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id)))
 
     # Выполняем всё в одной транзакции
@@ -1500,6 +1592,80 @@ def delete_worker_cashbook_entry(worker_id, entry_id):
     if not row:
         return jsonify({"error": "Запись не найдена"}), 404
     execute("DELETE FROM worker_account_entries WHERE id = ? AND user_id = ?", (entry_id, current_user.id))
+    return jsonify({"ok": True})
+
+
+def _object_owned_or_404(obj_id, user_id):
+    row = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, user_id))
+    if not row:
+        return None, (jsonify({"error": "Объект не найден"}), 404)
+    return row, None
+
+
+@app.route('/api/objects/<int:obj_id>/expense-entries', methods=['GET'])
+@login_required
+def list_object_expense_entries(obj_id):
+    _, err = _object_owned_or_404(obj_id, current_user.id)
+    if err:
+        return err
+    rows = fetch_all(
+        """SELECT id, object_id, entry_date, amount, category, title, note, source, created_at
+           FROM object_expense_entries WHERE object_id = ? AND user_id = ?
+           ORDER BY entry_date DESC, id DESC""",
+        (obj_id, current_user.id),
+    )
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/objects/<int:obj_id>/expense-entries', methods=['POST'])
+@login_required
+@require_csrf
+def add_object_expense_entry(obj_id):
+    _, err = _object_owned_or_404(obj_id, current_user.id)
+    if err:
+        return err
+    data = request.json or {}
+    try:
+        amount = float(data.get('amount'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Укажите сумму"}), 400
+    if amount <= 0:
+        return jsonify({"error": "Сумма должна быть больше 0"}), 400
+    category = (data.get('category') or 'other').strip()
+    if category not in OBJECT_EXPENSE_CATEGORIES:
+        category = 'other'
+    entry_date = (data.get('entry_date') or '').strip() or datetime.now().strftime('%Y-%m-%d')
+    title = (data.get('title') or '').strip()[:500]
+    note = (data.get('note') or '').strip()[:2000]
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    eid = execute(
+        """INSERT INTO object_expense_entries
+        (user_id, object_id, entry_date, amount, category, title, note, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', ?)""",
+        (current_user.id, obj_id, entry_date, amount, category, title, note, now),
+        return_id=True,
+    )
+    row = fetch_one(
+        "SELECT id, object_id, entry_date, amount, category, title, note, source, created_at FROM object_expense_entries WHERE id = ? AND user_id = ?",
+        (eid, current_user.id),
+    )
+    return jsonify(dict(row)), 201
+
+
+@app.route('/api/objects/<int:obj_id>/expense-entries/<int:entry_id>', methods=['DELETE'])
+@login_required
+@require_csrf
+def delete_object_expense_entry(obj_id, entry_id):
+    _, err = _object_owned_or_404(obj_id, current_user.id)
+    if err:
+        return err
+    row = fetch_one(
+        "SELECT id FROM object_expense_entries WHERE id = ? AND object_id = ? AND user_id = ?",
+        (entry_id, obj_id, current_user.id),
+    )
+    if not row:
+        return jsonify({"error": "Запись не найдена"}), 404
+    execute("DELETE FROM object_expense_entries WHERE id = ? AND user_id = ?", (entry_id, current_user.id))
     return jsonify({"ok": True})
 
 
@@ -2091,16 +2257,11 @@ def get_stats():
     advance = 0.0
     profit = 0.0
     for obj in objects:
-        ew = obj.get('estimate_works', 0) or 0
-        em = float(obj.get('estimate_materials', 0) or 0)
-        emp = float(obj.get('estimate_material_profit', 0) or 0)
-        rev, exp, prof = _compute_object_financials(
-            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), obj.get('estimate_material_cost')
-        )
-        total_revenue += rev
-        total_expenses += exp
-        total_material_profit += emp
-        profit += prof
+        _apply_object_financial_enrichment(obj, current_user.id)
+        total_revenue += obj['total_revenue']
+        total_expenses += obj['total_expenses']
+        total_material_profit += float(obj.get('estimate_material_profit', 0) or 0)
+        profit += obj['total_profit']
         salary += float(obj.get('salary', 0) or 0)
         advance += float(obj.get('advance', 0) or 0)
     balance = total_revenue - advance
@@ -2304,23 +2465,13 @@ def get_report():
     total_material_profit = 0
 
     for obj in objects:
-        ew = obj.get('estimate_works', 0) or 0
-        em = obj.get('estimate_materials', 0) or 0
-        emp = obj.get('estimate_material_profit', 0) or 0
+        _apply_object_financial_enrichment(obj, current_user.id)
 
-        tr, te, tp = _compute_object_financials(
-            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), obj.get('estimate_material_cost')
-        )
-        obj['total_revenue'] = tr
-        obj['total_expenses'] = te
-        obj['total_profit'] = tp
-        obj['balance'] = tr - float(obj.get('advance', 0) or 0)
-        
         total_revenue += obj['total_revenue']
         total_expenses += obj['total_expenses']
         total_salary += obj.get('salary', 0)
         total_profit += obj['total_profit']
-        total_material_profit += emp
+        total_material_profit += float(obj.get('estimate_material_profit', 0) or 0)
         if obj['balance'] > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
             total_debt += obj['balance']
     
