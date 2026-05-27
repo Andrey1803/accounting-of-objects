@@ -12,7 +12,7 @@
     <link rel="manifest" href="/static/manifest.json">
     <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
     <title>Учёт объектов</title>
-    <link rel="stylesheet" href="/static/css/base.css?v=2">
+    <link rel="stylesheet" href="/static/css/base.css?v=3">
     <link rel="stylesheet" href="/static/css/components.css?v=1">
     <style>
         /* Page-specific styles */
@@ -216,6 +216,8 @@
             max-width: 1400px;
         }
         .modal-content h2 { margin-bottom: var(--gap); font-size: var(--fs-md); color: #2E75B6; }
+        #modal .modal-header h2 { margin: 0; font-size: var(--fs-md); color: #2E75B6; }
+        #modal .modal-sheet.object-edit-sheet { width: min(95vw, 640px); max-width: 640px; }
 
         .estimates-modal .modal-content { width: 99vw !important; max-width: 99vw !important; max-height: 98vh !important; min-height: 80vh; }
         .estimates-modal .modal-content > div:first-child { flex-wrap: wrap; }
@@ -409,9 +411,12 @@
 
     <!-- Модалка объекта -->
     <div class="modal" id="modal">
-        <div class="modal-content">
-            <h2 id="modal-title">Добавить объект</h2>
+        <div class="modal-sheet object-edit-sheet">
+            <div class="modal-header">
+                <h2 id="modal-title">Добавить объект</h2>
+            </div>
             <form id="object-form">
+                <div class="modal-body">
                 <input type="hidden" id="obj-id">
                 <div class="form-group">
                     <label>Дни на объекте (учёт затрат по выездам)</label>
@@ -508,7 +513,8 @@
                     <div class="form-group"><label>Дата следующего ТО</label><input type="date" id="next-to-date"></div>
                     <div class="form-group"><label>Заметка на следующее ТО</label><input type="text" id="next-to-note" placeholder="Например: проверить реле"></div>
                 </div>
-                <div class="modal-buttons">
+                </div>
+                <div class="modal-footer modal-buttons">
                     <button type="submit" class="btn btn-primary">💾 Сохранить</button>
                     <button type="button" class="btn" style="background:#FF9800; color:white;" id="btnDuplicate" onclick="duplicateObject()" title="Создать копию объекта">📋 Дублировать</button>
                     <button type="button" class="btn btn-cancel" onclick="closeModal()">Отмена</button>
