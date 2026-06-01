@@ -1,3 +1,4 @@
 # DOCX → PDF для паспорта скважины (LibreOffice headless на Railway/Linux)
+# «...» — сохранить стандартные пакеты nixpacks; writer+common легче мета-пакета libreoffice
 [phases.setup]
-aptPkgs = ["...", "libreoffice", "fonts-dejavu-core"]
+aptPkgs = ["...", "libreoffice-writer", "libreoffice-common", "fonts-dejavu-core"]
