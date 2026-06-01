@@ -1307,6 +1307,36 @@ def _normalize_unit_purchase_price(purchase, retail_unit, qty=1.0):
     return round(p, 4)
 
 
+_ESTIMATE_UNITS = frozenset({'шт', 'м', 'м²', 'м³', 'кг', 'т', 'л', 'компл', 'усл', 'ч'})
+
+
+def _normalize_estimate_unit(unit, section='material'):
+    """Ед. изм. для сметы: не допускаем цены и прочие числа вместо «шт»/«м»."""
+    default = 'усл' if (section or 'material') == 'work' else 'шт'
+    if unit is None:
+        return default
+    s = str(unit).strip()
+    if not s:
+        return default
+    s_compact = re.sub(r'\s+', '', s.lower().replace('\xa0', '')).rstrip('.')
+    if s_compact in ('m', 'пм', 'п.м', 'погм', 'пог.м'):
+        return 'м'
+    if s_compact.startswith('компл') or s_compact == 'комплект':
+        return 'компл'
+    if s in _ESTIMATE_UNITS or s_compact in _ESTIMATE_UNITS:
+        return s if s in _ESTIMATE_UNITS else s_compact
+    try:
+        float(s.replace(',', '.').replace(' ', ''))
+        return default
+    except ValueError:
+        pass
+    if re.fullmatch(r'[\d.,\s]+', s):
+        return default
+    if len(s) <= 16 and re.search(r'[a-zA-Zа-яА-Я²³]', s) and not re.fullmatch(r'[\d.,]+', s):
+        return s[:20]
+    return default
+
+
 def _norm_item_name(s):
     return re.sub(r"\s+", " ", (s or "").strip()).lower()
 
@@ -2162,10 +2192,11 @@ def api_pdf_import_dual_materials():
                 qty = 1.0
 
             unit = _pdf_extract_unit(row, retail_layout)
-            if (not unit or str(unit).strip() == '') and retail_layout and retail_layout.get('unit_idx') is not None:
+            if retail_layout and retail_layout.get('unit_idx') is not None:
                 u_idx = int(retail_layout.get('unit_idx'))
                 if 0 <= u_idx < len(row):
-                    unit = str(row[u_idx] or '').strip()
+                    unit = _pdf_unit_from_table_cell(row[u_idx])
+            unit = _normalize_estimate_unit(unit, 'material')
 
             retail_price = None
             if retail_layout and retail_layout.get('retail_idx') is not None:
@@ -2198,7 +2229,7 @@ def api_pdf_import_dual_materials():
 
             materials.append({
                 'name': name,
-                'unit': unit or 'шт',
+                'unit': unit,
                 'qty': float(qty or 1),
                 'retail_price': round(retail_price, 4),
                 'wholesale_price': round(wholesale_price, 4),
@@ -2488,7 +2519,15 @@ def api_get_estimate(est_id):
     items = fetch_all("SELECT * FROM estimate_items WHERE estimate_id = ?", (est_id,))
     _backfill_estimate_wholesale_from_catalog(current_user.id, est_id, items)
     for it in items:
-        if it.get('section') == 'material':
+        sec = it.get('section') or 'material'
+        nu = _normalize_estimate_unit(it.get('unit'), sec)
+        if nu != (it.get('unit') or ''):
+            execute(
+                'UPDATE estimate_items SET unit = ? WHERE id = ? AND estimate_id = ?',
+                (nu, it['id'], est_id),
+            )
+            it['unit'] = nu
+        if sec == 'material':
             q = _safe_float(it.get('quantity'), default=1.0)
             p = _safe_float(it.get('price'))
             pu = _normalize_unit_purchase_price(_safe_float(it.get('purchase_price')), p, qty=q)
@@ -2564,12 +2603,13 @@ def api_add_item(est_id):
 
     logger.info(f"api_add_item: estimate_id={est_id}, section={data.get('section')}, name={data.get('name')}, qty={qty}, price={price}")
 
-    _add_to_catalog(data.get('section'), data.get('name'), data.get('unit'), price, purchase)
+    unit_norm = _normalize_estimate_unit(data.get('unit'), data.get('section'))
+    _add_to_catalog(data.get('section'), data.get('name'), unit_norm, price, purchase)
 
     item_id = execute("""INSERT INTO estimate_items
         (estimate_id, section, name, unit, quantity, price_type, price, purchase_price, wholesale_price, total, material_profit, sort_order)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order),0)+1 FROM estimate_items WHERE estimate_id=?))""",
-        (est_id, data.get('section'), data.get('name'), data.get('unit'), qty, 'retail', price, purchase, wholesale, total, profit, est_id), return_id=True)
+        (est_id, data.get('section'), data.get('name'), unit_norm, qty, 'retail', price, purchase, wholesale, total, profit, est_id), return_id=True)
     return jsonify({"id": item_id, "total": total, "material_profit": profit}), 201
 
 @estimate_bp.route('/api/items/<int:item_id>', methods=['PUT'])
@@ -2587,9 +2627,10 @@ def api_update_item(item_id):
     total = price * qty
     profit = (price - purchase) * qty if data.get('section', 'material') == 'material' else 0
 
+    unit_norm = _normalize_estimate_unit(data.get('unit'), data.get('section', 'material'))
     n = execute_rowcount("""UPDATE estimate_items SET name=?, unit=?, quantity=?, price=?, purchase_price=?, wholesale_price=?, total=?, material_profit=?
                WHERE id=? AND estimate_id IN (SELECT id FROM estimates WHERE user_id=?)""",
-            (data.get('name'), data.get('unit'), qty, price, purchase, wholesale, total, profit, item_id, current_user.id))
+            (data.get('name'), unit_norm, qty, price, purchase, wholesale, total, profit, item_id, current_user.id))
     if n == 0:
         return jsonify({"error": "Not found"}), 404
     return jsonify({"ok": True, "total": total, "material_profit": profit})
@@ -2858,7 +2899,7 @@ def api_export_excel(est_id):
         for i, it in enumerate(mats, 1):
             ws.cell(row=row, column=1, value=i).border = thin
             ws.cell(row=row, column=2, value=_sanitize_excel(it['name'])).border = thin
-            ws.cell(row=row, column=3, value=it['unit']).border = thin
+            ws.cell(row=row, column=3, value=_normalize_estimate_unit(it.get('unit'), 'material')).border = thin
             ws.cell(row=row, column=4, value=it['quantity']).border = thin
             ws.cell(row=row, column=5, value=it['price']).border = thin
             ws.cell(row=row, column=5).number_format = '#,##0.00'
@@ -2877,7 +2918,7 @@ def api_export_excel(est_id):
         for i, it in enumerate(works, 1):
             ws.cell(row=row, column=1, value=i).border = thin
             ws.cell(row=row, column=2, value=_sanitize_excel(it['name'])).border = thin
-            ws.cell(row=row, column=3, value=it['unit']).border = thin
+            ws.cell(row=row, column=3, value=_normalize_estimate_unit(it.get('unit'), 'work')).border = thin
             ws.cell(row=row, column=4, value=it['quantity']).border = thin
             ws.cell(row=row, column=5, value=it['price']).border = thin
             ws.cell(row=row, column=5).number_format = '#,##0.00'
