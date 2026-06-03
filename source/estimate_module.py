@@ -167,7 +167,13 @@ def _pdf_is_non_product_row(name, row_text=''):
         return True
     if len(n) < 40 and _PDF_NON_PRODUCT_ROW.search(n):
         return True
-    if re.search(r'\d{4}\s*г\.?', n, re.I) and re.search(r'\bооо\b', n, re.I):
+    if re.search(r'\d{4}\s*г\.?', n, re.I) and re.search(r'\b(?:ооо|зао|чуп)\b', n, re.I):
+        return True
+    if len(n) < 50 and re.search(
+        r'\b(?:январ|феврал|март|апрел|мая|июн|июл|август|сентябр|октябр|ноябр|декабр)\w*\b',
+        n,
+        re.I,
+    ) and re.search(r'\d{4}', n):
         return True
     if len(n) < 18 and re.fullmatch(r'(?:ооо|зао|оао|чуп|ип)\b.*', n, re.I):
         return True
@@ -701,12 +707,88 @@ def _pdf_table_layout_header_fallback(row, import_mode, header_layout):
     }
 
 
+def _pdf_adjust_row_layout(row, layout):
+    """
+    В PDF часто нет ячейки «ед.» в строке данных — тогда цены сдвинуты влево на одну колонку.
+    """
+    if not layout or not row:
+        return layout
+    layout = dict(layout)
+    cells = [str(c or '').strip() for c in row]
+    ui = layout.get('unit_idx')
+    if ui is None:
+        return layout
+    try:
+        ui = int(ui)
+    except (TypeError, ValueError):
+        return layout
+    if ui >= len(cells) or not cells[ui]:
+        return layout
+    if _pdf_cell_is_unit(cells[ui]):
+        return layout
+    if _pdf_parse_money_cell(cells[ui]) is None:
+        return layout
+    shifted = False
+    for key in ('qty_idx', 'retail_idx', 'purchase_idx'):
+        if layout.get(key) is None:
+            continue
+        try:
+            layout[key] = int(layout[key]) - 1
+            shifted = True
+        except (TypeError, ValueError):
+            pass
+    if not shifted:
+        return layout
+    layout['unit_idx'] = None
+    try:
+        qi = int(layout['qty_idx'])
+        ri = int(layout['retail_idx'])
+    except (TypeError, ValueError, KeyError):
+        return layout
+    qty_hint = _pdf_parse_qty_cell(cells[qi]) if qi < len(cells) else None
+    if qty_hint is None:
+        qty_hint = _pdf_parse_money_cell(cells[qi]) if qi < len(cells) else None
+    list_price = _pdf_parse_money_cell(cells[ri]) if ri < len(cells) else None
+    purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(
+        cells,
+        ri,
+        qty_hint,
+        list_price,
+        for_wholesale=(str(layout.get('_import_mode') or '') == 'wholesale'),
+    )
+    layout['purchase_from_tail'] = purchase_hint
+    layout['line_sum_from_tail'] = sum_hint
+    return layout
+
+
 def _pdf_table_layout_for_row(row, import_mode, header_layout):
     """Раскладка колонок: полная проверка строки или fallback по header_layout файла."""
     layout = _pdf_detect_table_material_row(row, import_mode, header_layout)
+    if layout is None:
+        layout = _pdf_table_layout_header_fallback(row, import_mode, header_layout)
     if layout is not None:
-        return layout
-    return _pdf_table_layout_header_fallback(row, import_mode, header_layout)
+        layout['_import_mode'] = import_mode
+        layout = _pdf_adjust_row_layout(row, layout)
+        layout.pop('_import_mode', None)
+    return layout
+
+
+def _pdf_extract_qty_from_line_sum(table_layout, retail_unit):
+    """Кол-во = сумма строки / розница, если в ячейке «кол-во» оказалась цена."""
+    if not table_layout or retail_unit is None:
+        return None
+    s_line = table_layout.get('line_sum_from_tail')
+    try:
+        s = float(s_line)
+        r = float(retail_unit)
+    except (TypeError, ValueError):
+        return None
+    if s <= 0 or r <= 0:
+        return None
+    q = s / r
+    if 0.0001 <= q <= 100_000:
+        return round(q, 4)
+    return None
 
 
 def _pdf_unit_from_table_cell(cell):
@@ -1066,7 +1148,10 @@ def _pdf_extract_qty(row, from_cart_pdf=False, table_layout=None):
             )
             if v is not None and 0.0001 <= v <= 100_000:
                 if _pdf_qty_near_price(v, retail_v):
-                    alt = _pdf_qty_from_layout_triplet(row, table_layout)
+                    alt = (
+                        _pdf_extract_qty_from_line_sum(table_layout, retail_v)
+                        or _pdf_qty_from_layout_triplet(row, table_layout)
+                    )
                     v = alt if alt is not None else 1.0
                 return v
             # Колонка «кол-во» задана таблицей — не подмешивать числа из цены/наименования.
@@ -1434,6 +1519,42 @@ def _normalize_unit_purchase_price(purchase, retail_unit, qty=1.0):
 
 
 _ESTIMATE_UNITS = frozenset({'шт', 'м', 'м²', 'м³', 'кг', 'т', 'л', 'компл', 'усл', 'ч'})
+
+
+def _repair_estimate_item_quantity(it):
+    """
+    Старый импорт PDF иногда писал в quantity ту же цифру, что в price.
+    Восстанавливаем по total (qty = total / price) или ставим 1, если total ≈ price.
+    """
+    if (it.get('section') or 'material') != 'material':
+        return False
+    q = _safe_float(it.get('quantity'), default=1.0)
+    p = _safe_float(it.get('price'))
+    t = _safe_float(it.get('total'))
+    if p <= 0 or q <= 0:
+        return False
+    if abs(q - p) / max(p, 1e-9) > 0.04:
+        return False
+    new_q = q
+    if t > 0:
+        implied = round(t / p, 4)
+        if abs(implied - q) / max(q, 1e-9) > 0.12:
+            if 0.0001 <= implied <= 5000:
+                new_q = implied
+            elif abs(t - p) <= max(0.05, 0.02 * abs(t)):
+                new_q = 1.0
+        elif abs(t - p) <= max(0.05, 0.02 * abs(t)):
+            new_q = 1.0
+    else:
+        new_q = 1.0
+    if abs(new_q - q) < 1e-6:
+        return False
+    it['quantity'] = new_q
+    pu = _normalize_unit_purchase_price(_safe_float(it.get('purchase_price')), p, qty=new_q)
+    it['purchase_price'] = pu
+    it['total'] = round(p * new_q, 2)
+    it['material_profit'] = round((p - pu) * new_q, 2)
+    return True
 
 
 def _normalize_estimate_unit(unit, section='material'):
@@ -2675,11 +2796,31 @@ def api_get_estimate(est_id):
         if sec == 'material':
             q = _safe_float(it.get('quantity'), default=1.0)
             p = _safe_float(it.get('price'))
+            if _repair_estimate_item_quantity(it):
+                execute(
+                    """UPDATE estimate_items SET quantity=?, purchase_price=?, total=?, material_profit=?
+                       WHERE id=? AND estimate_id=?""",
+                    (
+                        it['quantity'],
+                        it['purchase_price'],
+                        it['total'],
+                        it['material_profit'],
+                        it['id'],
+                        est_id,
+                    ),
+                )
+                q = _safe_float(it.get('quantity'), default=1.0)
+                p = _safe_float(it.get('price'))
             pu = _normalize_unit_purchase_price(_safe_float(it.get('purchase_price')), p, qty=q)
             if pu != _safe_float(it.get('purchase_price')):
                 it['purchase_price'] = pu
                 it['material_profit'] = (p - pu) * q
                 it['total'] = p * q
+                execute(
+                    """UPDATE estimate_items SET purchase_price=?, total=?, material_profit=?
+                       WHERE id=? AND estimate_id=?""",
+                    (pu, it['total'], it['material_profit'], it['id'], est_id),
+                )
     return jsonify({**est, 'items': items})
 
 @estimate_bp.route('/api/estimates/<int:est_id>', methods=['PUT'])
