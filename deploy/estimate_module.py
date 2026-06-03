@@ -548,9 +548,46 @@ def _pdf_detect_supplier_pricelist_row_layout(row, import_mode='retail'):
         'qty_idx': 3,
         'retail_idx': retail_idx,
         'purchase_idx': purchase_idx,
+        'sum_idx': 6,
         'purchase_from_tail': purchase_hint,
         'line_sum_from_tail': sum_hint,
+        'layout_source': 'supplier_pricelist',
     }
+
+
+def _pdf_is_supplier_pricelist_layout(table_layout):
+    if not table_layout:
+        return False
+    if table_layout.get('layout_source') == 'supplier_pricelist':
+        return True
+    try:
+        return (
+            int(table_layout.get('name_idx')) == 2
+            and int(table_layout.get('qty_idx')) == 3
+            and int(table_layout.get('unit_idx')) == 4
+            and int(table_layout.get('retail_idx')) == 5
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _pdf_extract_wholesale_unit_supplier(row, table_layout):
+    """
+    Счёт поставщика (№ 6005): оптовая цена за ед. в колонке «Цена» (индекс 5).
+    Колонки НДС/итого справа не используем — там другие суммы (10,68 / 64,06).
+    """
+    if not row or not _pdf_is_supplier_pricelist_layout(table_layout):
+        return None
+    try:
+        ri = int(table_layout['retail_idx'])
+    except (TypeError, ValueError, KeyError):
+        return None
+    if ri >= len(row):
+        return None
+    unit = _pdf_parse_money_cell(row[ri])
+    if unit is None or unit <= 0:
+        return None
+    return round(float(unit), 4)
 
 
 def _pdf_infer_header_layout_from_data(rows, import_mode='retail'):
@@ -582,6 +619,7 @@ def _pdf_infer_header_layout_from_data(rows, import_mode='retail'):
             'Цена' if import_mode != 'wholesale' else 'Цена опт',
             'Стоимость',
         ],
+        'sum_idx': 6,
         'layout_source': 'supplier_pricelist',
     }
 
@@ -1203,10 +1241,14 @@ def _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf=False, table_layout=
     """
     Цена закупа за единицу из оптового PDF (как в документе; чаще без НДС).
     Для cart-ready PDF возвращаем розничную цену за единицу (режим корзины).
-    Для табличного опта дальше в parse-pdf цена умножается на _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT.
+    Для счёта поставщика (supplier_pricelist) — цена из колонки «Цена», НДС по сумме строки.
     """
     if from_cart_pdf:
         return _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf=True, table_layout=None)
+    if _pdf_is_supplier_pricelist_layout(table_layout):
+        w = _pdf_extract_wholesale_unit_supplier(row, table_layout)
+        if w is not None:
+            return w
     if table_layout is not None:
         pidx = table_layout.get('purchase_idx')
         if pidx is not None and pidx < len(row):
@@ -2113,6 +2155,7 @@ def api_parse_pdf():
                 import_mode == 'wholesale'
                 and pdf_wholesale_unit is not None
                 and not from_cart_pdf
+                and not _pdf_is_supplier_pricelist_layout(table_layout)
             ):
                 pdf_wholesale_unit = round(
                     float(pdf_wholesale_unit) * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4
