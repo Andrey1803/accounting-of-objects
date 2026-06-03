@@ -829,7 +829,45 @@
         }
 
         function _pdfNormName(s) {
-            return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            return (s || '').trim().toLowerCase()
+                .replace(/,/g, ' ')
+                .replace(/[^\wа-яё0-9./×x\- ]/gi, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        /** Найти строки сметы для позиции из PDF (имя, фрагмент, совпадение розницы). */
+        function findEstimateRowsForPdfMatch(m) {
+            var keys = [];
+            if (m.item && m.item.name) keys.push(_pdfNormName(m.item.name));
+            if (m.clean_name) keys.push(_pdfNormName(m.clean_name));
+            if (m.row_text) keys.push(_pdfNormName(m.row_text));
+            keys = keys.filter(function(k, i, a) { return k && a.indexOf(k) === i; });
+            var seen = {};
+            var out = [];
+            items.forEach(function(it) {
+                if (it.section !== 'material') return;
+                var n = _pdfNormName(it.name);
+                var hit = false;
+                for (var i = 0; i < keys.length; i++) {
+                    var k = keys[i];
+                    if (!k) continue;
+                    if (n === k || (k.length >= 8 && n.indexOf(k) >= 0) || (n.length >= 8 && k.indexOf(n) >= 0)) {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit && m.file_retail_unit != null && Number(m.file_retail_unit) > 0) {
+                    var fr = Number(m.file_retail_unit);
+                    var pr = Number(it.price) || 0;
+                    if (pr > 0 && Math.abs(fr - pr) <= Math.max(0.05, 0.01 * pr)) hit = true;
+                }
+                if (hit && !seen[it.id]) {
+                    seen[it.id] = true;
+                    out.push(it);
+                }
+            });
+            return out;
         }
 
         // Универсальный fetch с автоматическим обновлением CSRF токена
@@ -2897,13 +2935,14 @@
                                 var useRetail = (m.file_retail_unit != null && m.file_retail_unit > 0)
                                     ? Number(m.file_retail_unit)
                                     : (Number(m.item.retail_price) || 0);
-                                var usePurchase = normalizePurchaseUnit(
-                                    (m.file_purchase_unit != null && m.file_purchase_unit >= 0)
-                                        ? Number(m.file_purchase_unit)
-                                        : (Number(m.item.purchase_price) || 0),
-                                    useRetail,
-                                    qty
-                                );
+                                var usePurchase = 0;
+                                if (m.file_purchase_unit != null && Number(m.file_purchase_unit) > 0) {
+                                    usePurchase = normalizePurchaseUnit(
+                                        Number(m.file_purchase_unit),
+                                        useRetail,
+                                        qty
+                                    );
+                                }
                                 qty = fixQtyIfPdfPriceDuplicated(qty, useRetail, usePurchase);
                                 await fetchCsrf('/estimate/api/catalog/materials/' + m.item.id, {
                                     method: 'PUT',
@@ -2915,7 +2954,7 @@
                                         article: m.item.article || '',
                                         brand: m.item.brand || '',
                                         item_type: m.item.item_type || '',
-                                        purchase_price: Number(m.item.purchase_price) || 0,
+                                        purchase_price: usePurchase > 0 ? usePurchase : (Number(m.item.purchase_price) || 0),
                                         wholesale_price: Number(m.item.wholesale_price) || 0,
                                         retail_price: useRetail,
                                         min_wholesale_qty: 10,
@@ -2951,10 +2990,7 @@
                                     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
                                     body: JSON.stringify(updBody)
                                 });
-                                var catNm = _pdfNormName(m.item.name);
-                                var matMatches = items.filter(function(it) {
-                                    return it.section === 'material' && _pdfNormName(it.name) === catNm;
-                                });
+                                var matMatches = findEstimateRowsForPdfMatch(m);
                                 if (matMatches.length) {
                                     for (var wi = 0; wi < matMatches.length; wi++) {
                                         await updateItem(matMatches[wi].id, 'purchase_price', useWholesaleWithVat);
