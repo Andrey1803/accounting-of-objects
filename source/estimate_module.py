@@ -24,6 +24,14 @@ _PDF_TOTALS_ROW = re.compile(
     r'прописью|страниц|листов|документ\s+составлен|без\s+ндс)\b',
     re.I,
 )
+_PDF_NON_PRODUCT_ROW = re.compile(
+    r'(?:'
+    r'\b(?:январ|феврал|март|апрел|мая|июн|июл|август|сентябр|октябр|ноябр|декабр)\w*\s+\d{4}'
+    r'|\b\d{1,2}\s+(?:январ|феврал|март|апрел|мая|июн|июл|август|сентябр|октябр|ноябр|декабр)'
+    r'|\b(?:г\.?\s*ооо|унп\s*\d|р\/с\s*\d)'
+    r')',
+    re.I,
+)
 _PDF_STOPWORDS = frozenset({
     'для', 'без', 'или', 'это', 'все', 'всех', 'тип', 'вид', 'как', 'при', 'под', 'над',
     'размер', 'цвет', 'белым', 'белый', 'черным', 'черный', 'серый', 'коричн',
@@ -147,6 +155,49 @@ def _pdf_parse_cart_ready_format(full_text):
                 ]
             )
     return out
+
+
+def _pdf_is_non_product_row(name, row_text=''):
+    """Строки подвала счёта (дата, реквизиты ООО), не номенклатура."""
+    n = (name or '').strip()
+    blob = f'{n} {(row_text or "").strip()}'.lower()
+    if not blob.strip():
+        return True
+    if _PDF_TOTALS_ROW.search(blob):
+        return True
+    if len(n) < 40 and _PDF_NON_PRODUCT_ROW.search(n):
+        return True
+    if re.search(r'\d{4}\s*г\.?', n, re.I) and re.search(r'\bооо\b', n, re.I):
+        return True
+    if len(n) < 18 and re.fullmatch(r'(?:ооо|зао|оао|чуп|ип)\b.*', n, re.I):
+        return True
+    return False
+
+
+def _pdf_substantial_table_rows(all_rows, import_mode='retail'):
+    """Есть ли в PDF нормальная таблица сметы (заголовок + несколько строк данных)."""
+    if not all_rows:
+        return False
+    header = _pdf_detect_header_layout(all_rows, import_mode)
+    if not header:
+        return False
+    data_like = 0
+    for row in all_rows:
+        if not row or len(row) < 4:
+            continue
+        cells = [str(c or '').strip() for c in row]
+        ni = header.get('name_idx')
+        if ni is None or int(ni) >= len(cells):
+            continue
+        name = cells[int(ni)]
+        if len(name) < 3 or _pdf_is_non_product_row(name, ' '.join(cells)):
+            continue
+        if _PDF_HEADER_START.search(name.lower()):
+            continue
+        data_like += 1
+        if data_like >= 3:
+            return True
+    return False
 
 
 def _pdf_row_product_title(raw):
@@ -767,6 +818,56 @@ def _pdf_qty_from_triplet(vals):
     return t[0] if t else None
 
 
+def _pdf_qty_from_layout_triplet(row, table_layout):
+    """Кол-во из чисел между колонкой «кол-во» и «суммой», если ячейка кол-ва = цене."""
+    if not table_layout or not row:
+        return None
+    try:
+        qi = int(table_layout['qty_idx'])
+        ri = int(table_layout['retail_idx'])
+    except (TypeError, ValueError):
+        return None
+    start = qi
+    ui = table_layout.get('unit_idx')
+    if ui is not None:
+        try:
+            start = max(qi, int(ui) + 1)
+        except (TypeError, ValueError):
+            pass
+    vals = []
+    for j in range(start, len(row)):
+        v = _pdf_parse_money_cell(row[j])
+        if v is not None:
+            vals.append(v)
+    q = _pdf_qty_from_triplet(vals)
+    if q is not None:
+        return q
+    retail = _pdf_parse_money_cell(row[ri]) if ri < len(row) else None
+    s_line = table_layout.get('line_sum_from_tail')
+    if retail and s_line and float(retail) > 0:
+        q = float(s_line) / float(retail)
+        if 0.0001 <= q <= 100_000:
+            return round(q, 4)
+    return None
+
+
+def _pdf_qty_near_price(qty, *refs, rtol=0.035):
+    try:
+        qf = float(qty)
+    except (TypeError, ValueError):
+        return False
+    for ref in refs:
+        if ref is None:
+            continue
+        try:
+            rf = float(ref)
+        except (TypeError, ValueError):
+            continue
+        if rf > 0 and abs(qf - rf) / rf <= rtol:
+            return True
+    return False
+
+
 def _pdf_row_numeric_tail_vals(row):
     """Числа из ячеек строки (кроме первой — часто № или длинное наименование)."""
     ordered = []
@@ -953,12 +1054,24 @@ def _pdf_extract_qty(row, from_cart_pdf=False, table_layout=None):
         return cq
     if table_layout is not None:
         qi = table_layout.get('qty_idx')
+        ri = table_layout.get('retail_idx')
         if qi is not None and int(qi) < len(row):
             v = _pdf_parse_qty_cell(row[qi])
+            if v is None:
+                v = _pdf_parse_money_cell(row[qi])
+            retail_v = (
+                _pdf_parse_money_cell(row[int(ri)])
+                if ri is not None and int(ri) < len(row)
+                else None
+            )
             if v is not None and 0.0001 <= v <= 100_000:
+                if _pdf_qty_near_price(v, retail_v):
+                    alt = _pdf_qty_from_layout_triplet(row, table_layout)
+                    v = alt if alt is not None else 1.0
                 return v
             # Колонка «кол-во» задана таблицей — не подмешивать числа из цены/наименования.
-            return 1.0
+            alt = _pdf_qty_from_layout_triplet(row, table_layout)
+            return alt if alt is not None else 1.0
     whole = ' '.join(str(c or '') for c in row)
 
     # Смета/счёт: колонка «Кол-во» идёт ПОСЛЕ «шт/м» — «… шт 1 16.36», иначе «25 шт» из «25x25x25 шт» даёт ложное qty.
@@ -1014,7 +1127,14 @@ def _pdf_extract_qty(row, from_cart_pdf=False, table_layout=None):
         q3w = _pdf_qty_from_triplet(_pdf_floats_in_order_from_text(whole))
         if q3w is not None:
             return q3w
-        return vals[0]
+        q3 = _pdf_qty_from_triplet(vals)
+        if q3 is not None:
+            return q3
+        s_max = max(vals)
+        candidates = [x for x in vals if x < s_max * 0.95 and x <= 5000]
+        if candidates:
+            return min(candidates)
+        return 1.0
 
     if not vals:
         q3w = _pdf_qty_from_triplet(_pdf_floats_in_order_from_text(whole))
@@ -1026,6 +1146,8 @@ def _pdf_extract_qty(row, from_cart_pdf=False, table_layout=None):
         return vals[0]
 
     v0, v1 = vals[0], vals[1]
+    if abs(v0 - v1) / max(v0, v1, 1e-9) < 0.03:
+        return 1.0
     if v1 > v0 * 50:
         return v0
     if v0 > v1 * 50:
@@ -1033,15 +1155,19 @@ def _pdf_extract_qty(row, from_cart_pdf=False, table_layout=None):
     q3w = _pdf_qty_from_triplet(_pdf_floats_in_order_from_text(whole))
     if q3w is not None:
         return q3w
-    return v0
+    return min(v0, v1)
 
 
-def _pdf_sanitize_qty(qty, retail_price, purchase_price=0):
+def _pdf_sanitize_qty(
+    qty, retail_price, purchase_price=0, file_retail=None, file_wholesale=None
+):
     """Не подставлять цену/РРЦ в количество (иначе сумма = миллионы)."""
     try:
         q = float(qty)
         rp = float(retail_price or 0)
         pp = float(purchase_price or 0)
+        fr = float(file_retail or 0)
+        fw = float(file_wholesale or 0)
     except (TypeError, ValueError):
         return 1.0
     if q <= 0 or q != q:
@@ -1050,8 +1176,8 @@ def _pdf_sanitize_qty(qty, retail_price, purchase_price=0):
         return 1.0
     if rp > 0 and q * rp > 400_000:
         return 1.0
-    for ref in (rp, pp):
-        if ref > 0 and q >= 20 and abs(q - ref) / ref <= 0.12:
+    for ref in (rp, pp, fr, fw):
+        if ref > 0 and abs(q - ref) / ref <= 0.04:
             return 1.0
     return q
 
@@ -1644,14 +1770,18 @@ def api_parse_pdf():
 
         pdf_file.close()
 
-        full_text = '\n'.join(full_text_chunks)
-        cart_rows = _pdf_parse_cart_ready_format(full_text)
-        from_cart_pdf = len(cart_rows) >= 1
-        if from_cart_pdf:
-            all_rows = cart_rows
-
         mode_raw = (request.form.get('mode') or request.args.get('mode') or 'retail').strip().lower()
         import_mode = 'wholesale' if mode_raw in ('wholesale', 'opt', 'purchase', 'cost') else 'retail'
+
+        full_text = '\n'.join(full_text_chunks)
+        table_rows_snapshot = list(all_rows)
+        cart_rows = _pdf_parse_cart_ready_format(full_text)
+        substantial_table = _pdf_substantial_table_rows(table_rows_snapshot, import_mode)
+        from_cart_pdf = len(cart_rows) >= 1 and not substantial_table
+        if from_cart_pdf and len(table_rows_snapshot) >= max(3, len(cart_rows) * 3):
+            from_cart_pdf = False
+        if from_cart_pdf:
+            all_rows = cart_rows
         manual_header_layout = None if from_cart_pdf else _pdf_parse_manual_header_layout(request)
         header_layout = manual_header_layout if manual_header_layout else (
             None if from_cart_pdf else _pdf_detect_header_layout(all_rows, import_mode)
@@ -1698,6 +1828,17 @@ def api_parse_pdf():
                 continue
 
             table_layout = None if from_cart_pdf else _pdf_table_layout_for_row(row, import_mode, header_layout)
+            if table_layout:
+                ni = table_layout.get('name_idx')
+                row_name = (
+                    str(row[int(ni)] or '').strip()
+                    if ni is not None and int(ni) < len(row)
+                    else ''
+                )
+            else:
+                row_name = _pdf_row_product_title(row_text)
+            if _pdf_is_non_product_row(row_name, row_text):
+                continue
 
             pdf_retail_unit = _pdf_extract_pdf_retail_unit_price(row, from_cart_pdf, table_layout)
             pdf_wholesale_unit = _pdf_extract_pdf_unit_price_with_vat(row, from_cart_pdf, table_layout)
@@ -1749,6 +1890,8 @@ def api_parse_pdf():
                     _pdf_extract_qty(row, from_cart_pdf, table_layout),
                     best_match.get('retail_price'),
                     best_match.get('purchase_price'),
+                    file_retail=pdf_retail_unit,
+                    file_wholesale=pdf_wholesale_unit,
                 )
                 if from_article:
                     conf_pct = 100.0
@@ -1819,6 +1962,8 @@ def api_parse_pdf():
                     _pdf_extract_qty(row, from_cart_pdf, table_layout),
                     (file_unit_price if file_unit_price is not None else 0),
                     0,
+                    file_retail=pdf_retail_unit,
+                    file_wholesale=pdf_wholesale_unit,
                 )
                 unit_u = _pdf_extract_unit(row, table_layout)
                 unmatched.append({
