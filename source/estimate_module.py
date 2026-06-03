@@ -791,6 +791,39 @@ def _pdf_extract_qty_from_line_sum(table_layout, retail_unit):
     return None
 
 
+def _pdf_finalize_quantity(qty, pdf_retail, pdf_purchase=None, table_layout=None):
+    """
+    Типичная ошибка PDF: в «кол-во» попала розница (82.75 = 82.75), закуп за единицу нормальный (8.35).
+    """
+    try:
+        q = float(qty)
+        r = float(pdf_retail)
+        p = float(pdf_purchase) if pdf_purchase is not None else None
+    except (TypeError, ValueError):
+        return qty
+    if r <= 0 or q <= 0:
+        return qty
+    if abs(q - r) / r > 0.04:
+        return qty
+    if p is not None and p > 0 and p < r * 0.35:
+        return 1.0
+    if table_layout:
+        s_line = table_layout.get('line_sum_from_tail')
+        if s_line is not None:
+            try:
+                s = float(s_line)
+                if abs(s - r) <= max(0.05, 0.02 * abs(s)):
+                    return 1.0
+            except (TypeError, ValueError):
+                pass
+        q2 = _pdf_extract_qty_from_line_sum(table_layout, r)
+        if q2 is not None and abs(q2 - r) / r > 0.04:
+            return q2
+    if q >= 8 and abs(q - r) / r <= 0.01:
+        return 1.0
+    return qty
+
+
 def _pdf_unit_from_table_cell(cell):
     """Нормализация ед. изм. для сметы из ячейки таблицы."""
     if not cell:
@@ -1531,12 +1564,15 @@ def _repair_estimate_item_quantity(it):
     q = _safe_float(it.get('quantity'), default=1.0)
     p = _safe_float(it.get('price'))
     t = _safe_float(it.get('total'))
+    pu = _safe_float(it.get('purchase_price'))
     if p <= 0 or q <= 0:
         return False
     if abs(q - p) / max(p, 1e-9) > 0.04:
         return False
     new_q = q
-    if t > 0:
+    if pu > 0 and pu < p * 0.35:
+        new_q = 1.0
+    elif t > 0:
         implied = round(t / p, 4)
         if abs(implied - q) / max(q, 1e-9) > 0.12:
             if 0.0001 <= implied <= 5000:
@@ -1545,8 +1581,10 @@ def _repair_estimate_item_quantity(it):
                 new_q = 1.0
         elif abs(t - p) <= max(0.05, 0.02 * abs(t)):
             new_q = 1.0
-    else:
+    elif q >= 8:
         new_q = 1.0
+    else:
+        return False
     if abs(new_q - q) < 1e-6:
         return False
     it['quantity'] = new_q
@@ -2007,8 +2045,22 @@ def api_parse_pdf():
             )
             if best_match and reach_match:
                 pdf_unit = _pdf_extract_unit(row, table_layout)
+                raw_qty = _pdf_extract_qty(row, from_cart_pdf, table_layout)
+                pdf_purchase_unit = None
+                if table_layout:
+                    pidx = table_layout.get('purchase_idx')
+                    if pidx is not None and int(pidx) < len(row):
+                        pdf_purchase_unit = _pdf_parse_money_cell(row[int(pidx)])
+                if pdf_purchase_unit is None and table_layout:
+                    pdf_purchase_unit = table_layout.get('purchase_from_tail')
+                qty = _pdf_finalize_quantity(
+                    raw_qty,
+                    pdf_retail_unit,
+                    pdf_purchase_unit,
+                    table_layout,
+                )
                 qty = _pdf_sanitize_qty(
-                    _pdf_extract_qty(row, from_cart_pdf, table_layout),
+                    qty,
                     best_match.get('retail_price'),
                     best_match.get('purchase_price'),
                     file_retail=pdf_retail_unit,
@@ -2079,8 +2131,15 @@ def api_parse_pdf():
                     rej = 'low_score'
                 else:
                     rej = 'no_match' if catalog_items else 'no_catalog'
+                raw_qty_u = _pdf_extract_qty(row, from_cart_pdf, table_layout)
+                qty_u = _pdf_finalize_quantity(
+                    raw_qty_u,
+                    pdf_retail_unit,
+                    pdf_wholesale_unit if import_mode == 'wholesale' else None,
+                    table_layout,
+                )
                 qty_u = _pdf_sanitize_qty(
-                    _pdf_extract_qty(row, from_cart_pdf, table_layout),
+                    qty_u,
                     (file_unit_price if file_unit_price is not None else 0),
                     0,
                     file_retail=pdf_retail_unit,
