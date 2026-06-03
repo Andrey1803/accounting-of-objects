@@ -172,7 +172,11 @@
                 <td style="text-align:center;border-top:2px solid #e0e0e0;"><input id="mat-select-all-bottom" type="checkbox" aria-label="Выделить все материалы (внизу)" title="Выделить все" onchange="toggleSectionSelectAll('material', this.checked)"></td>
             </tr></tfoot></table>
             <div id="mat-cards"></div>
-            <div class="estimate-section-actions" style="display:flex;gap:10px;justify-content:center;margin-top:12px;flex-wrap:wrap;">
+            <div class="estimate-section-actions" style="display:flex;gap:10px;justify-content:center;align-items:center;margin-top:12px;flex-wrap:wrap;">
+                <label class="estimate-select-all-bar" style="display:flex;align-items:center;gap:6px;font-size:13px;color:#455a64;cursor:pointer;margin:0;">
+                    <input id="mat-select-all-bar" type="checkbox" aria-label="Выделить все материалы (под таблицей)" title="Выделить все" onchange="toggleSectionSelectAll('material', this.checked)">
+                    Выделить все
+                </label>
                 <button type="button" class="btn btn-danger" onclick="deleteSelectedInSection('material')">🗑 Удалить</button>
                 <button type="button" class="btn" style="background:var(--orange)" onclick="openSearch('material')">+ Добавить</button>
             </div>
@@ -192,7 +196,11 @@
                 <td style="text-align:center;border-top:2px solid #e0e0e0;"><input id="work-select-all-bottom" type="checkbox" aria-label="Выделить все работы (внизу)" title="Выделить все" onchange="toggleSectionSelectAll('work', this.checked)"></td>
             </tr></tfoot></table>
             <div id="work-cards"></div>
-            <div class="estimate-section-actions" style="display:flex;gap:10px;justify-content:center;margin-top:12px;flex-wrap:wrap;">
+            <div class="estimate-section-actions" style="display:flex;gap:10px;justify-content:center;align-items:center;margin-top:12px;flex-wrap:wrap;">
+                <label class="estimate-select-all-bar" style="display:flex;align-items:center;gap:6px;font-size:13px;color:#455a64;cursor:pointer;margin:0;">
+                    <input id="work-select-all-bar" type="checkbox" aria-label="Выделить все работы (под таблицей)" title="Выделить все" onchange="toggleSectionSelectAll('work', this.checked)">
+                    Выделить все
+                </label>
                 <button type="button" class="btn btn-danger" onclick="deleteSelectedInSection('work')">🗑 Удалить</button>
                 <button type="button" class="btn" style="background:var(--orange)" onclick="openSearch('work')">+ Добавить</button>
             </div>
@@ -1039,8 +1047,8 @@
 
         function sectionSelectAllIds(section) {
             return section === 'material'
-                ? ['mat-select-all', 'mat-select-all-bottom']
-                : ['work-select-all', 'work-select-all-bottom'];
+                ? ['mat-select-all', 'mat-select-all-bottom', 'mat-select-all-bar']
+                : ['work-select-all', 'work-select-all-bottom', 'work-select-all-bar'];
         }
 
         function setSectionSelectAllUi(section, checked, indeterminate) {
