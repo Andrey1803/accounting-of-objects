@@ -2854,6 +2854,16 @@
             }
         }
 
+        function fixQtyIfPdfPriceDuplicated(qty, retail, purchase) {
+            var q = parseFloat(qty) || 1;
+            var r = parseFloat(retail) || 0;
+            var p = parseFloat(purchase) || 0;
+            if (r <= 0 || Math.abs(q - r) / r > 0.04) return q;
+            if (p > 0 && p < r * 0.35) return 1;
+            if (q >= 8) return 1;
+            return q;
+        }
+
         async function importSelectedMatches() {
             if (!Array.isArray(window._pdfMatchedData) || !Array.isArray(window._pdfUnmatchedData)) return;
             if (!window._pdfColumnsConfirmed) {
@@ -2872,7 +2882,7 @@
                 const cb = document.getElementById('pdf-match-' + i);
                 const qtyInput = document.getElementById('pdf-qty-' + i);
                 if (cb && cb.checked && qtyInput) {
-                    const qty = parseFloat(qtyInput.value) || 1;
+                    let qty = parseFloat(qtyInput.value) || 1;
                     if (qty > 0) {
                         try {
                             if (importMode === 'retail') {
@@ -2886,6 +2896,7 @@
                                     useRetail,
                                     qty
                                 );
+                                qty = fixQtyIfPdfPriceDuplicated(qty, useRetail, usePurchase);
                                 await fetchCsrf('/estimate/api/catalog/materials/' + m.item.id, {
                                     method: 'PUT',
                                     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrf() },
