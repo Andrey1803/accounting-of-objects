@@ -2542,6 +2542,97 @@ def _to_float_ru(v):
         return None
 
 
+def _pdf_supplier_line_number(row):
+    """Номер позиции в счёте/прайсе (колонка №)."""
+    try:
+        if not row or len(row) < 2:
+            return None
+        s = str(row[1] or '').strip()
+        if re.fullmatch(r'\d{1,4}', s):
+            return int(s)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _pdf_wholesale_unit_from_row(wrow, wholesale_header_layout):
+    """Цена закупа за ед. из строки оптового PDF."""
+    w_layout = _pdf_table_layout_for_row(wrow, 'wholesale', wholesale_header_layout)
+    if w_layout is None:
+        w_layout = _pdf_detect_supplier_pricelist_row_layout(wrow, 'wholesale')
+    wholesale_price = _pdf_extract_wholesale_unit_supplier(wrow, w_layout)
+    if wholesale_price is None and w_layout and w_layout.get('retail_idx') is not None:
+        try:
+            ri = int(w_layout['retail_idx'])
+            if 0 <= ri < len(wrow):
+                wholesale_price = _to_float_ru(wrow[ri])
+        except (TypeError, ValueError):
+            pass
+    if wholesale_price is None and len(wrow) > 5:
+        wholesale_price = _to_float_ru(wrow[5])
+    if (
+        wholesale_price is not None
+        and not _pdf_is_supplier_pricelist_layout(w_layout)
+    ):
+        wholesale_price = round(
+            float(wholesale_price) * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4
+        )
+    return wholesale_price
+
+
+def _pdf_build_wholesale_lookup(wholesale_rows, wholesale_header_layout):
+    """Индекс оптовых строк: по № позиции и по нормализованному наименованию."""
+    by_line = {}
+    by_name = {}
+    for row in wholesale_rows or []:
+        row_text = ' '.join(str(c or '') for c in row).strip()
+        if len(row_text) < 3:
+            continue
+        if _PDF_HEADER_START.search(row_text) or _PDF_TOTALS_ROW.search(row_text):
+            continue
+        w_layout = _pdf_table_layout_for_row(row, 'wholesale', wholesale_header_layout)
+        if w_layout is None:
+            w_layout = _pdf_detect_supplier_pricelist_row_layout(row, 'wholesale')
+        if not _pdf_is_supplier_pricelist_layout(w_layout):
+            continue
+        price = _pdf_wholesale_unit_from_row(row, wholesale_header_layout)
+        if price is None or price <= 0:
+            continue
+        line_no = _pdf_supplier_line_number(row)
+        if line_no is not None:
+            by_line[line_no] = float(price)
+        try:
+            ni = int(w_layout['name_idx'])
+            name = str(row[ni] or '').strip()
+        except (TypeError, ValueError, KeyError, IndexError):
+            name = ''
+        if len(name) >= 3:
+            nk = _pdf_normalize_name_for_index(name)
+            if nk:
+                by_name.setdefault(nk, []).append(float(price))
+    return by_line, by_name
+
+
+def _pdf_match_wholesale_for_retail(retail_row, retail_layout, wholesale_by_line, wholesale_by_name):
+    """Сопоставить строку РРЦ со строкой счёта по № или наименованию (не по индексу массива)."""
+    line_no = _pdf_supplier_line_number(retail_row)
+    if line_no is not None and line_no in wholesale_by_line:
+        return wholesale_by_line[line_no]
+    try:
+        ni = int(retail_layout['name_idx'])
+        rname = str(retail_row[ni] or '').strip()
+    except (TypeError, ValueError, KeyError, IndexError):
+        rname = ''
+    nk = _pdf_normalize_name_for_index(rname)
+    if nk and nk in wholesale_by_name:
+        return wholesale_by_name[nk][0]
+    if len(nk) >= 10:
+        for key, prices in wholesale_by_name.items():
+            if nk in key or key in nk:
+                return prices[0]
+    return None
+
+
 @estimate_bp.route('/api/pdf-merge-retail-wholesale-sheet', methods=['POST'])
 @login_required
 def api_pdf_merge_retail_wholesale_sheet():
@@ -2568,6 +2659,12 @@ def api_pdf_merge_retail_wholesale_sheet():
 
         retail_mode = 'retail'
         retail_header_layout = _pdf_detect_header_layout(retail_rows, retail_mode)
+        wholesale_header_layout = (
+            _pdf_detect_header_layout(wholesale_rows, 'wholesale') if wholesale_rows else None
+        )
+        wholesale_by_line, wholesale_by_name = _pdf_build_wholesale_lookup(
+            wholesale_rows, wholesale_header_layout
+        )
 
         retail_max_cols = 0
         for row in retail_rows:
@@ -2588,23 +2685,19 @@ def api_pdf_merge_retail_wholesale_sheet():
         ws.title = 'Розница+Опт'
         ws.append(header_cells)
 
-        wholesale_col_index = 5  # 6-я колонка в терминах пользователя
-        wholesale_data_row_offset = 1  # пропускаем строку-заголовок в оптовой таблице
-        for i, retail_row in enumerate(retail_rows):
+        for retail_row in retail_rows:
             row_out = list(retail_row) + [''] * max(0, retail_max_cols - len(retail_row))
             row_out = row_out[:retail_max_cols]
 
-            wholesale_src_val = ''
-            w_idx = i + wholesale_data_row_offset
-            if w_idx < len(wholesale_rows):
-                wrow = wholesale_rows[w_idx] or []
-                if wholesale_col_index < len(wrow):
-                    wholesale_src_val = wrow[wholesale_col_index]
-            wholesale_num = _to_float_ru(wholesale_src_val)
-            if wholesale_num is not None:
-                row_out[6] = round(wholesale_num * 1.2, 4)
-            else:
-                row_out[6] = ''
+            retail_layout = _pdf_table_layout_for_row(retail_row, 'retail', retail_header_layout)
+            if retail_layout is None:
+                retail_layout = _pdf_detect_supplier_pricelist_row_layout(retail_row, 'retail')
+            wholesale_num = None
+            if _pdf_is_supplier_pricelist_layout(retail_layout):
+                wholesale_num = _pdf_match_wholesale_for_retail(
+                    retail_row, retail_layout, wholesale_by_line, wholesale_by_name
+                )
+            row_out[6] = wholesale_num if wholesale_num is not None else ''
 
             ws.append(row_out)
 
@@ -2668,7 +2761,9 @@ def api_pdf_import_dual_materials():
 
         retail_header_layout = _pdf_detect_header_layout(retail_rows, 'retail')
         wholesale_header_layout = _pdf_detect_header_layout(wholesale_rows, 'wholesale') if wholesale_rows else None
-        wholesale_data_row_offset = 1
+        wholesale_by_line, wholesale_by_name = _pdf_build_wholesale_lookup(
+            wholesale_rows, wholesale_header_layout
+        )
 
         catalog_items = fetch_all(
             "SELECT id, name, article, brand, category, item_type, retail_price, purchase_price, wholesale_price FROM catalog_materials WHERE user_id = ?",
@@ -2681,7 +2776,7 @@ def api_pdf_import_dual_materials():
                 catalog_by_norm_name[key] = it
 
         materials = []
-        for i, row in enumerate(retail_rows):
+        for row in retail_rows:
             if not row or all(not str(c or '').strip() for c in row):
                 continue
             row_text = ' '.join(str(cell or '') for cell in row).strip()
@@ -2691,10 +2786,11 @@ def api_pdf_import_dual_materials():
                 continue
 
             retail_layout = _pdf_table_layout_for_row(row, 'retail', retail_header_layout)
-            if retail_layout:
-                name = str(row[retail_layout['name_idx']] or '').strip()
-            else:
-                name = _pdf_row_product_title(row_text)
+            if retail_layout is None:
+                retail_layout = _pdf_detect_supplier_pricelist_row_layout(row, 'retail')
+            if not _pdf_is_supplier_pricelist_layout(retail_layout):
+                continue
+            name = str(row[int(retail_layout['name_idx'])] or '').strip()
             if not name or len(name) < 3:
                 continue
 
@@ -2729,30 +2825,9 @@ def api_pdf_import_dual_materials():
             if retail_price is None:
                 retail_price = _pdf_extract_pdf_retail_unit_price(row, False, retail_layout)
 
-            wholesale_price = None
-            w_idx = i + wholesale_data_row_offset
-            if w_idx < len(wholesale_rows):
-                wrow = wholesale_rows[w_idx] or []
-                w_layout = _pdf_table_layout_for_row(wrow, 'wholesale', wholesale_header_layout)
-                if w_layout is None:
-                    w_layout = _pdf_detect_supplier_pricelist_row_layout(wrow)
-                wholesale_price = _pdf_extract_wholesale_unit_supplier(wrow, w_layout)
-                if wholesale_price is None and w_layout and w_layout.get('retail_idx') is not None:
-                    try:
-                        ri = int(w_layout['retail_idx'])
-                        if 0 <= ri < len(wrow):
-                            wholesale_price = _to_float_ru(wrow[ri])
-                    except (TypeError, ValueError):
-                        pass
-                if wholesale_price is None and len(wrow) > 5:
-                    wholesale_price = _to_float_ru(wrow[5])
-                if (
-                    wholesale_price is not None
-                    and not _pdf_is_supplier_pricelist_layout(w_layout)
-                ):
-                    wholesale_price = round(
-                        float(wholesale_price) * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4
-                    )
+            wholesale_price = _pdf_match_wholesale_for_retail(
+                row, retail_layout, wholesale_by_line, wholesale_by_name
+            )
 
             retail_price = float(retail_price or 0)
             wholesale_price = float(wholesale_price or 0)
