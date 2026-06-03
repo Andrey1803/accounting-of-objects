@@ -1702,6 +1702,47 @@ def _normalize_unit_purchase_price(purchase, retail_unit, qty=1.0):
 _ESTIMATE_UNITS = frozenset({'шт', 'м', 'м²', 'м³', 'кг', 'т', 'л', 'компл', 'усл', 'ч'})
 
 
+def _estimate_match_material_items(estimate_items, pdf_name, retail_price=None):
+    """Строки сметы, соответствующие позиции из PDF (имя / фрагмент / розница)."""
+    keys = []
+    if pdf_name:
+        keys.append(_pdf_normalize_name_for_index(pdf_name))
+    keys = [k for k in keys if k]
+    if not keys and retail_price is None:
+        return []
+    try:
+        fr = float(retail_price) if retail_price is not None else None
+    except (TypeError, ValueError):
+        fr = None
+    out = []
+    seen = set()
+    for it in estimate_items or []:
+        if (it.get('section') or 'material') != 'material':
+            continue
+        iid = it.get('id')
+        if iid in seen:
+            continue
+        n = _pdf_normalize_name_for_index(it.get('name') or '')
+        hit = False
+        for k in keys:
+            if not k:
+                continue
+            if n == k or (len(k) >= 8 and k in n) or (len(n) >= 8 and n in k):
+                hit = True
+                break
+        if not hit and fr is not None and fr > 0:
+            try:
+                pr = float(it.get('price') or 0)
+            except (TypeError, ValueError):
+                pr = 0
+            if pr > 0 and abs(fr - pr) <= max(0.05, 0.01 * pr):
+                hit = True
+        if hit:
+            seen.add(iid)
+            out.append(it)
+    return out
+
+
 def _repair_estimate_item_quantity(it):
     """
     Старый импорт PDF иногда писал в quantity ту же цифру, что в price.
@@ -2228,11 +2269,12 @@ def api_parse_pdf():
                 )
                 if ambiguous:
                     conf_pct = round(min(conf_pct * 0.88, 100), 1)
-                file_purchase = (
-                    _pdf_purchase_for_file_retail(pdf_retail_unit, best_match, qty=qty)
-                    if pdf_retail_unit is not None
-                    else None
-                )
+                # Розница из PDF не содержит закуп; не масштабируем из каталога (давало 8.352 вместо 53.38).
+                file_purchase = None
+                if import_mode != 'retail' and pdf_retail_unit is not None:
+                    file_purchase = _pdf_purchase_for_file_retail(
+                        pdf_retail_unit, best_match, qty=qty
+                    )
                 matched.append({
                     'row': row,
                     'row_text': row_text,
@@ -2691,13 +2733,26 @@ def api_pdf_import_dual_materials():
             w_idx = i + wholesale_data_row_offset
             if w_idx < len(wholesale_rows):
                 wrow = wholesale_rows[w_idx] or []
-                # Для режима "2 PDF" берем опт строго из колонки цены (без эвристик),
-                # чтобы не перепутать с колонкой количества.
-                wholesale_src_idx = 5  # 6-я колонка (как согласовано)
-                src = wrow[wholesale_src_idx] if len(wrow) > wholesale_src_idx else None
-                p = _to_float_ru(src)
-                if p is not None:
-                    wholesale_price = round(p * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4)
+                w_layout = _pdf_table_layout_for_row(wrow, 'wholesale', wholesale_header_layout)
+                if w_layout is None:
+                    w_layout = _pdf_detect_supplier_pricelist_row_layout(wrow)
+                wholesale_price = _pdf_extract_wholesale_unit_supplier(wrow, w_layout)
+                if wholesale_price is None and w_layout and w_layout.get('retail_idx') is not None:
+                    try:
+                        ri = int(w_layout['retail_idx'])
+                        if 0 <= ri < len(wrow):
+                            wholesale_price = _to_float_ru(wrow[ri])
+                    except (TypeError, ValueError):
+                        pass
+                if wholesale_price is None and len(wrow) > 5:
+                    wholesale_price = _to_float_ru(wrow[5])
+                if (
+                    wholesale_price is not None
+                    and not _pdf_is_supplier_pricelist_layout(w_layout)
+                ):
+                    wholesale_price = round(
+                        float(wholesale_price) * _PDF_WHOLESALE_EX_VAT_TO_WITH_VAT, 4
+                    )
 
             retail_price = float(retail_price or 0)
             wholesale_price = float(wholesale_price or 0)
@@ -2720,6 +2775,15 @@ def api_pdf_import_dual_materials():
         added_to_catalog = 0
         updated_in_catalog = 0
         added_to_estimate = 0
+        updated_in_estimate = 0
+
+        estimate_items = []
+        if estimate_id is not None:
+            estimate_items = fetch_all(
+                """SELECT id, section, name, unit, quantity, price, purchase_price, wholesale_price
+                   FROM estimate_items WHERE estimate_id = ?""",
+                (estimate_id,),
+            )
 
         for m in materials:
             norm_key = _pdf_normalize_name_for_index(m['name'])
@@ -2748,13 +2812,54 @@ def api_pdf_import_dual_materials():
             if estimate_id is not None:
                 total = m['retail_price'] * m['qty']
                 profit = (m['retail_price'] - m['wholesale_price']) * m['qty']
-                execute(
-                    """INSERT INTO estimate_items
-                       (estimate_id, section, name, unit, quantity, price_type, price, purchase_price, wholesale_price, total, material_profit, sort_order)
-                       VALUES (?, 'material', ?, ?, ?, 'retail', ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order),0)+1 FROM estimate_items WHERE estimate_id=?))""",
-                    (estimate_id, m['name'], m['unit'], m['qty'], m['retail_price'], m['wholesale_price'], m['wholesale_price'], total, profit, estimate_id),
+                matches = _estimate_match_material_items(
+                    estimate_items, m['name'], m['retail_price']
                 )
-                added_to_estimate += 1
+                if matches:
+                    for it in matches:
+                        pu = _normalize_unit_purchase_price(
+                            m['wholesale_price'], m['retail_price'], qty=m['qty']
+                        )
+                        execute(
+                            """UPDATE estimate_items
+                               SET unit=?, quantity=?, price=?, purchase_price=?, wholesale_price=?,
+                                   total=?, material_profit=?
+                               WHERE id=? AND estimate_id=?""",
+                            (
+                                m['unit'],
+                                m['qty'],
+                                m['retail_price'],
+                                pu,
+                                m['wholesale_price'],
+                                total,
+                                profit,
+                                it['id'],
+                                estimate_id,
+                            ),
+                        )
+                        it['price'] = m['retail_price']
+                        it['purchase_price'] = pu
+                        it['quantity'] = m['qty']
+                    updated_in_estimate += len(matches)
+                else:
+                    execute(
+                        """INSERT INTO estimate_items
+                           (estimate_id, section, name, unit, quantity, price_type, price, purchase_price, wholesale_price, total, material_profit, sort_order)
+                           VALUES (?, 'material', ?, ?, ?, 'retail', ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order),0)+1 FROM estimate_items WHERE estimate_id=?))""",
+                        (
+                            estimate_id,
+                            m['name'],
+                            m['unit'],
+                            m['qty'],
+                            m['retail_price'],
+                            m['wholesale_price'],
+                            m['wholesale_price'],
+                            total,
+                            profit,
+                            estimate_id,
+                        ),
+                    )
+                    added_to_estimate += 1
 
         return jsonify({
             "ok": True,
@@ -2762,6 +2867,7 @@ def api_pdf_import_dual_materials():
             "added_to_catalog": added_to_catalog,
             "updated_in_catalog": updated_in_catalog,
             "added_to_estimate": added_to_estimate,
+            "updated_in_estimate": updated_in_estimate,
             "estimate_id": estimate_id,
         })
     except Exception as e:

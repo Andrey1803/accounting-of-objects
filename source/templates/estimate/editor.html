@@ -2654,6 +2654,7 @@
                     statusEl.textContent = 'Готово: материалов ' + (data.materials_count || 0)
                         + ', добавлено в базу ' + (data.added_to_catalog || 0)
                         + ', обновлено в базе ' + (data.updated_in_catalog || 0)
+                        + ', обновлено в смете ' + (data.updated_in_estimate || 0)
                         + ', добавлено в смету ' + (data.added_to_estimate || 0) + '.';
                 }
 
@@ -2801,9 +2802,9 @@
 
             if (matched.length > 0) {
                 html += '<p class="pdf-import-hintline">Галочка по умолчанию при уверенности ≥75%. ' + (importMode === 'retail'
-                    ? 'В смету подставляется <strong>розничная цена из PDF</strong>.'
-                    : 'В смете обновляется закуп по совпавшим материалам или добавляется строка; в каталог — <strong>закуп с НДС 20%</strong>, розница в каталоге не меняется.'
-                    ) + '</p>';
+                    ? 'В <strong>существующих</strong> строках сметы обновляется розница из PDF; закуп не трогаем. Новая строка — только если позиции ещё нет.'
+                    : 'В существующих строках обновляется <strong>закуп из счёта</strong> (колонка «Цена»). Дубликаты не создаём.'
+                    ) + ' Для обоих PDF сразу удобнее кнопка «Импортировать в материалы» ниже.</p>';
                 html += '<div class="pdf-import-section-title">Совпали с каталогом</div>';
                 html += '<div class="pdf-import-table-wrap"><table class="pdf-import-table">';
                 html += '<tr><th style="width:36px;">✓</th><th>Строка в PDF</th><th>Каталог</th><th style="text-align:center;">Кол-во</th><th style="text-align:center;">Ед.</th><th style="text-align:right;">Цена</th><th style="text-align:center;">%</th></tr>';
@@ -2961,17 +2962,27 @@
                                         description: ''
                                     })
                                 });
-                                await doAddFromCatalog({
-                                    name: m.item.name,
-                                    unit: m.unit || 'шт',
-                                    retail_price: useRetail,
-                                    purchase_price: usePurchase
-                                }, qty, 'material');
+                                var retailMatches = findEstimateRowsForPdfMatch(m);
+                                if (retailMatches.length) {
+                                    for (var ri = 0; ri < retailMatches.length; ri++) {
+                                        await updateItem(retailMatches[ri].id, 'price', useRetail);
+                                        if (Math.abs((parseFloat(retailMatches[ri].quantity) || 1) - qty) > 0.001) {
+                                            await updateItem(retailMatches[ri].id, 'quantity', qty);
+                                        }
+                                    }
+                                } else {
+                                    await doAddFromCatalog({
+                                        name: m.item.name,
+                                        unit: m.unit || 'шт',
+                                        retail_price: useRetail,
+                                        purchase_price: usePurchase
+                                    }, qty, 'material');
+                                }
                                 added++;
                             } else {
-                                var useWholesaleWithVat = (m.file_wholesale_unit != null && m.file_wholesale_unit > 0)
-                                    ? Number(m.file_wholesale_unit)
-                                    : (Number(m.item.purchase_price) || 0);
+                                var useWholesaleWithVat = (m.file_wholesale_unit != null && Number(m.file_wholesale_unit) > 0)
+                                    ? Number(m.file_wholesale_unit) : 0;
+                                if (useWholesaleWithVat <= 0) continue;
                                 var updBody = {
                                     name: m.item.name,
                                     unit: m.unit || 'шт',
