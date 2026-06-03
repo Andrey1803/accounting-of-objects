@@ -182,6 +182,7 @@ def _pdf_is_non_product_row(name, row_text=''):
 
 def _pdf_substantial_table_rows(all_rows, import_mode='retail'):
     """Есть ли в PDF нормальная таблица сметы (заголовок + несколько строк данных)."""
+    all_rows = _pdf_filter_table_rows(all_rows)
     if not all_rows:
         return False
     header = _pdf_detect_header_layout(all_rows, import_mode)
@@ -489,6 +490,102 @@ def _pdf_header_norm(s):
     return t
 
 
+def _pdf_row_has_mega_cell(row, max_len=280):
+    """pdfplumber иногда склеивает всю страницу в одну ячейку — ломает заголовок."""
+    if not row:
+        return False
+    for cell in row:
+        if cell is not None and len(str(cell).strip()) > max_len:
+            return True
+    return False
+
+
+def _pdf_filter_table_rows(rows):
+    """Убрать «склеенные» строки и пустые."""
+    out = []
+    for row in rows or []:
+        if not row or not any(cell for cell in row if cell):
+            continue
+        if _pdf_row_has_mega_cell(row):
+            continue
+        out.append(row)
+    return out
+
+
+def _pdf_detect_supplier_pricelist_row_layout(row, import_mode='retail'):
+    """
+    Счёт / прайс РРЦ (№ 6005 и аналоги): пустая col0, № | наименование | кол-во | ед. | цена | сумма.
+    """
+    if not row or len(row) < 7:
+        return None
+    cells = [str(c or '').strip() for c in row]
+    if _pdf_row_has_mega_cell(cells):
+        return None
+    num_cell = cells[1] if len(cells) > 1 else ''
+    if not re.fullmatch(r'\d{1,4}', num_cell or ''):
+        return None
+    name_cell = (cells[2] if len(cells) > 2 else '').strip()
+    if len(name_cell) < 3:
+        return None
+    if not _pdf_cell_is_unit(cells[4] if len(cells) > 4 else ''):
+        return None
+    qty_hint = _pdf_parse_qty_cell(cells[3] if len(cells) > 3 else '')
+    list_price = _pdf_parse_money_cell(cells[5] if len(cells) > 5 else '')
+    if qty_hint is None or list_price is None:
+        return None
+    retail_idx = 5
+    purchase_idx = None
+    purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(
+        cells,
+        retail_idx,
+        qty_hint,
+        list_price,
+        for_wholesale=(str(import_mode).lower() == 'wholesale'),
+    )
+    return {
+        'name_idx': 2,
+        'unit_idx': 4,
+        'qty_idx': 3,
+        'retail_idx': retail_idx,
+        'purchase_idx': purchase_idx,
+        'purchase_from_tail': purchase_hint,
+        'line_sum_from_tail': sum_hint,
+    }
+
+
+def _pdf_infer_header_layout_from_data(rows, import_mode='retail'):
+    """Если строка заголовков не распознана — берём раскладку с первой нормальной строки данных."""
+    hits = 0
+    sample = None
+    for row in rows or []:
+        layout = _pdf_detect_supplier_pricelist_row_layout(row, import_mode)
+        if layout is None:
+            continue
+        hits += 1
+        if sample is None:
+            sample = layout
+        if hits >= 2:
+            break
+    if not sample:
+        return None
+    return {
+        'name_idx': sample['name_idx'],
+        'unit_idx': sample['unit_idx'],
+        'qty_idx': sample['qty_idx'],
+        'retail_idx': sample['retail_idx'],
+        'purchase_idx': sample.get('purchase_idx'),
+        'header_cells': [
+            '№',
+            'Наименование',
+            'Кол-во',
+            'Ед. изм.',
+            'Цена' if import_mode != 'wholesale' else 'Цена опт',
+            'Стоимость',
+        ],
+        'layout_source': 'supplier_pricelist',
+    }
+
+
 def _pdf_detect_header_layout(rows, import_mode='retail'):
     """
     Один раз на файл: определить индексы колонок по строке заголовков.
@@ -496,10 +593,11 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
     """
     if not rows:
         return None
+    rows = _pdf_filter_table_rows(rows)
     limit = min(len(rows), 80)
     for row in rows[:limit]:
         cells = [str(c or '').strip() for c in row]
-        if len(cells) < 4:
+        if len(cells) < 4 or _pdf_row_has_mega_cell(cells):
             continue
         n = [_pdf_header_norm(c) for c in cells]
         name_idx = unit_idx = qty_idx = retail_idx = purchase_idx = None
@@ -508,21 +606,25 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
                 continue
             if name_idx is None and (
                 'наимен' in h
-                or h in ('товар',)
+                or 'товар' in h
+                or 'прайс' in h
                 or 'материал' in h
                 or 'номенклат' in h
             ):
                 name_idx = i
-            if unit_idx is None and (h.startswith('ед') or 'изм' in h):
+            if unit_idx is None and (h.startswith('ед') or 'изм' in h or h == 'ед'):
                 unit_idx = i
             if qty_idx is None and ('колво' in h or 'кол во' in h or 'колич' in h):
                 qty_idx = i
-            if retail_idx is None and ('розн' in h or 'ррц' in h or h == 'цена'):
+            if retail_idx is None and (
+                'розн' in h or 'ррц' in h or h == 'цена' or 'ценопт' in h or h == 'ценаопт'
+            ):
                 retail_idx = i
             if purchase_idx is None and ('закуп' in h or 'опт' in h or 'себестоим' in h):
                 purchase_idx = i
+            if name_idx is None and h in ('n', 'no', 'пп', 'п/п') and i + 1 < len(cells):
+                name_idx = i + 1
 
-        # Иногда «цена» одна, но есть явный «закуп/опт»: считаем её розницей.
         if name_idx is None or qty_idx is None or retail_idx is None:
             continue
         return {
@@ -533,7 +635,7 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
             'purchase_idx': purchase_idx,
             'header_cells': [str(c or '').strip() for c in cells],
         }
-    return None
+    return _pdf_infer_header_layout_from_data(rows, import_mode)
 
 
 def _pdf_parse_manual_header_layout(req):
@@ -763,7 +865,11 @@ def _pdf_adjust_row_layout(row, layout):
 
 def _pdf_table_layout_for_row(row, import_mode, header_layout):
     """Раскладка колонок: полная проверка строки или fallback по header_layout файла."""
-    layout = _pdf_detect_table_material_row(row, import_mode, header_layout)
+    if _pdf_row_has_mega_cell(row):
+        return None
+    layout = _pdf_detect_supplier_pricelist_row_layout(row, import_mode)
+    if layout is None:
+        layout = _pdf_detect_table_material_row(row, import_mode, header_layout)
     if layout is None:
         layout = _pdf_table_layout_header_fallback(row, import_mode, header_layout)
     if layout is not None:
@@ -1929,6 +2035,8 @@ def api_parse_pdf():
 
         pdf_file.close()
 
+        all_rows = _pdf_filter_table_rows(all_rows)
+
         mode_raw = (request.form.get('mode') or request.args.get('mode') or 'retail').strip().lower()
         import_mode = 'wholesale' if mode_raw in ('wholesale', 'opt', 'purchase', 'cost') else 'retail'
 
@@ -2233,6 +2341,8 @@ def api_pdf_to_sheet():
                         all_rows.append(parsed)
         pdf_file.close()
 
+        all_rows = _pdf_filter_table_rows(all_rows)
+
         full_text = '\n'.join(full_text_chunks)
         cart_rows = _pdf_parse_cart_ready_format(full_text)
         from_cart_pdf = len(cart_rows) >= 1
@@ -2323,6 +2433,7 @@ def _pdf_extract_rows_for_sheet(uploaded_file):
                 if parsed:
                     all_rows.append(parsed)
     pdf_file.close()
+    all_rows = _pdf_filter_table_rows(all_rows)
     full_text = '\n'.join(full_text_chunks)
     cart_rows = _pdf_parse_cart_ready_format(full_text)
     if len(cart_rows) >= 1:
