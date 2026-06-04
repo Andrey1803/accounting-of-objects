@@ -74,6 +74,32 @@
         .status-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; margin: 3px; }
         .st-Запланирован, .st-Ожидает-старта { background: #FFEB9C; color: #666; } .st-В-работе { background: #BDD7EE; color: #1E5A8E; }
         .st-Приостановлен { background: #FFC7CE; color: #9C0006; } .st-Завершён, .st-Выполнен { background: #C6EFCE; color: #006100; } .st-Оплачен, .st-Закрыт { background: #E2EFDA; color: #333; }
+        .viz-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+        @media (max-width: 900px) { .viz-row { grid-template-columns: 1fr; } }
+        .viz-card { background: #fff; border: 1px solid #e3e8ef; border-radius: 12px; padding: 1rem 1.1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+        .viz-card h3 { margin: 0 0 0.75rem; font-size: 0.95rem; color: #333; }
+        .donut-wrap { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+        .donut-legend { font-size: 12px; line-height: 1.65; flex: 1; min-width: 140px; }
+        .donut-legend .leg-row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+        .donut-legend .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .debt-panel { grid-template-columns: auto 1fr minmax(180px, 240px); }
+        @media (max-width: 960px) { .debt-panel { grid-template-columns: 1fr; } }
+        .compare-bars { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #eee; }
+        .compare-bar-row { display: grid; grid-template-columns: 100px 1fr 72px; align-items: center; gap: 8px; margin: 10px 0; font-size: 12px; }
+        .compare-bar-track { height: 18px; background: #eceff1; border-radius: 9px; overflow: hidden; position: relative; }
+        .compare-bar-fill { height: 100%; border-radius: 9px; min-width: 2px; transition: width 0.35s ease; }
+        .compare-bar-fill.prev { background: #90a4ae; opacity: 0.85; position: absolute; left: 0; top: 0; }
+        .compare-bar-fill.cur { background: linear-gradient(90deg, #2E75B6, #5b9bd5); position: relative; z-index: 1; }
+        .compare-bar-fill.profit-neg { background: linear-gradient(90deg, #c62828, #e57373); }
+        .compare-bar-fill.profit-pos { background: linear-gradient(90deg, #2e7d32, #66bb6a); }
+        .trend-badge { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; font-size: 0.82rem; padding: 2px 6px; border-radius: 6px; }
+        .trend-good { color: #1b5e20; background: #e8f5e9; }
+        .trend-bad { color: #b71c1c; background: #ffebee; }
+        .trend-neutral { color: #555; background: #f5f5f5; }
+        .card.card-warn { border-left: 4px solid #c62828; background: #fffbfb; }
+        .status-viz { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; }
+        .status-badges-wrap { flex: 1; min-width: 200px; }
+        .metrics { grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); }
     </style>
 </head>
 <body>
@@ -96,8 +122,11 @@
             <div id="month-compare"></div>
         </div>
         <div class="section">
-            <h2>Статусы</h2>
-            <div id="statuses"></div>
+            <h2>Статусы объектов</h2>
+            <div class="status-viz">
+                <div id="status-donut" class="viz-card" style="flex:0 0 auto;min-width:200px;box-shadow:none;border:none;padding:0;"></div>
+                <div class="status-badges-wrap" id="statuses"></div>
+            </div>
         </div>
         <div class="section">
             <div class="chart-section-head">
@@ -203,15 +232,15 @@
                 var d = row.debt || 0;
                 var a = row.advance || 0;
                 if (chartMode === 'revenue' && r > maxV) maxV = r;
-                else if (chartMode === 'profit' && p > maxV) maxV = p;
+                else if (chartMode === 'profit' && Math.abs(p) > maxV) maxV = Math.abs(p);
                 else if (chartMode === 'expenses' && e > maxV) maxV = e;
                 else if (chartMode === 'debt' && d > maxV) maxV = d;
                 else if (chartMode === 'cashflow') {
                     if (a > maxV) maxV = a;
                     if (d > maxV) maxV = d;
-                } else if (chartMode === 'both' || chartMode === 'trend') {
+                }                 else if (chartMode === 'both' || chartMode === 'trend') {
                     if (r > maxV) maxV = r;
-                    if (p > maxV) maxV = p;
+                    if (Math.abs(p) > maxV) maxV = Math.abs(p);
                 }
             }
 
@@ -335,8 +364,9 @@
                     b1.style.height = Math.max((rev / maxV) * 180, 3) + 'px';
                     b1.title = 'Выручка: ' + money(rev);
                     var b2 = document.createElement('div');
-                    b2.className = 'bar bar-p';
-                    b2.style.height = Math.max((prof / maxV) * 180, 3) + 'px';
+                    b2.className = 'bar';
+                    b2.style.background = prof >= 0 ? '#4CAF50' : '#e53935';
+                    b2.style.height = Math.max((Math.abs(prof) / maxV) * 180, 3) + 'px';
                     b2.title = 'Прибыль: ' + money(prof);
                     bars.appendChild(b1);
                     bars.appendChild(b2);
@@ -348,8 +378,9 @@
                     bars.appendChild(br);
                 } else if (chartMode === 'profit') {
                     var bp = document.createElement('div');
-                    bp.className = 'bar bar-p bar-wide';
-                    bp.style.height = Math.max((prof / maxV) * 180, 3) + 'px';
+                    bp.className = 'bar bar-wide';
+                    bp.style.background = prof >= 0 ? '#4CAF50' : '#e53935';
+                    bp.style.height = Math.max((Math.abs(prof) / maxV) * 180, 3) + 'px';
                     bp.title = money(prof);
                     bars.appendChild(bp);
                 } else if (chartMode === 'expenses') {
@@ -405,6 +436,101 @@
             return Number(v) >= 0 ? '#2e7d32' : '#c62828';
         }
 
+        var STATUS_COLORS = {
+            'В работе': '#2E75B6',
+            'Выполнен': '#43a047',
+            'Выполнено': '#43a047',
+            'Закрыт': '#78909c',
+            'Ожидает старта': '#ffb300',
+            'Запланирован': '#ffb300',
+            'Приостановлен': '#e53935',
+            'Завершён': '#66bb6a',
+            'Оплачен': '#8d6e63'
+        };
+
+        function statusColor(name) {
+            return STATUS_COLORS[name] || '#9e9e9e';
+        }
+
+        function renderDonut(containerId, segments, centerHtml, size) {
+            var el = document.getElementById(containerId);
+            if (!el) return;
+            size = size || 128;
+            var r = (size - 24) / 2;
+            var cx = size / 2;
+            var cy = size / 2;
+            var stroke = 14;
+            var circ = 2 * Math.PI * r;
+            var total = 0;
+            for (var i = 0; i < segments.length; i++) total += Math.max(0, Number(segments[i].value) || 0);
+            if (total <= 0) {
+                el.innerHTML = '<div style="color:#999;font-size:12px;padding:1rem;">Нет данных</div>';
+                return;
+            }
+            var svg = '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" class="donut-svg">';
+            var offset = 0;
+            for (var j = 0; j < segments.length; j++) {
+                var v = Math.max(0, Number(segments[j].value) || 0);
+                if (v <= 0) continue;
+                var frac = v / total;
+                var dash = frac * circ;
+                var gap = circ - dash;
+                svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="' + segments[j].color + '" stroke-width="' + stroke + '" ' +
+                    'stroke-dasharray="' + dash.toFixed(2) + ' ' + gap.toFixed(2) + '" stroke-dashoffset="' + (-offset).toFixed(2) + '" transform="rotate(-90 ' + cx + ' ' + cy + ')">' +
+                    '<title>' + esc(segments[j].label) + ': ' + esc(segments[j].text || String(v)) + '</title></circle>';
+                offset += dash;
+            }
+            svg += '<text x="' + cx + '" y="' + (cy - 4) + '" text-anchor="middle" font-size="11" fill="#333" font-weight="600">' + (centerHtml.title || '') + '</text>';
+            svg += '<text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" font-size="10" fill="#666">' + (centerHtml.sub || '') + '</text>';
+            svg += '</svg>';
+            var leg = '';
+            for (var k = 0; k < segments.length; k++) {
+                if ((Number(segments[k].value) || 0) <= 0) continue;
+                var pct = ((Number(segments[k].value) / total) * 100).toFixed(1);
+                leg += '<div class="leg-row"><span class="dot" style="background:' + segments[k].color + '"></span><span>' + esc(segments[k].label) + ' <strong>' + pct + '%</strong>' +
+                    (segments[k].text ? ' · ' + esc(segments[k].text) : '') + '</span></div>';
+            }
+            el.innerHTML = '<div class="donut-wrap">' + svg + '<div class="donut-legend">' + leg + '</div></div>';
+        }
+
+        function trendBadge(cur, prev, higherIsBetter) {
+            var x = Number(cur) || 0, y = Number(prev) || 0;
+            var pct;
+            if (y === 0) pct = x === 0 ? 0 : 100;
+            else pct = ((x - y) / Math.abs(y)) * 100;
+            var arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '•');
+            var good = higherIsBetter ? pct >= 0 : pct <= 0;
+            var cls = pct === 0 ? 'trend-neutral' : (good ? 'trend-good' : 'trend-bad');
+            var txt = (pct >= 0 ? '+' : '') + pct.toFixed(0) + '%';
+            return '<span class="trend-badge ' + cls + '">' + arrow + ' ' + txt + '</span>';
+        }
+
+        function renderCompareBars(mc) {
+            var cur = mc.current || {};
+            var prev = mc.previous || {};
+            var rows = [
+                { key: 'revenue', label: 'Выручка', higher: true, fmt: money },
+                { key: 'profit', label: 'Прибыль', higher: true, fmt: money, profit: true },
+                { key: 'objects', label: 'Объектов', higher: true, fmt: function (v) { return String(Math.round(v)); } }
+            ];
+            var html = '<div class="compare-bars"><div style="font-size:0.8rem;color:#666;margin-bottom:6px;">Текущий месяц (синий) vs прошлый (серый)</div>';
+            for (var i = 0; i < rows.length; i++) {
+                var rk = rows[i].key;
+                var cv = Number(cur[rk]) || 0;
+                var pv = Number(prev[rk]) || 0;
+                var max = Math.max(cv, pv, 1);
+                var cw = (cv / max) * 100;
+                var pw = (pv / max) * 100;
+                var pCls = rows[i].profit ? (cv >= 0 ? 'profit-pos' : 'profit-neg') : '';
+                html += '<div class="compare-bar-row"><span>' + esc(rows[i].label) + '</span><div class="compare-bar-track">' +
+                    '<div class="compare-bar-fill prev" style="width:' + pw + '%" title="Прошлый: ' + esc(rows[i].fmt(pv)) + '"></div>' +
+                    '<div class="compare-bar-fill cur ' + pCls + '" style="width:' + cw + '%" title="Текущий: ' + esc(rows[i].fmt(cv)) + '"></div></div>' +
+                    '<span>' + trendBadge(cv, pv, rows[i].higher) + '</span></div>';
+            }
+            html += '</div>';
+            return html;
+        }
+
         function renderDebtPanel(s) {
             var panel = document.getElementById('debt-panel');
             if (!panel || !s) return;
@@ -419,7 +545,9 @@
                 ? 'Авансы на ' + esc(money(adv)) + ' — больше начисленной выручки на ' + esc(money(over)) + ' (предоплата, закрытые объекты)'
                 : 'Авансы по всем объектам: ' + esc(money(adv));
             var prof = Number(s.total_profit) || 0;
+            var paidAmt = Math.max(0, rev - debt);
             panel.innerHTML =
+                '<div id="debt-donut-slot"></div>' +
                 '<div><div class="debt-big">' + esc(money(debt)) + '</div>' +
                 '<div class="debt-sub">Общая задолженность · ' + (s.debt_objects || 0) + ' объект(ов)</div>' +
                 '<div class="collection-track" title="От начисленной выручки ' + esc(money(rev)) + '">' +
@@ -429,14 +557,37 @@
                 '<div style="font-size:12px;color:#555;">По выручке: оплачено <strong style="color:#3949ab">' + paidPct + '%</strong>, в долге <strong style="color:#c62828">' + (rev > 0 ? ((debt / rev) * 100).toFixed(1) : '0') + '%</strong></div>' +
                 '<div style="font-size:11px;color:#777;margin-top:4px;">' + advNote + '</div></div>' +
                 '<div><div style="font-size:0.9rem;color:#444;line-height:1.55">' +
-                '<div>Выручка (всего по базе): <strong>' + esc(money(rev)) + '</strong></div>' +
+                '<div>Выручка (всего): <strong>' + esc(money(rev)) + '</strong></div>' +
                 '<div>Расходы: <strong style="color:#e65100">' + esc(money(s.total_expenses)) + '</strong></div>' +
                 '<div>Прибыль: <strong style="color:' + profitColorClass(prof) + '">' + esc(money(prof)) + '</strong> (' + (s.margin_pct || 0) + '%)</div>' +
                 '<div>Прибыль материалов: <strong>' + esc(money(s.total_material_profit)) + '</strong></div>' +
                 '</div></div>';
+            var slot = document.getElementById('debt-donut-slot');
+            if (slot && rev > 0) {
+                slot.id = 'debt-donut';
+                renderDonut('debt-donut', [
+                    { label: 'Оплачено (без долга)', value: paidAmt, color: '#5c6bc0', text: money(paidAmt) },
+                    { label: 'В долге', value: debt, color: '#e53935', text: money(debt) }
+                ], { title: moneyShort(debt), sub: 'долг' }, 120);
+            } else if (slot) {
+                slot.innerHTML = '';
+            }
         }
 
-        function renderMonthCompare(mc, portfolioDebt) {
+        function renderStatusDonut(statuses) {
+            var keys = Object.keys(statuses || {});
+            var segs = [];
+            for (var i = 0; i < keys.length; i++) {
+                var n = keys[i];
+                var cnt = Number(statuses[n]) || 0;
+                if (cnt > 0) segs.push({ label: n, value: cnt, color: statusColor(n), text: cnt + ' шт.' });
+            }
+            var total = 0;
+            for (var t = 0; t < segs.length; t++) total += segs[t].value;
+            renderDonut('status-donut', segs, { title: String(total), sub: 'объектов' }, 110);
+        }
+
+        function renderMonthCompare(mc, portfolioDebt, debtObjects) {
             var sec = document.getElementById('month-compare-section');
             var box = document.getElementById('month-compare');
             if (!sec || !box || !mc || !mc.current) { if (sec) sec.style.display = 'none'; return; }
@@ -445,28 +596,24 @@
             var prev = mc.previous || {};
             var curLbl = monthLabelRu(mc.current_month || '');
             var prevLbl = monthLabelRu(mc.previous_month || '');
-            function delta(a, b) {
-                var x = Number(a) || 0, y = Number(b) || 0;
-                if (y === 0) return x === 0 ? 'без изм.' : (x > 0 ? '+100%' : '0%');
-                var p = ((x - y) / Math.abs(y)) * 100;
-                return (p >= 0 ? '+' : '') + p.toFixed(0) + '%';
-            }
             var pDebt = Number(portfolioDebt) || Number(mc.portfolio_debt) || 0;
+            var nDebtObj = Number(debtObjects) || 0;
             box.innerHTML =
-                '<p style="font-size:0.85rem;color:#666;margin:0 0 0.5rem;">По объектам с датами работ в календарном месяце (не «всего по базе»).</p>' +
+                '<p style="font-size:0.85rem;color:#666;margin:0 0 0.5rem;">По объектам с датами работ в календарном месяце.</p>' +
                 '<div class="compare-row">' +
                 '<div class="compare-chip"><strong>Выручка</strong><span class="chip-month">' + esc(curLbl) + ' vs ' + esc(prevLbl) + '</span>' +
-                esc(money(cur.revenue)) + ' <span style="color:#666">(' + delta(cur.revenue, prev.revenue) + ')</span></div>' +
+                '<span style="font-weight:600">' + esc(money(cur.revenue)) + '</span> ' + trendBadge(cur.revenue, prev.revenue, true) + '</div>' +
                 '<div class="compare-chip"><strong>Прибыль</strong><span class="chip-month">' + esc(curLbl) + '</span>' +
-                '<span style="color:' + profitColorClass(cur.profit) + ';font-weight:600">' + esc(money(cur.profit)) + '</span> <span style="color:#666">(' + delta(cur.profit, prev.profit) + ')</span></div>' +
-                '<div class="compare-chip"><strong>Долг в месяце</strong><span class="chip-month">объекты ' + esc(curLbl) + '</span>' +
-                '<span style="color:#c62828;font-weight:600">' + esc(money(cur.debt)) + '</span> <span style="color:#666">(' + delta(cur.debt, prev.debt) + ')</span></div>' +
-                '<div class="compare-chip"><strong>Объектов</strong><span class="chip-month">с работами в ' + esc(curLbl) + '</span>' +
-                (cur.objects || 0) + ' <span style="color:#666">(' + delta(cur.objects, prev.objects) + ')</span></div>' +
+                '<span style="color:' + profitColorClass(cur.profit) + ';font-weight:600">' + esc(money(cur.profit)) + '</span> ' + trendBadge(cur.profit, prev.profit, true) + '</div>' +
+                '<div class="compare-chip"><strong>Долг в месяце</strong><span class="chip-month">' + esc(curLbl) + '</span>' +
+                '<span style="color:#c62828;font-weight:600">' + esc(money(cur.debt)) + '</span> ' + trendBadge(cur.debt, prev.debt, false) + '</div>' +
+                '<div class="compare-chip"><strong>Объектов</strong><span class="chip-month">работы в ' + esc(curLbl) + '</span>' +
+                '<span style="font-weight:600">' + (cur.objects || 0) + '</span> ' + trendBadge(cur.objects, prev.objects, true) + '</div>' +
                 '</div>' +
+                renderCompareBars(mc) +
                 '<div style="margin-top:0.65rem;font-size:0.88rem;padding:0.5rem 0.75rem;background:#fff8e1;border-radius:8px;">' +
                 '<strong>Задолженность всего по базе:</strong> <span style="color:#c62828;font-weight:600">' + esc(money(pDebt)) + '</span>' +
-                ' — не привязана к одному месяцу (5 объектов с долгом могут быть из других периодов).</div>';
+                ' · ' + nDebtObj + ' объект(ов) — могут относиться к разным периодам, не только к ' + esc(curLbl) + '.</div>';
         }
 
         function load() {
@@ -504,7 +651,7 @@
             var marginCls = margin >= 30 ? 'green' : (margin < 0 ? 'red' : 'orange');
 
             renderDebtPanel(s);
-            renderMonthCompare(data.month_comparison, totalDebt);
+            renderMonthCompare(data.month_comparison, totalDebt, s.debt_objects);
 
             var mDiv = document.getElementById('metrics');
             mDiv.innerHTML = '';
@@ -524,12 +671,13 @@
             for (var j = 0; j < items.length; j++) {
                 var it = items[j];
                 var card = document.createElement('div');
-                card.className = 'card';
+                card.className = 'card' + (it.lbl.indexOf('Прибыль (всего)') === 0 && totalProf < 0 ? ' card-warn' : '');
                 var hintHtml = it.hint ? '<div class="metrics-hint">' + esc(it.hint) + '</div>' : '';
                 card.innerHTML = '<h3>' + esc(it.lbl) + '</h3><div class="val ' + esc(it.cls) + '">' + it.val + '</div>' + hintHtml;
                 mDiv.appendChild(card);
             }
 
+            renderStatusDonut(statuses);
             var stDiv = document.getElementById('statuses');
             stDiv.innerHTML = '';
             var stKeys = Object.keys(statuses);
