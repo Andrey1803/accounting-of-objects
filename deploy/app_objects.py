@@ -798,14 +798,22 @@ def _backfill_object_client_links_once():
                     continue
                 by_name.setdefault(key, []).append(c)
 
-            # Объекты без client_id: ставим связь только если имя указывает на одного клиента.
+            # Объекты без client_id: привязка только если имя однозначно и ровно ОДИН объект
+            # с таким текстом «Заказчик» (иначе массово вешаем одного Жигалко/и т.п. на чужие объекты).
             wo_link = fetch_all(
                 "SELECT id, client FROM objects WHERE user_id = ? AND (client_id IS NULL OR client_id = 0) AND COALESCE(client, '') <> ''",
                 (uid,),
             )
+            text_obj_count = {}
+            for o in wo_link:
+                key = str(o.get('client') or '').strip().lower()
+                if key:
+                    text_obj_count[key] = text_obj_count.get(key, 0) + 1
             for o in wo_link:
                 key = str(o.get('client') or '').strip().lower()
                 if not key:
+                    continue
+                if text_obj_count.get(key, 0) != 1:
                     continue
                 variants = by_name.get(key) or []
                 if len(variants) == 1:
@@ -918,11 +926,12 @@ def _integration_find_or_create_client(
                 ex_addr = (r.get('address') or '').strip()
                 # Миграция "на лету": раньше имя могло записываться как "ФИО — Компания".
                 # Если пришёл нормальный контакт и видим старую склейку, заменяем на контакт.
+                # Не перезаписываем имя карточки при совпадении только телефона — иначе чужие
+                # объекты с тем же client_id визуально «становятся» другим заказчиком.
                 should_replace_name = (
                     not ex_name
                     or ex_name == '—'
                     or ('—' in ex_name and card_name and card_name != '—')
-                    or (card_name and card_name != '—' and ex_name != card_name)
                 )
                 new_name = card_name if should_replace_name else ex_name
                 new_phone = phone or ex_phone
@@ -1289,13 +1298,27 @@ def integration_create_object_from_taskmgr():
                 or advance_payload is not None
                 or advance_delta_payload is not None
             )
-            card_name = _integration_client_card_name(contact_in, company_in)
-            client_id, client_name = _integration_find_or_create_client(
-                target_user_id, card_name, phone, address, reuse_existing=True
-            )
+            contacts_changed = bool(contact_in or company_in or phone or address)
+            if contacts_changed:
+                card_name = _integration_client_card_name(contact_in, company_in)
+                client_id, client_name = _integration_find_or_create_client(
+                    target_user_id, card_name, phone, address, reuse_existing=reuse_client_card
+                )
+            else:
+                client_id = existing.get('client_id')
+                client_name = (existing.get('client') or '').strip()
+                if client_id:
+                    row_c = fetch_one(
+                        'SELECT name FROM clients WHERE id = ? AND user_id = ?',
+                        (client_id, target_user_id),
+                    )
+                    if row_c and row_c.get('name'):
+                        client_name = str(row_c['name']).strip()
             ex_client = (existing.get('client') or '').strip()
             ex_client_id = existing.get('client_id')
-            mismatch = (ex_client_id != client_id) or (ex_client != (client_name or '').strip())
+            mismatch = contacts_changed and (
+                (ex_client_id != client_id) or (ex_client != (client_name or '').strip())
+            )
             if not has_payload and not mismatch:
                 return jsonify({'ok': True, 'idempotent': True, 'object': existing}), 200
             name_new = (data.get('name') or '').strip() or (existing.get('name') or '')
@@ -2303,6 +2326,52 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
 # ============================
 # API: КЛИЕНТЫ
 # ============================
+@app.route('/api/clients/integrity', methods=['GET'])
+@login_required
+def clients_integrity_report():
+    """
+    Объекты с одним client_id — для поиска ошибочной массовой привязки заказчика.
+    """
+    objects = _fetch_objects_with_financials(current_user.id)
+    by_cid = {}
+    for obj in objects:
+        cid = obj.get('client_id')
+        try:
+            cid_int = int(cid) if cid not in (None, '', 0, '0') else None
+        except (TypeError, ValueError):
+            cid_int = None
+        if not cid_int:
+            continue
+        if cid_int not in by_cid:
+            by_cid[cid_int] = {
+                'client_id': cid_int,
+                'client_name': '',
+                'objects': [],
+                'total_revenue': 0.0,
+            }
+        by_cid[cid_int]['objects'].append({
+            'id': obj.get('id'),
+            'name': obj.get('name'),
+            'client_text': obj.get('client'),
+            'integration_source': obj.get('integration_source'),
+        })
+        by_cid[cid_int]['total_revenue'] += float(obj.get('total_revenue') or 0)
+    cmap = _clients_map_for_user(current_user.id)
+    groups = []
+    for cid_int, g in by_cid.items():
+        g['client_name'] = cmap.get(cid_int) or g['objects'][0].get('client_text') or ''
+        g['object_count'] = len(g['objects'])
+        g['total_revenue'] = round(g['total_revenue'], 2)
+        groups.append(g)
+    groups.sort(key=lambda x: x['object_count'], reverse=True)
+    suspicious = [g for g in groups if g['object_count'] >= 3]
+    return jsonify({
+        'groups': groups,
+        'suspicious': suspicious,
+        'hint': 'Если у одного client_id много разных объектов — проверьте, не привязан ли чужой заказчик (например, после автопривязки по имени).',
+    })
+
+
 @app.route('/api/clients', methods=['GET'])
 @login_required
 def get_clients():
