@@ -2312,7 +2312,9 @@ def _stats_empty_month_bucket():
 @login_required
 def get_detailed_stats():
     objects_raw = fetch_all(
-        _sql_objects_estimate_aggregates('est_works', 'est_materials', 'est_mat_profit', 'est_mat_cost')
+        _sql_objects_estimate_aggregates(
+            'estimate_works', 'estimate_materials', 'estimate_material_profit', 'estimate_material_cost'
+        )
         + "WHERE o.user_id = ? GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER,
         (current_user.id,),
     )
@@ -2343,7 +2345,7 @@ def get_detailed_stats():
         prof = float(obj.get('total_profit') or 0)
         adv = float(obj.get('advance') or 0)
         bal = float(obj.get('balance') or 0)
-        emp = float(obj.get('est_mat_profit') or 0)
+        emp = float(obj.get('estimate_material_profit') or 0)
 
         total_revenue += rev
         total_expenses += exp
