@@ -148,7 +148,12 @@
             </div>
         </div>
         <div class="two-col">
-            <div class="section"><h2>🏆 Топ клиентов</h2><div id="clients"></div></div>
+            <div class="section">
+                <h2>🏆 Топ клиентов</h2>
+                <p style="font-size:0.82rem;color:#666;margin:0 0 0.5rem;">По карточке клиента (client_id), иначе по полю «Заказчик» в объекте. Сумма выручки по объектам.</p>
+                <div id="clients"></div>
+                <div id="clients-unassigned" style="display:none;font-size:0.82rem;color:#e65100;margin-top:6px;"></div>
+            </div>
             <div class="section"><h2>💰 Должники</h2><div id="debtors"></div></div>
         </div>
     </div>
@@ -693,17 +698,26 @@
             renderChart(trend);
 
             var clDiv = document.getElementById('clients');
+            var unDiv = document.getElementById('clients-unassigned');
             clDiv.innerHTML = '';
             if (clients.length === 0) {
-                clDiv.innerHTML = '<div style="color:#999;padding:10px;">Нет данных</div>';
+                clDiv.innerHTML = '<div style="color:#999;padding:10px;">Нет выручки по клиентам (проверьте сметы и поле «Заказчик»)</div>';
             } else {
                 for (var ci = 0; ci < clients.length; ci++) {
                     var c = clients[ci];
                     var d = document.createElement('div');
                     d.className = 'li';
-                    d.innerHTML = '<span>' + (ci + 1) + '. ' + esc(c.name) + '</span><span style="color:#2E75B6;font-weight:600;">' + money(c.revenue) + '</span>';
+                    var cnt = c.count ? ' · ' + c.count + ' об.' : '';
+                    d.innerHTML = '<span>' + (ci + 1) + '. ' + esc(c.name) + cnt + '</span><span style="color:#2E75B6;font-weight:600;">' + money(c.revenue) + '</span>';
                     clDiv.appendChild(d);
                 }
+            }
+            var unRev = Number(s.unassigned_client_revenue) || 0;
+            if (unDiv && unRev > 0.01) {
+                unDiv.style.display = 'block';
+                unDiv.textContent = 'Без заказчика в карточке: выручка ' + money(unRev) + ' — привяжите client_id или укажите «Заказчик» в объектах.';
+            } else if (unDiv) {
+                unDiv.style.display = 'none';
             }
 
             var dbDiv = document.getElementById('debtors');

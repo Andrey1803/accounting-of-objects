@@ -66,15 +66,37 @@
             var sal=Number(o.salary)||0;
             return rev-exp-sal;
         }
+        function clientGroupKey(o){
+            if(o.client_id!=null&&o.client_id!==''&&Number(o.client_id)>0)return 'id:'+o.client_id;
+            var c=(o.client||'').trim();
+            return c?'name:'+c:'name:Без клиента';
+        }
+        function clientDisplayName(o, namesById){
+            var cid=Number(o.client_id);
+            if(cid>0&&namesById[cid])return namesById[cid];
+            var c=(o.client||'').trim();
+            return c||'Без клиента';
+        }
         async function load(){
             try{
-                const r=await fetch('/api/objects-with-estimates');
+                const [r, rc]=await Promise.all([
+                    fetch('/api/objects-with-estimates'),
+                    fetch('/api/clients').catch(function(){return null;})
+                ]);
                 const d=await r.json();
                 const objs=d.objects||[];
+                var namesById={};
+                if(rc&&rc.ok){
+                    const cl=await rc.json();
+                    (cl||[]).forEach(function(row){
+                        if(row.id!=null)namesById[Number(row.id)]=(row.name||'').trim();
+                    });
+                }
                 const clients={};
                 objs.forEach(function(o){
-                    var c=o.client||'Без клиента';
-                    if(!clients[c])clients[c]={name:c,count:0,revenue:0,expenses:0,salary:0,profit:0,debt:0};
+                    var gk=clientGroupKey(o);
+                    var label=clientDisplayName(o,namesById);
+                    if(!clients[gk])clients[gk]={name:label,count:0,revenue:0,expenses:0,salary:0,profit:0,debt:0};
                     clients[c].count++;
                     var rev=o.total_revenue!=null&&o.total_revenue!==''?Number(o.total_revenue):objectTotalRevenue(o);
                     var exp=o.total_expenses!=null&&o.total_expenses!==''?Number(o.total_expenses):objectTotalExpensesFallback(o);

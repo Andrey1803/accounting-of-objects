@@ -668,6 +668,43 @@ def _portfolio_financial_totals(objects):
     }
 
 
+def _clients_map_for_user(user_id):
+    """id → каноническое имя из справочника clients."""
+    rows = fetch_all(
+        'SELECT id, name FROM clients WHERE user_id = ?',
+        (user_id,),
+    )
+    out = {}
+    for row in rows:
+        try:
+            cid = int(row['id'])
+        except (TypeError, ValueError):
+            continue
+        out[cid] = (row.get('name') or '').strip()
+    return out
+
+
+def _client_group_for_object(obj, clients_map):
+    """
+    Группировка заказчика: сначала client_id (справочник), иначе текст objects.client.
+    Возвращает (key, display_name); key — уникальный ключ для агрегатов.
+    """
+    raw_id = obj.get('client_id')
+    cid = None
+    try:
+        if raw_id not in (None, '', 0, '0'):
+            cid = int(raw_id)
+    except (TypeError, ValueError):
+        cid = None
+    if cid is not None:
+        label = clients_map.get(cid) or (obj.get('client') or '').strip() or f'Клиент #{cid}'
+        return ('id', cid), label
+    name = (obj.get('client') or '').strip()
+    if name:
+        return ('name', name.casefold()), name
+    return ('name', ''), 'Без клиента'
+
+
 def _apply_object_financial_enrichment(obj, user_id):
     """Добавляет в dict объекта выручку, затраты, доп. расходы, налог (безнал) и прибыль после налога."""
     oid = obj.get('id')
@@ -2369,6 +2406,7 @@ def _stats_empty_month_bucket():
 def get_detailed_stats():
     objects = _fetch_objects_with_financials(current_user.id)
     portfolio = _portfolio_financial_totals(objects)
+    clients_map = _clients_map_for_user(current_user.id)
 
     status_dist = {}
     clients_stat = {}
@@ -2386,22 +2424,28 @@ def get_detailed_stats():
         bal = float(obj.get('balance') or 0)
         emp = _float_object_field(obj, 'estimate_material_profit', 'est_mat_profit')
 
-        c = obj.get('client', 'Без клиента')
-        if c not in clients_stat:
-            clients_stat[c] = {
-                'name': c, 'count': 0, 'revenue': 0, 'profit': 0, 'mat_profit': 0, 'debt': 0,
+        gkey, clabel = _client_group_for_object(obj, clients_map)
+        if gkey not in clients_stat:
+            clients_stat[gkey] = {
+                'name': clabel,
+                'client_id': gkey[1] if gkey[0] == 'id' else None,
+                'count': 0,
+                'revenue': 0,
+                'profit': 0,
+                'mat_profit': 0,
+                'debt': 0,
             }
-        clients_stat[c]['count'] += 1
-        clients_stat[c]['revenue'] += rev
-        clients_stat[c]['profit'] += prof
-        clients_stat[c]['mat_profit'] += emp
+        clients_stat[gkey]['count'] += 1
+        clients_stat[gkey]['revenue'] += rev
+        clients_stat[gkey]['profit'] += prof
+        clients_stat[gkey]['mat_profit'] += emp
 
         if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
-            if c not in debtors:
-                debtors[c] = {'name': c, 'debt': 0, 'objects': 0}
-            debtors[c]['debt'] += bal
-            debtors[c]['objects'] += 1
-            clients_stat[c]['debt'] += bal
+            if gkey not in debtors:
+                debtors[gkey] = {'name': clabel, 'debt': 0, 'objects': 0}
+            debtors[gkey]['debt'] += bal
+            debtors[gkey]['objects'] += 1
+            clients_stat[gkey]['debt'] += bal
 
         m = _stats_object_anchor_month(obj)
         if m:
@@ -2426,7 +2470,16 @@ def get_detailed_stats():
             if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
                 months[m]['debt'] += bal
 
-    top_clients = sorted(clients_stat.values(), key=lambda x: x['revenue'], reverse=True)[:10]
+    for row in clients_stat.values():
+        row['revenue'] = round(row['revenue'], 2)
+        row['profit'] = round(row['profit'], 2)
+        row['mat_profit'] = round(row['mat_profit'], 2)
+        row['debt'] = round(row['debt'], 2)
+
+    top_clients = sorted(clients_stat.values(), key=lambda x: x['revenue'], reverse=True)
+    top_clients = [c for c in top_clients if c['revenue'] > 0.005][:10]
+    unassigned = clients_stat.get(('name', ''))
+    unassigned_revenue = round(float(unassigned['revenue']) if unassigned else 0.0, 2)
     top_debtors = sorted(debtors.values(), key=lambda x: x['debt'], reverse=True)[:10]
 
     from datetime import datetime
@@ -2512,6 +2565,7 @@ def get_detailed_stats():
             'debt_objects': debt_objects,
             'objects_total': len(objects),
             'unique_clients': len(clients_stat),
+            'unassigned_client_revenue': unassigned_revenue,
         },
         'top_clients': top_clients,
         'status_distribution': status_dist,
