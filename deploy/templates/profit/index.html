@@ -4,23 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token }}">
-    <title>Прибыль по клиентам</title>
+    <title>Прибыль по объектам</title>
     <link rel="stylesheet" href="/static/css/base.css?v=2">
     <link rel="stylesheet" href="/static/css/components.css?v=1">
     <style>
-        /* Page-specific styles */
         .header { background: linear-gradient(135deg, #4CAF50, #388E3C); }
         .card .val { color: #4CAF50; }
-        table th { background: #4CAF50; }
+        table th { background: #4CAF50; cursor: pointer; user-select: none; }
+        table th.sorted { background: #2e7d32; }
+        table th.sortable:hover { background: #43a047; }
         .profit-pos { color: #4CAF50; font-weight: bold; }
         .profit-neg { color: #f44336; font-weight: bold; }
         .margin-bar { height: 20px; border-radius: 4px; min-width: 30px; text-align: center; color: white; font-size: 11px; line-height: 20px; }
+        .profit-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+        .profit-toolbar label { font-weight: 600; color: #444; }
+        .profit-toolbar select { padding: 8px 12px; border-radius: 8px; border: 1px solid #ccc; min-width: 200px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>📈 Прибыль по клиентам</h1>
-        <p class="subtitle" style="margin:0.35rem 0 0;font-size:0.9rem;opacity:0.9;">Выручка: max(работы в карточке, по смете) + материалы по смете (розница). Затраты: закуп материалов по смете + прочие (поле «Затраты» минус дубль розницы сметы, если оно совпадает). Прибыль = выручка − эти затраты − зарплата.</p>
+        <h1>📈 Прибыль по объектам</h1>
+        <p class="subtitle" style="margin:0.35rem 0 0;font-size:0.9rem;opacity:0.9;">Список объектов с прибылью. Сортировка по дате начала работ (первая дата в календаре объекта) или по другим полям.</p>
         <div class="header-actions">
             {% include 'partials/dispatcher_switch.html' %}
             <a href="/" class="btn btn-secondary">← Объекты</a>
@@ -29,104 +33,244 @@
     </div>
     <div class="container">
         <div class="summary">
-            <div class="card"><div class="val" id="s-clients">0</div><div class="lbl">Клиентов</div></div>
+            <div class="card"><div class="val" id="s-objects">0</div><div class="lbl">Объектов</div></div>
             <div class="card"><div class="val" id="s-revenue">0</div><div class="lbl">Общая выручка</div></div>
             <div class="card"><div class="val" id="s-profit">0</div><div class="lbl">Общая прибыль</div></div>
             <div class="card"><div class="val" id="s-margin">0%</div><div class="lbl">Средняя маржа</div></div>
         </div>
+        <div class="profit-toolbar">
+            <label for="sort-by">Сортировка</label>
+            <select id="sort-by" aria-label="Сортировка таблицы">
+                <option value="date-desc" selected>Дата — новые сверху</option>
+                <option value="date-asc">Дата — старые сверху</option>
+                <option value="profit-desc">Прибыль (больше сначала)</option>
+                <option value="profit-asc">Прибыль (меньше сначала)</option>
+                <option value="revenue-desc">Выручка</option>
+                <option value="client-asc">Клиент А–Я</option>
+                <option value="name-asc">Объект А–Я</option>
+            </select>
+        </div>
         <div class="table-wrapper table-pan-viewport" title="Прокрутка и перетаскивание мышью по таблице">
             <table>
-                <thead><tr><th>№</th><th>Клиент</th><th>Объектов</th><th>Выручка</th><th>Затраты</th><th>Зарплата</th><th>Прибыль</th><th>Маржа</th><th>Долг</th></tr></thead>
+                <thead>
+                    <tr>
+                        <th>№</th>
+                        <th class="sortable" data-sort="date">Дата</th>
+                        <th class="sortable" data-sort="name">Объект</th>
+                        <th class="sortable" data-sort="client">Клиент</th>
+                        <th class="sortable" data-sort="revenue">Выручка</th>
+                        <th>Затраты</th>
+                        <th>Зарплата</th>
+                        <th class="sortable" data-sort="profit">Прибыль</th>
+                        <th>Маржа</th>
+                        <th>Долг</th>
+                        <th>Статус</th>
+                    </tr>
+                </thead>
                 <tbody id="tbl"></tbody>
             </table>
         </div>
     </div>
     <script>
-        function money(v){return Number(v||0).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' BYN';}
-        function esc(s){if(!s)return'';var d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
-        function objectTotalRevenue(o){
-            if(o.total_revenue!=null&&o.total_revenue!==''){var tr=Number(o.total_revenue);if(!Number.isNaN(tr))return tr;}
-            var sw=Number(o.sum_work)||0,ew=Number(o.estimate_works)||0,em=Number(o.estimate_materials)||0;
-            return Math.max(sw,ew)+em;
+        var profitRows = [];
+        var currentSort = 'date-desc';
+
+        function money(v) {
+            return Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' BYN';
         }
-        function objectBalance(o){
-            if(o.balance!=null&&o.balance!==''){var b=Number(o.balance);if(!Number.isNaN(b))return b;}
-            var rev=objectTotalRevenue(o),adv=Number(o.advance)||0;
-            return rev-adv;
+        function esc(s) {
+            if (!s) return '';
+            var d = document.createElement('div');
+            d.textContent = String(s);
+            return d.innerHTML;
         }
-        function objectTotalExpensesFallback(o){
-            var em=Number(o.estimate_materials)||0,emp=Number(o.estimate_material_profit)||0,raw=Number(o.expenses)||0;
-            var mcogs=Math.max(0,em-emp);
-            var other=(em>0&&raw+1e-9>=em)?Math.max(0,raw-em):raw;
-            return mcogs+other;
+        function formatDateRu(ymd) {
+            if (!ymd || ymd === '9999-12-31') return '—';
+            var p = String(ymd).slice(0, 10).split('-');
+            if (p.length < 3) return ymd;
+            return p[2] + '.' + p[1] + '.' + p[0];
         }
-        function objectProfitFallback(o){
-            var rev=o.total_revenue!=null&&o.total_revenue!==''?Number(o.total_revenue):objectTotalRevenue(o);
-            var exp=o.total_expenses!=null&&o.total_expenses!==''?Number(o.total_expenses):objectTotalExpensesFallback(o);
-            var sal=Number(o.salary)||0;
-            return rev-exp-sal;
-        }
-        function clientGroupKey(o){
-            if(o.client_id!=null&&o.client_id!==''&&Number(o.client_id)>0)return 'id:'+o.client_id;
-            var c=(o.client||'').trim();
-            return c?'name:'+c:'name:Без клиента';
-        }
-        function clientDisplayName(o, namesById){
-            var cid=Number(o.client_id);
-            if(cid>0&&namesById[cid])return namesById[cid];
-            var c=(o.client||'').trim();
-            return c||'Без клиента';
-        }
-        async function load(){
-            try{
-                const [r, rc]=await Promise.all([
-                    fetch('/api/objects-with-estimates'),
-                    fetch('/api/clients').catch(function(){return null;})
-                ]);
-                const d=await r.json();
-                const objs=d.objects||[];
-                var namesById={};
-                if(rc&&rc.ok){
-                    const cl=await rc.json();
-                    (cl||[]).forEach(function(row){
-                        if(row.id!=null)namesById[Number(row.id)]=(row.name||'').trim();
-                    });
+        function parseWorkDatesFromObject(o) {
+            var raw = o.work_dates;
+            if (!raw) return [];
+            try {
+                var arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                if (Array.isArray(arr)) {
+                    return arr.filter(Boolean).map(function (d) { return String(d).slice(0, 10); }).sort();
                 }
-                const clients={};
-                objs.forEach(function(o){
-                    var gk=clientGroupKey(o);
-                    var label=clientDisplayName(o,namesById);
-                    if(!clients[gk])clients[gk]={name:label,count:0,revenue:0,expenses:0,salary:0,profit:0,debt:0};
-                    clients[gk].count++;
-                    var rev=o.total_revenue!=null&&o.total_revenue!==''?Number(o.total_revenue):objectTotalRevenue(o);
-                    var exp=o.total_expenses!=null&&o.total_expenses!==''?Number(o.total_expenses):objectTotalExpensesFallback(o);
-                    var sal=o.salary||0;
-                    var prof=o.total_profit!=null&&o.total_profit!==''?Number(o.total_profit):objectProfitFallback(o);
-                    var bal=objectBalance(o);
-                    clients[gk].revenue+=rev;clients[gk].expenses+=exp;clients[gk].salary+=sal;
-                    clients[gk].profit+=prof;
-                    if(bal>0&&o.status!=='Ожидает старта'&&o.status!=='Запланирован')clients[gk].debt+=bal;
-                });
-                var arr=Object.values(clients).sort(function(a,b){return b.revenue-a.revenue;});
-                var totalRev=0,totalProf=0,totalDebt=0;
-                arr.forEach(function(c){totalRev+=c.revenue;totalProf+=c.profit;totalDebt+=c.debt;});
-                document.getElementById('s-clients').textContent=arr.length;
-                document.getElementById('s-revenue').textContent=money(totalRev);
-                document.getElementById('s-profit').textContent=money(totalProf);
-                var avgMarg=totalRev>0?((totalProf/totalRev)*100).toFixed(1):0;
-                document.getElementById('s-margin').textContent=avgMarg+'%';
-                var tbl=document.getElementById('tbl');tbl.innerHTML='';
-                arr.forEach(function(c,i){
-                    var marg=c.revenue>0?((c.profit/c.revenue)*100).toFixed(1):0;
-                    var margColor=marg>=30?'#4CAF50':marg>=10?'#FF9800':'#f44336';
-                    var tr=document.createElement('tr');
-                    tr.innerHTML='<td>'+(i+1)+'</td><td style="font-weight:600">'+esc(c.name)+'</td><td>'+c.count+'</td><td>'+money(c.revenue)+'</td><td>'+money(c.expenses)+'</td><td>'+money(c.salary)+'</td><td class="'+(c.profit>=0?'profit-pos':'profit-neg')+'">'+money(c.profit)+'</td><td><div class="margin-bar" style="background:'+margColor+'">'+marg+'%</div></td><td class="'+(c.debt>0?'profit-neg':'')+'">'+money(c.debt)+'</td>';
-                    tbl.appendChild(tr);
-                });
-            }catch(e){
-                document.getElementById('tbl').innerHTML='<tr><td colspan="9" style="padding:30px;text-align:center;color:red;">Ошибка: '+esc(e.message)+'</td></tr>';
+            } catch (e) { /* ignore */ }
+            return [];
+        }
+        function objectAnchorDate(o) {
+            var days = parseWorkDatesFromObject(o);
+            if (days.length) return days[0];
+            var ds = String(o.date_start || '').trim().slice(0, 10);
+            return ds || '9999-12-31';
+        }
+        function objectTotalRevenue(o) {
+            if (o.total_revenue != null && o.total_revenue !== '') {
+                var tr = Number(o.total_revenue);
+                if (!Number.isNaN(tr)) return tr;
+            }
+            var sw = Number(o.sum_work) || 0, ew = Number(o.estimate_works) || 0, em = Number(o.estimate_materials) || 0;
+            return Math.max(sw, ew) + em;
+        }
+        function objectBalance(o) {
+            if (o.balance != null && o.balance !== '') {
+                var b = Number(o.balance);
+                if (!Number.isNaN(b)) return b;
+            }
+            return objectTotalRevenue(o) - (Number(o.advance) || 0);
+        }
+        function objectTotalExpensesFallback(o) {
+            var em = Number(o.estimate_materials) || 0, emp = Number(o.estimate_material_profit) || 0, raw = Number(o.expenses) || 0;
+            var mcogs = Math.max(0, em - emp);
+            var other = (em > 0 && raw + 1e-9 >= em) ? Math.max(0, raw - em) : raw;
+            return mcogs + other;
+        }
+        function objectProfit(o) {
+            if (o.total_profit != null && o.total_profit !== '') return Number(o.total_profit);
+            var rev = objectTotalRevenue(o);
+            var exp = o.total_expenses != null && o.total_expenses !== '' ? Number(o.total_expenses) : objectTotalExpensesFallback(o);
+            return rev - exp - (Number(o.salary) || 0);
+        }
+        function clientDisplayName(o, namesById) {
+            var cid = Number(o.client_id);
+            if (cid > 0 && namesById[cid]) return namesById[cid];
+            var c = (o.client || '').trim();
+            return c || 'Без клиента';
+        }
+        function compareRows(a, b, sortKey) {
+            if (sortKey === 'date-desc') {
+                var da = objectAnchorDate(a), db = objectAnchorDate(b);
+                if (da !== db) return db.localeCompare(da);
+                return (Number(b.id) || 0) - (Number(a.id) || 0);
+            }
+            if (sortKey === 'date-asc') {
+                var da2 = objectAnchorDate(a), db2 = objectAnchorDate(b);
+                if (da2 !== db2) return da2.localeCompare(db2);
+                return (Number(a.id) || 0) - (Number(b.id) || 0);
+            }
+            if (sortKey === 'profit-desc') return objectProfit(b) - objectProfit(a);
+            if (sortKey === 'profit-asc') return objectProfit(a) - objectProfit(b);
+            if (sortKey === 'revenue-desc') return objectTotalRevenue(b) - objectTotalRevenue(a);
+            if (sortKey === 'client-asc') {
+                var ca = (a._clientLabel || '').toLowerCase(), cb = (b._clientLabel || '').toLowerCase();
+                return ca.localeCompare(cb, 'ru');
+            }
+            if (sortKey === 'name-asc') {
+                return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
+            }
+            return 0;
+        }
+        function updateSortHeaders() {
+            var ths = document.querySelectorAll('table th.sortable');
+            for (var i = 0; i < ths.length; i++) {
+                var th = ths[i];
+                var sk = th.getAttribute('data-sort');
+                var on = currentSort === 'date-desc' && sk === 'date'
+                    || currentSort === 'date-asc' && sk === 'date'
+                    || currentSort === 'profit-desc' && sk === 'profit'
+                    || currentSort === 'profit-asc' && sk === 'profit'
+                    || currentSort === 'revenue-desc' && sk === 'revenue'
+                    || currentSort === 'client-asc' && sk === 'client'
+                    || currentSort === 'name-asc' && sk === 'name';
+                th.classList.toggle('sorted', on);
             }
         }
+        function renderTable() {
+            var sorted = profitRows.slice().sort(function (a, b) { return compareRows(a, b, currentSort); });
+            var totalRev = 0, totalProf = 0;
+            sorted.forEach(function (o) {
+                totalRev += objectTotalRevenue(o);
+                totalProf += objectProfit(o);
+            });
+            document.getElementById('s-objects').textContent = sorted.length;
+            document.getElementById('s-revenue').textContent = money(totalRev);
+            document.getElementById('s-profit').textContent = money(totalProf);
+            document.getElementById('s-margin').textContent = (totalRev > 0 ? ((totalProf / totalRev) * 100).toFixed(1) : '0') + '%';
+
+            var tbl = document.getElementById('tbl');
+            tbl.innerHTML = '';
+            if (sorted.length === 0) {
+                tbl.innerHTML = '<tr><td colspan="11" style="padding:30px;text-align:center;color:#999;">Нет объектов</td></tr>';
+                return;
+            }
+            sorted.forEach(function (o, i) {
+                var rev = objectTotalRevenue(o);
+                var exp = o.total_expenses != null && o.total_expenses !== '' ? Number(o.total_expenses) : objectTotalExpensesFallback(o);
+                var sal = Number(o.salary) || 0;
+                var prof = objectProfit(o);
+                var bal = objectBalance(o);
+                var debt = (bal > 0 && o.status !== 'Ожидает старта' && o.status !== 'Запланирован') ? bal : 0;
+                var marg = rev > 0 ? ((prof / rev) * 100).toFixed(1) : '0';
+                var margColor = marg >= 30 ? '#4CAF50' : marg >= 10 ? '#FF9800' : '#f44336';
+                var tr = document.createElement('tr');
+                tr.innerHTML =
+                    '<td>' + (i + 1) + '</td>' +
+                    '<td style="white-space:nowrap">' + esc(formatDateRu(objectAnchorDate(o))) + '</td>' +
+                    '<td style="text-align:left;font-weight:600">' + esc(o.name) + '</td>' +
+                    '<td style="text-align:left">' + esc(o._clientLabel) + '</td>' +
+                    '<td>' + money(rev) + '</td>' +
+                    '<td>' + money(exp) + '</td>' +
+                    '<td>' + money(sal) + '</td>' +
+                    '<td class="' + (prof >= 0 ? 'profit-pos' : 'profit-neg') + '">' + money(prof) + '</td>' +
+                    '<td><div class="margin-bar" style="background:' + margColor + '">' + marg + '%</div></td>' +
+                    '<td class="' + (debt > 0 ? 'profit-neg' : '') + '">' + money(debt) + '</td>' +
+                    '<td>' + esc(o.status || '') + '</td>';
+                tbl.appendChild(tr);
+            });
+            updateSortHeaders();
+        }
+        function setSort(key) {
+            currentSort = key;
+            var sel = document.getElementById('sort-by');
+            if (sel && sel.value !== key) sel.value = key;
+            renderTable();
+        }
+        async function load() {
+            try {
+                var r = await fetch('/api/objects-with-estimates');
+                var rc = await fetch('/api/clients').catch(function () { return null; });
+                var d = await r.json();
+                var objs = d.objects || [];
+                var namesById = {};
+                if (rc && rc.ok) {
+                    var cl = await rc.json();
+                    (cl || []).forEach(function (row) {
+                        if (row.id != null) namesById[Number(row.id)] = (row.name || '').trim();
+                    });
+                }
+                profitRows = objs.map(function (o) {
+                    var copy = o;
+                    copy._clientLabel = clientDisplayName(o, namesById);
+                    return copy;
+                });
+                setSort(document.getElementById('sort-by').value || 'date-desc');
+            } catch (e) {
+                document.getElementById('tbl').innerHTML =
+                    '<tr><td colspan="11" style="padding:30px;text-align:center;color:red;">Ошибка: ' + esc(e.message) + '</td></tr>';
+            }
+        }
+        document.getElementById('sort-by').addEventListener('change', function () {
+            setSort(this.value);
+        });
+        document.querySelectorAll('table th.sortable').forEach(function (th) {
+            th.addEventListener('click', function () {
+                var sk = th.getAttribute('data-sort');
+                if (sk === 'date') {
+                    setSort(currentSort === 'date-desc' ? 'date-asc' : 'date-desc');
+                } else if (sk === 'profit') {
+                    setSort(currentSort === 'profit-desc' ? 'profit-asc' : 'profit-desc');
+                } else if (sk === 'revenue') {
+                    setSort('revenue-desc');
+                } else if (sk === 'client') {
+                    setSort('client-asc');
+                } else if (sk === 'name') {
+                    setSort('name-asc');
+                }
+            });
+        });
         load();
     </script>
     <script src="/static/js/table-pan.js?v=1"></script>
