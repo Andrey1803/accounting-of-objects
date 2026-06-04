@@ -2279,71 +2279,103 @@ def get_stats():
         "balance": balance,
     })
 
+def _stats_object_anchor_month(obj):
+    """YYYY-MM для привязки объекта к месяцу на графиках."""
+    days = object_work_days_from_row(obj)
+    anchor = (days[0] if days else (obj.get('date_start') or '')[:10])
+    if anchor and len(anchor) >= 7:
+        return anchor[:7]
+    return None
+
+
 @app.route('/api/stats/detailed', methods=['GET'])
 @login_required
 def get_detailed_stats():
-    # ОДИН запрос с LEFT JOIN вместо N+1 (для клиентов)
-    objects_with_est = fetch_all(
+    objects_raw = fetch_all(
         _sql_objects_estimate_aggregates('est_works', 'est_materials', 'est_mat_profit', 'est_mat_cost')
         + "WHERE o.user_id = ? GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER,
         (current_user.id,),
     )
 
-    # Статистика по статусам
+    objects = []
+    for row in objects_raw:
+        _apply_object_financial_enrichment(row, current_user.id)
+        objects.append(row)
+
     status_dist = {}
-    for obj in objects_with_est:
+    clients_stat = {}
+    months = {}
+    debtors = {}
+    total_revenue = 0.0
+    total_profit = 0.0
+    total_expenses = 0.0
+    total_advance = 0.0
+    total_debt = 0.0
+    total_mat_profit = 0.0
+    debt_objects = 0
+
+    for obj in objects:
         s = obj.get('status', 'Неизвестно')
         status_dist[s] = status_dist.get(s, 0) + 1
 
-    # Статистика по клиентам — ОДИН проход, без дополнительных запросов
-    clients_stat = {}
-    for obj in objects_with_est:
+        rev = float(obj.get('total_revenue') or 0)
+        exp = float(obj.get('total_expenses') or 0)
+        prof = float(obj.get('total_profit') or 0)
+        adv = float(obj.get('advance') or 0)
+        bal = float(obj.get('balance') or 0)
+        emp = float(obj.get('est_mat_profit') or 0)
+
+        total_revenue += rev
+        total_expenses += exp
+        total_profit += prof
+        total_advance += adv
+        total_mat_profit += emp
+
         c = obj.get('client', 'Без клиента')
         if c not in clients_stat:
-            clients_stat[c] = {'name': c, 'count': 0, 'revenue': 0, 'profit': 0, 'mat_profit': 0}
+            clients_stat[c] = {
+                'name': c, 'count': 0, 'revenue': 0, 'profit': 0, 'mat_profit': 0, 'debt': 0,
+            }
         clients_stat[c]['count'] += 1
-
-        ew = obj.get('est_works', 0) or 0
-        em = obj.get('est_materials', 0) or 0
-        emp = obj.get('est_mat_profit', 0) or 0
-        emc = obj.get('est_mat_cost', 0) or 0
-
-        rev, exp, prof = _compute_object_financials(
-            obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), emc
-        )
-
         clients_stat[c]['revenue'] += rev
         clients_stat[c]['profit'] += prof
         clients_stat[c]['mat_profit'] += emp
 
-    top_clients = sorted(clients_stat.values(), key=lambda x: x['revenue'], reverse=True)[:10]
+        if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+            total_debt += bal
+            debt_objects += 1
+            if c not in debtors:
+                debtors[c] = {'name': c, 'debt': 0, 'objects': 0}
+            debtors[c]['debt'] += bal
+            debtors[c]['objects'] += 1
+            clients_stat[c]['debt'] += bal
 
-    # Выручка по месяцам — ОДИН проход, без дополнительных запросов
-    months = {}
-    for obj in objects_with_est:
-        days = object_work_days_from_row(obj)
-        anchor = (days[0] if days else (obj.get('date_start') or '')[:10])
-        if anchor and len(anchor) >= 7:
-            m = anchor[:7]
+        m = _stats_object_anchor_month(obj)
+        if m:
             if m not in months:
-                months[m] = {'revenue': 0, 'profit': 0, 'expenses': 0, 'salary': 0, 'material_profit': 0}
-
-            ew = obj.get('est_works', 0) or 0
-            em = obj.get('est_materials', 0) or 0
-            emp = obj.get('est_mat_profit', 0) or 0
-            emc = obj.get('est_mat_cost', 0) or 0
-
-            rev, exp, prof = _compute_object_financials(
-                obj.get('sum_work'), ew, em, emp, obj.get('expenses'), obj.get('salary'), emc
-            )
-
+                months[m] = {
+                    'revenue': 0,
+                    'profit': 0,
+                    'expenses': 0,
+                    'salary': 0,
+                    'material_profit': 0,
+                    'debt': 0,
+                    'advance': 0,
+                    'objects': 0,
+                }
             months[m]['revenue'] += rev
             months[m]['profit'] += prof
             months[m]['expenses'] += exp
-            months[m]['salary'] += obj.get('salary', 0)
+            months[m]['salary'] += float(obj.get('salary') or 0)
             months[m]['material_profit'] += emp
-    
-    # Подсчёт за сегодня, месяц, год
+            months[m]['advance'] += adv
+            months[m]['objects'] += 1
+            if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+                months[m]['debt'] += bal
+
+    top_clients = sorted(clients_stat.values(), key=lambda x: x['revenue'], reverse=True)[:10]
+    top_debtors = sorted(debtors.values(), key=lambda x: x['debt'], reverse=True)[:10]
+
     from datetime import datetime
     now = datetime.now()
     today_str = now.strftime('%Y-%m-%d')
@@ -2356,49 +2388,46 @@ def get_detailed_stats():
                 return True
         return False
 
-    today_count = sum(1 for o in objects_with_est if _obj_touched_calendar_prefix(o, today_str))
-    month_count = sum(1 for o in objects_with_est if _obj_touched_calendar_prefix(o, month_str))
-    year_count = sum(1 for o in objects_with_est if _obj_touched_calendar_prefix(o, year_str))
+    today_count = sum(1 for o in objects if _obj_touched_calendar_prefix(o, today_str))
+    month_count = sum(1 for o in objects if _obj_touched_calendar_prefix(o, month_str))
+    year_count = sum(1 for o in objects if _obj_touched_calendar_prefix(o, year_str))
 
-    # Топ должников
-    debtors = {}
-    for obj in objects_with_est:
-        ew = obj.get('est_works', 0) or 0
-        em = obj.get('est_materials', 0) or 0
-        rev = _work_revenue_once(obj.get('sum_work'), ew) + em
-        debt = rev - (obj.get('advance', 0) or 0)
-        if debt > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
-            c = obj.get('client', 'Без клиента')
-            if c not in debtors:
-                debtors[c] = {'name': c, 'debt': 0}
-            debtors[c]['debt'] += debt
-    
-    top_debtors = sorted(debtors.values(), key=lambda x: x['debt'], reverse=True)[:5]
-    
-    # Сравнение месяцев
-    month_comparison = {}
     sorted_months = sorted(months.keys(), reverse=True)
+    month_comparison = {}
     if len(sorted_months) >= 2:
         month_comparison = {
             'current': months[sorted_months[0]],
-            'previous': months[sorted_months[1]]
+            'previous': months[sorted_months[1]],
         }
-    
-    total_mat_profit = sum(m['material_profit'] for m in months.values())
-    
+
+    margin_pct = round((total_profit / total_revenue) * 100, 1) if total_revenue > 0 else 0.0
+    collection_pct = round((total_advance / total_revenue) * 100, 1) if total_revenue > 0 else 0.0
+
     return jsonify({
         'today': {'count': today_count},
         'month': {'count': month_count},
         'year': {'count': year_count},
+        'summary': {
+            'total_revenue': round(total_revenue, 2),
+            'total_expenses': round(total_expenses, 2),
+            'total_profit': round(total_profit, 2),
+            'total_advance': round(total_advance, 2),
+            'total_debt': round(total_debt, 2),
+            'total_material_profit': round(total_mat_profit, 2),
+            'margin_pct': margin_pct,
+            'collection_pct': collection_pct,
+            'debt_objects': debt_objects,
+            'objects_total': len(objects),
+        },
         'top_clients': top_clients,
         'status_distribution': status_dist,
         'monthly_trend': dict(sorted(months.items())),
         'top_materials': [],
         'top_debtors': top_debtors,
-        'forecast_profit': sum(m['profit'] for m in months.values()),
-        'total_material_profit': total_mat_profit,
+        'forecast_profit': round(total_profit, 2),
+        'total_material_profit': round(total_mat_profit, 2),
         'avg_material_margin': 0,
-        'month_comparison': month_comparison
+        'month_comparison': month_comparison,
     })
 
 @app.route('/api/debts', methods=['GET'])

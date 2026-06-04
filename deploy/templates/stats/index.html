@@ -31,6 +31,31 @@
         .bar-r { background: #2E75B6; }
         .bar-p { background: #4CAF50; }
         .bar-e { background: #FF9800; }
+        .bar-d { background: #e53935; }
+        .bar-a { background: #5c6bc0; }
+        .card .val.red { color: #c62828; }
+        .debt-panel {
+            display: grid;
+            grid-template-columns: minmax(200px, 280px) 1fr;
+            gap: 1.25rem;
+            align-items: center;
+        }
+        @media (max-width: 720px) { .debt-panel { grid-template-columns: 1fr; } }
+        .debt-big { font-size: 1.75rem; font-weight: 700; color: #c62828; line-height: 1.2; }
+        .debt-sub { font-size: 0.88rem; color: #666; margin-top: 0.35rem; }
+        .collection-track {
+            height: 22px;
+            border-radius: 11px;
+            background: #ffebee;
+            overflow: hidden;
+            display: flex;
+            margin: 0.75rem 0 0.35rem;
+        }
+        .collection-paid { background: linear-gradient(90deg, #5c6bc0, #7986cb); height: 100%; min-width: 2px; }
+        .collection-debt { background: linear-gradient(90deg, #e53935, #ef5350); height: 100%; min-width: 2px; }
+        .compare-row { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.75rem; font-size: 0.9rem; }
+        .compare-chip { background: #f5f7fa; border-radius: 10px; padding: 0.5rem 0.75rem; flex: 1; min-width: 140px; }
+        .compare-chip strong { display: block; font-size: 0.75rem; color: #666; margin-bottom: 0.2rem; }
         .bar-label { font-size: 11px; color: #444; margin-top: 6px; text-align: center; font-weight: 600; line-height: 1.2; }
         .bar-sums { font-size: 10px; color: #333; text-align: center; margin-top: 4px; line-height: 1.35; width: 100%; word-break: break-word; }
         .bar-sums .sr { color: #1E5A8E; font-weight: 600; }
@@ -59,6 +84,14 @@
     <div id="loading" class="loading">Загрузка...</div>
     <div id="content" style="display:none;">
         <div class="grid metrics" id="metrics"></div>
+        <div class="section" id="debt-section">
+            <h2>Задолженность и поступления</h2>
+            <div class="debt-panel" id="debt-panel"></div>
+        </div>
+        <div class="section" id="month-compare-section" style="display:none;">
+            <h2>Сравнение с прошлым месяцем</h2>
+            <div id="month-compare"></div>
+        </div>
         <div class="section">
             <h2>Статусы</h2>
             <div id="statuses"></div>
@@ -72,6 +105,8 @@
                     <button type="button" class="chart-mode-tab" data-mode="profit" role="tab" aria-selected="false">Прибыль</button>
                     <button type="button" class="chart-mode-tab" data-mode="expenses" role="tab" aria-selected="false">Расходы</button>
                     <button type="button" class="chart-mode-tab" data-mode="trend" role="tab" aria-selected="false">Линии (В и П)</button>
+                    <button type="button" class="chart-mode-tab" data-mode="debt" role="tab" aria-selected="false">Задолженность</button>
+                    <button type="button" class="chart-mode-tab" data-mode="cashflow" role="tab" aria-selected="false">Поступления</button>
                 </div>
             </div>
             <div class="chart-box" id="chart"></div>
@@ -133,6 +168,10 @@
                 leg.innerHTML = '<span style="color:#FF9800;font-weight:600;">■ Расходы (включ. зарплата в формуле прибыли)</span>';
             } else if (mode === 'trend') {
                 leg.innerHTML = '<span style="color:#2E75B6;font-weight:600;">— Выручка</span> <span style="color:#4CAF50;font-weight:600;">— Прибыль</span>';
+            } else if (mode === 'debt') {
+                leg.innerHTML = '<span style="color:#e53935;font-weight:600;">■ Задолженность по месяцам</span>';
+            } else if (mode === 'cashflow') {
+                leg.innerHTML = '<span style="color:#5c6bc0;font-weight:600;">■ Поступления (авансы)</span> <span style="color:#e53935;font-weight:600;">■ Долг</span>';
             } else {
                 leg.innerHTML = '<span style="color:#2E75B6;font-weight:600;">■ Выручка</span> <span style="color:#4CAF50;font-weight:600;">■ Прибыль</span>';
             }
@@ -158,10 +197,16 @@
                 var r = row.revenue || 0;
                 var p = row.profit || 0;
                 var e = row.expenses || 0;
+                var d = row.debt || 0;
+                var a = row.advance || 0;
                 if (chartMode === 'revenue' && r > maxV) maxV = r;
                 else if (chartMode === 'profit' && p > maxV) maxV = p;
                 else if (chartMode === 'expenses' && e > maxV) maxV = e;
-                else if (chartMode === 'both' || chartMode === 'trend') {
+                else if (chartMode === 'debt' && d > maxV) maxV = d;
+                else if (chartMode === 'cashflow') {
+                    if (a > maxV) maxV = a;
+                    if (d > maxV) maxV = d;
+                } else if (chartMode === 'both' || chartMode === 'trend') {
                     if (r > maxV) maxV = r;
                     if (p > maxV) maxV = p;
                 }
@@ -275,6 +320,8 @@
                 var rev = trow.revenue || 0;
                 var prof = trow.profit || 0;
                 var exp = trow.expenses || 0;
+                var debt = trow.debt || 0;
+                var adv = trow.advance || 0;
                 var col = document.createElement('div');
                 col.className = 'bar-col';
                 var bars = document.createElement('div');
@@ -308,6 +355,23 @@
                     be.style.height = Math.max((exp / maxV) * 180, 3) + 'px';
                     be.title = 'Расходы: ' + money(exp);
                     bars.appendChild(be);
+                } else if (chartMode === 'debt') {
+                    var bd = document.createElement('div');
+                    bd.className = 'bar bar-d bar-wide';
+                    bd.style.height = Math.max((debt / maxV) * 180, 3) + 'px';
+                    bd.title = 'Долг: ' + money(debt);
+                    bars.appendChild(bd);
+                } else if (chartMode === 'cashflow') {
+                    var ba = document.createElement('div');
+                    ba.className = 'bar bar-a';
+                    ba.style.height = Math.max((adv / maxV) * 180, 3) + 'px';
+                    ba.title = 'Поступления: ' + money(adv);
+                    var bd2 = document.createElement('div');
+                    bd2.className = 'bar bar-d';
+                    bd2.style.height = Math.max((debt / maxV) * 180, 3) + 'px';
+                    bd2.title = 'Долг: ' + money(debt);
+                    bars.appendChild(ba);
+                    bars.appendChild(bd2);
                 }
                 col.appendChild(bars);
                 var lbl = document.createElement('div');
@@ -324,14 +388,67 @@
                     sums.innerHTML = '<div class="sp">' + esc(money(prof)) + '</div>';
                 } else if (chartMode === 'expenses') {
                     sums.innerHTML = '<div style="color:#e65100;font-weight:600">' + esc(money(exp)) + '</div>';
+                } else if (chartMode === 'debt') {
+                    sums.innerHTML = '<div style="color:#c62828;font-weight:600">' + esc(money(debt)) + '</div>';
+                } else if (chartMode === 'cashflow') {
+                    sums.innerHTML = '<div style="color:#3949ab;font-weight:600">' + esc(moneyShort(adv)) + '</div><div style="color:#c62828;font-weight:600">' + esc(moneyShort(debt)) + '</div>';
                 }
                 col.appendChild(sums);
                 chart.appendChild(col);
             }
         }
 
+        function renderDebtPanel(s) {
+            var panel = document.getElementById('debt-panel');
+            if (!panel || !s) return;
+            var rev = Number(s.total_revenue) || 0;
+            var adv = Number(s.total_advance) || 0;
+            var debt = Number(s.total_debt) || 0;
+            var coll = Number(s.collection_pct) || 0;
+            var paidW = rev > 0 ? Math.min(100, Math.max(0, (adv / rev) * 100)) : 0;
+            var debtW = rev > 0 ? Math.min(100, Math.max(0, (debt / rev) * 100)) : 0;
+            var restW = Math.max(0, 100 - paidW - debtW);
+            panel.innerHTML =
+                '<div><div class="debt-big">' + esc(money(debt)) + '</div>' +
+                '<div class="debt-sub">Общая задолженность · ' + (s.debt_objects || 0) + ' объект(ов)</div>' +
+                '<div class="collection-track" title="Доля от выручки ' + esc(money(rev)) + '">' +
+                '<div class="collection-paid" style="width:' + paidW + '%" title="Поступило ' + esc(money(adv)) + '"></div>' +
+                '<div class="collection-debt" style="width:' + debtW + '%" title="Долг ' + esc(money(debt)) + '"></div>' +
+                (restW > 0.5 ? '<div style="flex:1;background:#eceff1;min-width:2px" title="Не оплачено и не в долге"></div>' : '') +
+                '</div>' +
+                '<div style="font-size:12px;color:#555;">Поступило <strong style="color:#3949ab">' + coll + '%</strong> · авансы ' + esc(money(adv)) + '</div></div>' +
+                '<div><div style="font-size:0.9rem;color:#444;line-height:1.55">' +
+                '<div>Выручка (начислено): <strong>' + esc(money(rev)) + '</strong></div>' +
+                '<div>Расходы: <strong style="color:#e65100">' + esc(money(s.total_expenses)) + '</strong></div>' +
+                '<div>Прибыль: <strong style="color:#2e7d32">' + esc(money(s.total_profit)) + '</strong> (' + (s.margin_pct || 0) + '%)</div>' +
+                '<div>Прибыль материалов: <strong>' + esc(money(s.total_material_profit)) + '</strong></div>' +
+                '</div></div>';
+        }
+
+        function renderMonthCompare(mc) {
+            var sec = document.getElementById('month-compare-section');
+            var box = document.getElementById('month-compare');
+            if (!sec || !box || !mc || !mc.current) { if (sec) sec.style.display = 'none'; return; }
+            sec.style.display = 'block';
+            var cur = mc.current;
+            var prev = mc.previous || {};
+            function delta(a, b) {
+                var x = Number(a) || 0, y = Number(b) || 0;
+                if (y === 0) return x > 0 ? '+100%' : '0%';
+                var p = ((x - y) / Math.abs(y)) * 100;
+                return (p >= 0 ? '+' : '') + p.toFixed(0) + '%';
+            }
+            box.innerHTML =
+                '<div class="compare-row">' +
+                '<div class="compare-chip"><strong>Выручка</strong>' + esc(money(cur.revenue)) + ' <span style="color:#666">(' + delta(cur.revenue, prev.revenue) + ')</span></div>' +
+                '<div class="compare-chip"><strong>Прибыль</strong>' + esc(money(cur.profit)) + ' <span style="color:#666">(' + delta(cur.profit, prev.profit) + ')</span></div>' +
+                '<div class="compare-chip"><strong>Долг</strong><span style="color:#c62828;font-weight:600">' + esc(money(cur.debt)) + '</span> <span style="color:#666">(' + delta(cur.debt, prev.debt) + ')</span></div>' +
+                '<div class="compare-chip"><strong>Объектов</strong>' + (cur.objects || 0) + ' <span style="color:#666">(' + delta(cur.objects, prev.objects) + ')</span></div>' +
+                '</div>';
+        }
+
         function load() {
-            fetch('/api/stats/detailed')
+            fetch('/api/stats/detailed', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
                 .then(function (r) {
                     if (!r.ok) throw new Error('HTTP ' + r.status);
                     return r.json();
@@ -349,32 +466,33 @@
             var clients = data.top_clients || [];
             var debtors = data.top_debtors || [];
             var statuses = data.status_distribution || {};
+            var s = data.summary || {};
 
-            var totalRev = 0;
-            var totalProf = 0;
-            var totalMatProf = 0;
-            var keys = Object.keys(trend);
-            for (var i = 0; i < keys.length; i++) {
-                var k = keys[i];
-                totalRev += trend[k].revenue || 0;
-                totalProf += trend[k].profit || 0;
-                totalMatProf += trend[k].material_profit || 0;
-            }
+            var totalRev = Number(s.total_revenue) || 0;
+            var totalProf = Number(s.total_profit) || 0;
+            var totalMatProf = Number(s.total_material_profit) || 0;
+            var totalDebt = Number(s.total_debt) || 0;
+            var totalAdv = Number(s.total_advance) || 0;
+            var margin = s.margin_pct != null ? s.margin_pct : (totalRev > 0 ? ((totalProf / totalRev) * 100).toFixed(1) : 0);
             var avgCheck = clients.length > 0 ? totalRev / clients.length : 0;
-            var totalObj = data.year.count || 0;
-            var margin = totalRev > 0 ? ((totalProf / totalRev) * 100).toFixed(1) : 0;
+            var totalObj = s.objects_total != null ? s.objects_total : (data.year.count || 0);
+
+            renderDebtPanel(s);
+            renderMonthCompare(data.month_comparison);
 
             var mDiv = document.getElementById('metrics');
             mDiv.innerHTML = '';
             var items = [
-                { lbl: 'Всего', val: totalObj, cls: 'blue' },
+                { lbl: 'Объектов', val: totalObj, cls: 'blue' },
                 { lbl: 'За месяц', val: data.month.count || 0, cls: 'purple' },
                 { lbl: 'Выручка', val: money(totalRev), cls: 'blue' },
+                { lbl: 'Задолженность', val: money(totalDebt), cls: 'red' },
+                { lbl: 'Поступления', val: money(totalAdv), cls: 'purple' },
                 { lbl: 'Прибыль', val: money(totalProf), cls: 'green' },
+                { lbl: 'Расходы', val: money(s.total_expenses || 0), cls: 'orange' },
                 { lbl: 'Прибыль мат.', val: money(totalMatProf), cls: 'orange' },
                 { lbl: 'Маржа', val: margin + '%', cls: margin >= 30 ? 'green' : 'orange' },
-                { lbl: 'Ср. чек', val: money(avgCheck), cls: 'orange' },
-                { lbl: 'Клиентов', val: clients.length, cls: 'blue' }
+                { lbl: 'Ср. чек клиента', val: money(avgCheck), cls: 'blue' }
             ];
             for (var j = 0; j < items.length; j++) {
                 var it = items[j];
@@ -421,7 +539,8 @@
                     var dd = debtors[di];
                     var ddEl = document.createElement('div');
                     ddEl.className = 'li';
-                    ddEl.innerHTML = '<span>' + (di + 1) + '. ' + esc(dd.name) + '</span><span style="color:#f44336;font-weight:600;">' + money(dd.debt) + '</span>';
+                    var objHint = dd.objects ? ' · ' + dd.objects + ' об.' : '';
+                    ddEl.innerHTML = '<span>' + (di + 1) + '. ' + esc(dd.name) + objHint + '</span><span style="color:#f44336;font-weight:600;">' + money(dd.debt) + '</span>';
                     dbDiv.appendChild(ddEl);
                 }
             }
