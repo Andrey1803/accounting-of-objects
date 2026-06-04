@@ -2438,54 +2438,60 @@ def get_debts():
 @login_required
 def get_report():
     """Отчёт за период с учётом прибыли от материалов"""
-    start = request.args.get('start', '')
-    end = request.args.get('end', '')
+    try:
+        start = (request.args.get('start') or '').strip()[:10]
+        end = (request.args.get('end') or '').strip()[:10]
 
-    base = (
-        _sql_objects_estimate_aggregates('estimate_works', 'estimate_materials', 'estimate_material_profit')
-        + "WHERE o.user_id = ? "
-    )
-    params = [current_user.id]
+        base = (
+            _sql_objects_estimate_aggregates('estimate_works', 'estimate_materials', 'estimate_material_profit')
+            + "WHERE o.user_id = ? "
+        )
+        params = [current_user.id]
 
-    if start:
-        base += " AND date(COALESCE(NULLIF(TRIM(o.date_end), ''), o.date_start)) >= date(?)"
-        params.append(start[:10])
-    if end:
-        base += " AND date(o.date_start) <= date(?)"
-        params.append(end[:10])
+        # Даты в objects — TEXT YYYY-MM-DD: сравниваем как строки (SQLite и PostgreSQL).
+        eff_date = "COALESCE(NULLIF(TRIM(o.date_end), ''), o.date_start)"
+        if start:
+            base += f" AND ({eff_date}) >= ?"
+            params.append(start)
+        if end:
+            base += " AND o.date_start <= ?"
+            params.append(end)
 
-    base += " GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER
-    objects = fetch_all(base, tuple(params))
+        base += " GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER
+        objects = fetch_all(base, tuple(params))
 
-    total_revenue = 0
-    total_expenses = 0
-    total_salary = 0
-    total_profit = 0
-    total_debt = 0
-    total_material_profit = 0
+        total_revenue = 0
+        total_expenses = 0
+        total_salary = 0
+        total_profit = 0
+        total_debt = 0
+        total_material_profit = 0
 
-    for obj in objects:
-        _apply_object_financial_enrichment(obj, current_user.id)
+        for obj in objects:
+            _apply_object_financial_enrichment(obj, current_user.id)
 
-        total_revenue += obj['total_revenue']
-        total_expenses += obj['total_expenses']
-        total_salary += obj.get('salary', 0)
-        total_profit += obj['total_profit']
-        total_material_profit += float(obj.get('estimate_material_profit', 0) or 0)
-        if obj['balance'] > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
-            total_debt += obj['balance']
-    
-    return jsonify({
-        'objects': objects,
-        'totals': {
-            'revenue': total_revenue,
-            'expenses': total_expenses,
-            'salary': total_salary,
-            'profit': total_profit,
-            'debt': total_debt,
-            'material_profit': total_material_profit
-        }
-    })
+            total_revenue += obj['total_revenue']
+            total_expenses += obj['total_expenses']
+            total_salary += obj.get('salary', 0)
+            total_profit += obj['total_profit']
+            total_material_profit += float(obj.get('estimate_material_profit', 0) or 0)
+            if obj['balance'] > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+                total_debt += obj['balance']
+
+        return jsonify({
+            'objects': objects,
+            'totals': {
+                'revenue': total_revenue,
+                'expenses': total_expenses,
+                'salary': total_salary,
+                'profit': total_profit,
+                'debt': total_debt,
+                'material_profit': total_material_profit,
+            },
+        })
+    except Exception as e:
+        logging.exception("get_report failed")
+        return jsonify({'error': 'Не удалось сформировать отчёт', 'detail': str(e)}), 500
 
 def _recalc_all_salaries_on_startup():
     """Пересчитать зарплаты при старте — отдельно для каждого user_id (мультиарендность)."""

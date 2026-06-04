@@ -61,9 +61,15 @@
             if(start)params.set('start',start);
             if(end)params.set('end',end);
             try{
-                const res=await fetch(`/api/report?${params}`);
-                if(!res.ok) throw new Error('HTTP '+res.status);
-                const data=await res.json();
+                const res=await fetch(`/api/report?${params}`,{
+                    credentials:'same-origin',
+                    headers:{Accept:'application/json'}
+                });
+                let data={};
+                try{ data=await res.json(); }catch(parseErr){ data={}; }
+                if(!res.ok||data.error){
+                    throw new Error(data.error||(data.detail?String(data.detail):('Ошибка сервера '+res.status)));
+                }
                 try{await OfflineDB.put('settings',{key:'lastReport',value:JSON.stringify(data)});}catch(e){}
                 renderReport(data);
             }catch(e){
@@ -72,7 +78,7 @@
                     const cached=await OfflineDB.getSetting('lastReport');
                     if(cached){renderReport(typeof cached==='string'?JSON.parse(cached):cached);return;}
                 }catch(e2){}
-                alert('Нет подключения');
+                alert(e&&e.message?e.message:'Нет подключения к серверу');
             }
         }
         function renderReport(data){
