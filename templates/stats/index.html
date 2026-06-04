@@ -34,6 +34,9 @@
         .bar-d { background: #e53935; }
         .bar-a { background: #5c6bc0; }
         .card .val.red { color: #c62828; }
+        .card .val.muted { color: #666; font-size: 0.95rem; }
+        .metrics-hint { font-size: 0.78rem; color: #888; margin-top: 0.2rem; }
+        .compare-chip .chip-month { font-size: 0.7rem; color: #888; font-weight: normal; }
         .debt-panel {
             display: grid;
             grid-template-columns: minmax(200px, 280px) 1fr;
@@ -398,53 +401,72 @@
             }
         }
 
+        function profitColorClass(v) {
+            return Number(v) >= 0 ? '#2e7d32' : '#c62828';
+        }
+
         function renderDebtPanel(s) {
             var panel = document.getElementById('debt-panel');
             if (!panel || !s) return;
             var rev = Number(s.total_revenue) || 0;
             var adv = Number(s.total_advance) || 0;
             var debt = Number(s.total_debt) || 0;
-            var coll = Number(s.collection_pct) || 0;
-            var paidW = rev > 0 ? Math.min(100, Math.max(0, (adv / rev) * 100)) : 0;
-            var debtW = rev > 0 ? Math.min(100, Math.max(0, (debt / rev) * 100)) : 0;
-            var restW = Math.max(0, 100 - paidW - debtW);
+            var paidPct = Number(s.paid_pct) || 0;
+            var over = Number(s.advance_over_revenue) || 0;
+            var paidW = rev > 0 ? Math.min(100, Math.max(0, paidPct)) : 0;
+            var debtW = rev > 0 ? Math.min(100 - paidW, Math.max(0, (debt / rev) * 100)) : 0;
+            var advNote = over > 0
+                ? 'Авансы на ' + esc(money(adv)) + ' — больше начисленной выручки на ' + esc(money(over)) + ' (предоплата, закрытые объекты)'
+                : 'Авансы по всем объектам: ' + esc(money(adv));
+            var prof = Number(s.total_profit) || 0;
             panel.innerHTML =
                 '<div><div class="debt-big">' + esc(money(debt)) + '</div>' +
                 '<div class="debt-sub">Общая задолженность · ' + (s.debt_objects || 0) + ' объект(ов)</div>' +
-                '<div class="collection-track" title="Доля от выручки ' + esc(money(rev)) + '">' +
-                '<div class="collection-paid" style="width:' + paidW + '%" title="Поступило ' + esc(money(adv)) + '"></div>' +
+                '<div class="collection-track" title="От начисленной выручки ' + esc(money(rev)) + '">' +
+                '<div class="collection-paid" style="width:' + paidW + '%" title="Оплачено (без долга): ' + paidPct + '%"></div>' +
                 '<div class="collection-debt" style="width:' + debtW + '%" title="Долг ' + esc(money(debt)) + '"></div>' +
-                (restW > 0.5 ? '<div style="flex:1;background:#eceff1;min-width:2px" title="Не оплачено и не в долге"></div>' : '') +
                 '</div>' +
-                '<div style="font-size:12px;color:#555;">Поступило <strong style="color:#3949ab">' + coll + '%</strong> · авансы ' + esc(money(adv)) + '</div></div>' +
+                '<div style="font-size:12px;color:#555;">По выручке: оплачено <strong style="color:#3949ab">' + paidPct + '%</strong>, в долге <strong style="color:#c62828">' + (rev > 0 ? ((debt / rev) * 100).toFixed(1) : '0') + '%</strong></div>' +
+                '<div style="font-size:11px;color:#777;margin-top:4px;">' + advNote + '</div></div>' +
                 '<div><div style="font-size:0.9rem;color:#444;line-height:1.55">' +
-                '<div>Выручка (начислено): <strong>' + esc(money(rev)) + '</strong></div>' +
+                '<div>Выручка (всего по базе): <strong>' + esc(money(rev)) + '</strong></div>' +
                 '<div>Расходы: <strong style="color:#e65100">' + esc(money(s.total_expenses)) + '</strong></div>' +
-                '<div>Прибыль: <strong style="color:#2e7d32">' + esc(money(s.total_profit)) + '</strong> (' + (s.margin_pct || 0) + '%)</div>' +
+                '<div>Прибыль: <strong style="color:' + profitColorClass(prof) + '">' + esc(money(prof)) + '</strong> (' + (s.margin_pct || 0) + '%)</div>' +
                 '<div>Прибыль материалов: <strong>' + esc(money(s.total_material_profit)) + '</strong></div>' +
                 '</div></div>';
         }
 
-        function renderMonthCompare(mc) {
+        function renderMonthCompare(mc, portfolioDebt) {
             var sec = document.getElementById('month-compare-section');
             var box = document.getElementById('month-compare');
             if (!sec || !box || !mc || !mc.current) { if (sec) sec.style.display = 'none'; return; }
             sec.style.display = 'block';
             var cur = mc.current;
             var prev = mc.previous || {};
+            var curLbl = monthLabelRu(mc.current_month || '');
+            var prevLbl = monthLabelRu(mc.previous_month || '');
             function delta(a, b) {
                 var x = Number(a) || 0, y = Number(b) || 0;
-                if (y === 0) return x > 0 ? '+100%' : '0%';
+                if (y === 0) return x === 0 ? 'без изм.' : (x > 0 ? '+100%' : '0%');
                 var p = ((x - y) / Math.abs(y)) * 100;
                 return (p >= 0 ? '+' : '') + p.toFixed(0) + '%';
             }
+            var pDebt = Number(portfolioDebt) || Number(mc.portfolio_debt) || 0;
             box.innerHTML =
+                '<p style="font-size:0.85rem;color:#666;margin:0 0 0.5rem;">По объектам с датами работ в календарном месяце (не «всего по базе»).</p>' +
                 '<div class="compare-row">' +
-                '<div class="compare-chip"><strong>Выручка</strong>' + esc(money(cur.revenue)) + ' <span style="color:#666">(' + delta(cur.revenue, prev.revenue) + ')</span></div>' +
-                '<div class="compare-chip"><strong>Прибыль</strong>' + esc(money(cur.profit)) + ' <span style="color:#666">(' + delta(cur.profit, prev.profit) + ')</span></div>' +
-                '<div class="compare-chip"><strong>Долг</strong><span style="color:#c62828;font-weight:600">' + esc(money(cur.debt)) + '</span> <span style="color:#666">(' + delta(cur.debt, prev.debt) + ')</span></div>' +
-                '<div class="compare-chip"><strong>Объектов</strong>' + (cur.objects || 0) + ' <span style="color:#666">(' + delta(cur.objects, prev.objects) + ')</span></div>' +
-                '</div>';
+                '<div class="compare-chip"><strong>Выручка</strong><span class="chip-month">' + esc(curLbl) + ' vs ' + esc(prevLbl) + '</span>' +
+                esc(money(cur.revenue)) + ' <span style="color:#666">(' + delta(cur.revenue, prev.revenue) + ')</span></div>' +
+                '<div class="compare-chip"><strong>Прибыль</strong><span class="chip-month">' + esc(curLbl) + '</span>' +
+                '<span style="color:' + profitColorClass(cur.profit) + ';font-weight:600">' + esc(money(cur.profit)) + '</span> <span style="color:#666">(' + delta(cur.profit, prev.profit) + ')</span></div>' +
+                '<div class="compare-chip"><strong>Долг в месяце</strong><span class="chip-month">объекты ' + esc(curLbl) + '</span>' +
+                '<span style="color:#c62828;font-weight:600">' + esc(money(cur.debt)) + '</span> <span style="color:#666">(' + delta(cur.debt, prev.debt) + ')</span></div>' +
+                '<div class="compare-chip"><strong>Объектов</strong><span class="chip-month">с работами в ' + esc(curLbl) + '</span>' +
+                (cur.objects || 0) + ' <span style="color:#666">(' + delta(cur.objects, prev.objects) + ')</span></div>' +
+                '</div>' +
+                '<div style="margin-top:0.65rem;font-size:0.88rem;padding:0.5rem 0.75rem;background:#fff8e1;border-radius:8px;">' +
+                '<strong>Задолженность всего по базе:</strong> <span style="color:#c62828;font-weight:600">' + esc(money(pDebt)) + '</span>' +
+                ' — не привязана к одному месяцу (5 объектов с долгом могут быть из других периодов).</div>';
         }
 
         function load() {
@@ -473,32 +495,38 @@
             var totalMatProf = Number(s.total_material_profit) || 0;
             var totalDebt = Number(s.total_debt) || 0;
             var totalAdv = Number(s.total_advance) || 0;
-            var margin = s.margin_pct != null ? s.margin_pct : (totalRev > 0 ? ((totalProf / totalRev) * 100).toFixed(1) : 0);
-            var avgCheck = clients.length > 0 ? totalRev / clients.length : 0;
+            var margin = Number(s.margin_pct != null ? s.margin_pct : (totalRev > 0 ? ((totalProf / totalRev) * 100) : 0));
+            var nClients = Number(s.unique_clients) || 0;
+            var avgCheck = nClients > 0 ? totalRev / nClients : 0;
             var totalObj = s.objects_total != null ? s.objects_total : (data.year.count || 0);
+            var cm = data.calendar_month || {};
+            var profCls = totalProf >= 0 ? 'green' : 'red';
+            var marginCls = margin >= 30 ? 'green' : (margin < 0 ? 'red' : 'orange');
 
             renderDebtPanel(s);
-            renderMonthCompare(data.month_comparison);
+            renderMonthCompare(data.month_comparison, totalDebt);
 
             var mDiv = document.getElementById('metrics');
             mDiv.innerHTML = '';
             var items = [
-                { lbl: 'Объектов', val: totalObj, cls: 'blue' },
-                { lbl: 'За месяц', val: data.month.count || 0, cls: 'purple' },
-                { lbl: 'Выручка', val: money(totalRev), cls: 'blue' },
-                { lbl: 'Задолженность', val: money(totalDebt), cls: 'red' },
-                { lbl: 'Поступления', val: money(totalAdv), cls: 'purple' },
-                { lbl: 'Прибыль', val: money(totalProf), cls: 'green' },
-                { lbl: 'Расходы', val: money(s.total_expenses || 0), cls: 'orange' },
-                { lbl: 'Прибыль мат.', val: money(totalMatProf), cls: 'orange' },
-                { lbl: 'Маржа', val: margin + '%', cls: margin >= 30 ? 'green' : 'orange' },
-                { lbl: 'Ср. чек клиента', val: money(avgCheck), cls: 'blue' }
+                { lbl: 'Объектов (всего)', val: totalObj, cls: 'blue', hint: '' },
+                { lbl: 'С работами в этом месяце', val: data.month.count || 0, cls: 'purple', hint: monthLabelRu(cm.key || '') },
+                { lbl: 'Выручка (всего)', val: money(totalRev), cls: 'blue', hint: '' },
+                { lbl: 'Выручка за месяц', val: money(cm.revenue || 0), cls: 'blue', hint: monthLabelRu(cm.key || '') },
+                { lbl: 'Задолженность', val: money(totalDebt), cls: 'red', hint: (s.debt_objects || 0) + ' объект.' },
+                { lbl: 'Авансы (всего)', val: money(totalAdv), cls: 'purple', hint: 'сумма по всем объектам' },
+                { lbl: 'Прибыль (всего)', val: money(totalProf), cls: profCls, hint: '' },
+                { lbl: 'Расходы (всего)', val: money(s.total_expenses || 0), cls: 'orange', hint: '' },
+                { lbl: 'Прибыль мат.', val: money(totalMatProf), cls: 'orange', hint: '' },
+                { lbl: 'Маржа', val: margin + '%', cls: marginCls, hint: 'от всей выручки' },
+                { lbl: 'Ср. выручка на клиента', val: money(avgCheck), cls: 'blue', hint: nClients + ' клиент.' }
             ];
             for (var j = 0; j < items.length; j++) {
                 var it = items[j];
                 var card = document.createElement('div');
                 card.className = 'card';
-                card.innerHTML = '<h3>' + esc(it.lbl) + '</h3><div class="val ' + esc(it.cls) + '">' + it.val + '</div>';
+                var hintHtml = it.hint ? '<div class="metrics-hint">' + esc(it.hint) + '</div>' : '';
+                card.innerHTML = '<h3>' + esc(it.lbl) + '</h3><div class="val ' + esc(it.cls) + '">' + it.val + '</div>' + hintHtml;
                 mDiv.appendChild(card);
             }
 

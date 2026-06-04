@@ -2288,6 +2288,26 @@ def _stats_object_anchor_month(obj):
     return None
 
 
+def _stats_prev_calendar_month(ym):
+    """Предыдущий календарный месяц YYYY-MM."""
+    y, m = int(ym[:4]), int(ym[5:7])
+    m -= 1
+    if m < 1:
+        m, y = 12, y - 1
+    return f'{y:04d}-{m:02d}'
+
+
+def _stats_empty_month_bucket():
+    return {
+        'revenue': 0.0,
+        'profit': 0.0,
+        'expenses': 0.0,
+        'debt': 0.0,
+        'advance': 0.0,
+        'objects': 0,
+    }
+
+
 @app.route('/api/stats/detailed', methods=['GET'])
 @login_required
 def get_detailed_stats():
@@ -2392,21 +2412,50 @@ def get_detailed_stats():
     month_count = sum(1 for o in objects if _obj_touched_calendar_prefix(o, month_str))
     year_count = sum(1 for o in objects if _obj_touched_calendar_prefix(o, year_str))
 
-    sorted_months = sorted(months.keys(), reverse=True)
-    month_comparison = {}
-    if len(sorted_months) >= 2:
-        month_comparison = {
-            'current': months[sorted_months[0]],
-            'previous': months[sorted_months[1]],
-        }
+    prev_month_str = _stats_prev_calendar_month(month_str)
+    cur_bucket = months.get(month_str) or _stats_empty_month_bucket()
+    prev_bucket = months.get(prev_month_str) or _stats_empty_month_bucket()
+    month_comparison = {
+        'current_month': month_str,
+        'previous_month': prev_month_str,
+        'current': cur_bucket,
+        'previous': prev_bucket,
+        'portfolio_debt': round(total_debt, 2),
+    }
+
+    month_revenue = 0.0
+    month_profit = 0.0
+    month_expenses = 0.0
+    month_advance = 0.0
+    month_debt = 0.0
+    for obj in objects:
+        if not _obj_touched_calendar_prefix(obj, month_str):
+            continue
+        month_revenue += float(obj.get('total_revenue') or 0)
+        month_profit += float(obj.get('total_profit') or 0)
+        month_expenses += float(obj.get('total_expenses') or 0)
+        month_advance += float(obj.get('advance') or 0)
+        bal = float(obj.get('balance') or 0)
+        if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+            month_debt += bal
 
     margin_pct = round((total_profit / total_revenue) * 100, 1) if total_revenue > 0 else 0.0
-    collection_pct = round((total_advance / total_revenue) * 100, 1) if total_revenue > 0 else 0.0
+    paid_pct = round((max(0.0, total_revenue - total_debt) / total_revenue) * 100, 1) if total_revenue > 0 else 0.0
+    advance_over_revenue = round(max(0.0, total_advance - total_revenue), 2)
 
     return jsonify({
         'today': {'count': today_count},
         'month': {'count': month_count},
         'year': {'count': year_count},
+        'calendar_month': {
+            'key': month_str,
+            'revenue': round(month_revenue, 2),
+            'profit': round(month_profit, 2),
+            'expenses': round(month_expenses, 2),
+            'advance': round(month_advance, 2),
+            'debt': round(month_debt, 2),
+            'objects': month_count,
+        },
         'summary': {
             'total_revenue': round(total_revenue, 2),
             'total_expenses': round(total_expenses, 2),
@@ -2415,9 +2464,11 @@ def get_detailed_stats():
             'total_debt': round(total_debt, 2),
             'total_material_profit': round(total_mat_profit, 2),
             'margin_pct': margin_pct,
-            'collection_pct': collection_pct,
+            'paid_pct': paid_pct,
+            'advance_over_revenue': advance_over_revenue,
             'debt_objects': debt_objects,
             'objects_total': len(objects),
+            'unique_clients': len(clients_stat),
         },
         'top_clients': top_clients,
         'status_distribution': status_dist,
