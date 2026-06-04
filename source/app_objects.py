@@ -586,13 +586,93 @@ def _compute_object_financials(
     return total_revenue, total_expenses, total_profit
 
 
+def _float_object_field(obj, *keys):
+    """Первое числовое поле из obj по списку ключей (в т.ч. legacy est_* из SQL)."""
+    for key in keys:
+        if key not in obj:
+            continue
+        val = obj[key]
+        if val is None or val == '':
+            continue
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def _estimate_fields_from_object(obj):
+    """Агрегаты сметы с учётом legacy-имён колонок (est_works и т.д.)."""
+    return (
+        _float_object_field(obj, 'estimate_works', 'est_works'),
+        _float_object_field(obj, 'estimate_materials', 'est_materials'),
+        _float_object_field(obj, 'estimate_material_profit', 'est_mat_profit'),
+        _float_object_field(obj, 'estimate_material_cost', 'est_mat_cost'),
+    )
+
+
+def _fetch_objects_with_financials(user_id, where_sql='', extra_params=()):
+    """Объекты пользователя с агрегатами смет и полями total_revenue / total_profit / balance."""
+    sql = (
+        _sql_objects_estimate_aggregates(
+            'estimate_works', 'estimate_materials', 'estimate_material_profit', 'estimate_material_cost',
+        )
+        + "WHERE o.user_id = ? " + where_sql + " GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER
+    )
+    params = (user_id,) + tuple(extra_params)
+    rows = fetch_all(sql, params)
+    for row in rows:
+        _apply_object_financial_enrichment(row, user_id)
+    return rows
+
+
+def _portfolio_financial_totals(objects):
+    """Сводные суммы по уже обогащённым объектам — одна логика для всех API."""
+    total_revenue = 0.0
+    total_expenses = 0.0
+    total_profit = 0.0
+    total_profit_before_tax = 0.0
+    total_tax = 0.0
+    total_advance = 0.0
+    total_debt = 0.0
+    total_mat_profit = 0.0
+    total_salary = 0.0
+    debt_objects = 0
+    for obj in objects:
+        total_revenue += float(obj.get('total_revenue') or 0)
+        total_expenses += float(obj.get('total_expenses') or 0)
+        total_profit += float(obj.get('total_profit') or 0)
+        total_profit_before_tax += float(obj.get('profit_before_tax') or 0)
+        total_tax += float(obj.get('tax_amount') or 0)
+        total_advance += float(obj.get('advance') or 0)
+        total_mat_profit += _float_object_field(
+            obj, 'estimate_material_profit', 'est_mat_profit',
+        )
+        total_salary += float(obj.get('salary') or 0)
+        bal = float(obj.get('balance') or 0)
+        if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+            total_debt += bal
+            debt_objects += 1
+    return {
+        'total_revenue': round(total_revenue, 2),
+        'total_expenses': round(total_expenses, 2),
+        'total_profit': round(total_profit, 2),
+        'total_profit_before_tax': round(total_profit_before_tax, 2),
+        'total_tax': round(total_tax, 2),
+        'total_advance': round(total_advance, 2),
+        'total_debt': round(total_debt, 2),
+        'total_material_profit': round(total_mat_profit, 2),
+        'total_salary': round(total_salary, 2),
+        'debt_objects': debt_objects,
+        'objects_total': len(objects),
+    }
+
+
 def _apply_object_financial_enrichment(obj, user_id):
     """Добавляет в dict объекта выручку, затраты, доп. расходы, налог (безнал) и прибыль после налога."""
     oid = obj.get('id')
     extra = _sum_extra_expenses_for_object(oid, user_id) if oid else 0.0
-    ew = obj.get('estimate_works', 0) or 0
-    em = obj.get('estimate_materials', 0) or 0
-    emp = obj.get('estimate_material_profit', 0) or 0
+    ew, em, emp, emc = _estimate_fields_from_object(obj)
     tr, te, tp = _compute_object_financials(
         obj.get('sum_work'),
         ew,
@@ -600,7 +680,7 @@ def _apply_object_financial_enrichment(obj, user_id):
         emp,
         obj.get('expenses'),
         obj.get('salary'),
-        obj.get('estimate_material_cost'),
+        emc,
         extra_expenses=extra,
     )
     obj['extra_expenses'] = round(extra, 2)
@@ -1046,14 +1126,7 @@ def delete_account():
 @login_required
 def get_objects_with_estimates():
     # ОДИН запрос с LEFT JOIN вместо N+1
-    objects = fetch_all(
-        _sql_objects_estimate_aggregates('estimate_works', 'estimate_materials', 'estimate_material_profit')
-        + "WHERE o.user_id = ? GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER,
-        (current_user.id,),
-    )
-
-    for obj in objects:
-        _apply_object_financial_enrichment(obj, current_user.id)
+    objects = _fetch_objects_with_financials(current_user.id)
 
     # Подсчёт по статусам
     in_progress = sum(1 for o in objects if o.get('status') == OBJECT_STATUS_ACTIVE)
@@ -2245,37 +2318,20 @@ def get_stats():
         (current_user.id,) + OBJECT_STATUSES_FINISHED,
     )['c']
 
-    objects = fetch_all(
-        _sql_objects_estimate_aggregates('estimate_works', 'estimate_materials', 'estimate_material_profit')
-        + "WHERE o.user_id = ? GROUP BY o.id",
-        (current_user.id,),
-    )
-    total_revenue = 0.0
-    total_expenses = 0.0
-    total_material_profit = 0.0
-    salary = 0.0
-    advance = 0.0
-    profit = 0.0
-    for obj in objects:
-        _apply_object_financial_enrichment(obj, current_user.id)
-        total_revenue += obj['total_revenue']
-        total_expenses += obj['total_expenses']
-        total_material_profit += float(obj.get('estimate_material_profit', 0) or 0)
-        profit += obj['total_profit']
-        salary += float(obj.get('salary', 0) or 0)
-        advance += float(obj.get('advance', 0) or 0)
-    balance = total_revenue - advance
+    objects = _fetch_objects_with_financials(current_user.id)
+    p = _portfolio_financial_totals(objects)
+    balance = round(p['total_revenue'] - p['total_advance'], 2)
 
     return jsonify({
         "total": total,
         "in_progress": in_progress,
         "completed": completed,
-        "total_sum": total_revenue,
-        "total_expenses": total_expenses,
-        "total_salary": salary,
-        "total_advance": advance,
-        "total_material_profit": total_material_profit,
-        "profit": profit,
+        "total_sum": p['total_revenue'],
+        "total_expenses": p['total_expenses'],
+        "total_salary": p['total_salary'],
+        "total_advance": p['total_advance'],
+        "total_material_profit": p['total_material_profit'],
+        "profit": p['total_profit'],
         "balance": balance,
     })
 
@@ -2311,30 +2367,13 @@ def _stats_empty_month_bucket():
 @app.route('/api/stats/detailed', methods=['GET'])
 @login_required
 def get_detailed_stats():
-    objects_raw = fetch_all(
-        _sql_objects_estimate_aggregates(
-            'estimate_works', 'estimate_materials', 'estimate_material_profit', 'estimate_material_cost'
-        )
-        + "WHERE o.user_id = ? GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER,
-        (current_user.id,),
-    )
-
-    objects = []
-    for row in objects_raw:
-        _apply_object_financial_enrichment(row, current_user.id)
-        objects.append(row)
+    objects = _fetch_objects_with_financials(current_user.id)
+    portfolio = _portfolio_financial_totals(objects)
 
     status_dist = {}
     clients_stat = {}
     months = {}
     debtors = {}
-    total_revenue = 0.0
-    total_profit = 0.0
-    total_expenses = 0.0
-    total_advance = 0.0
-    total_debt = 0.0
-    total_mat_profit = 0.0
-    debt_objects = 0
 
     for obj in objects:
         s = obj.get('status', 'Неизвестно')
@@ -2345,13 +2384,7 @@ def get_detailed_stats():
         prof = float(obj.get('total_profit') or 0)
         adv = float(obj.get('advance') or 0)
         bal = float(obj.get('balance') or 0)
-        emp = float(obj.get('estimate_material_profit') or 0)
-
-        total_revenue += rev
-        total_expenses += exp
-        total_profit += prof
-        total_advance += adv
-        total_mat_profit += emp
+        emp = _float_object_field(obj, 'estimate_material_profit', 'est_mat_profit')
 
         c = obj.get('client', 'Без клиента')
         if c not in clients_stat:
@@ -2364,8 +2397,6 @@ def get_detailed_stats():
         clients_stat[c]['mat_profit'] += emp
 
         if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
-            total_debt += bal
-            debt_objects += 1
             if c not in debtors:
                 debtors[c] = {'name': c, 'debt': 0, 'objects': 0}
             debtors[c]['debt'] += bal
@@ -2422,7 +2453,7 @@ def get_detailed_stats():
         'previous_month': prev_month_str,
         'current': cur_bucket,
         'previous': prev_bucket,
-        'portfolio_debt': round(total_debt, 2),
+        'portfolio_debt': portfolio['total_debt'],
     }
 
     month_revenue = 0.0
@@ -2440,6 +2471,13 @@ def get_detailed_stats():
         bal = float(obj.get('balance') or 0)
         if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
             month_debt += bal
+
+    total_revenue = portfolio['total_revenue']
+    total_profit = portfolio['total_profit']
+    total_debt = portfolio['total_debt']
+    total_advance = portfolio['total_advance']
+    total_mat_profit = portfolio['total_material_profit']
+    debt_objects = portfolio['debt_objects']
 
     margin_pct = round((total_profit / total_revenue) * 100, 1) if total_revenue > 0 else 0.0
     paid_pct = round((max(0.0, total_revenue - total_debt) / total_revenue) * 100, 1) if total_revenue > 0 else 0.0
@@ -2459,12 +2497,15 @@ def get_detailed_stats():
             'objects': month_count,
         },
         'summary': {
-            'total_revenue': round(total_revenue, 2),
-            'total_expenses': round(total_expenses, 2),
-            'total_profit': round(total_profit, 2),
-            'total_advance': round(total_advance, 2),
-            'total_debt': round(total_debt, 2),
-            'total_material_profit': round(total_mat_profit, 2),
+            'total_revenue': total_revenue,
+            'total_expenses': portfolio['total_expenses'],
+            'total_profit': total_profit,
+            'total_profit_before_tax': portfolio['total_profit_before_tax'],
+            'total_tax': portfolio['total_tax'],
+            'total_salary': portfolio['total_salary'],
+            'total_advance': total_advance,
+            'total_debt': total_debt,
+            'total_material_profit': total_mat_profit,
             'margin_pct': margin_pct,
             'paid_pct': paid_pct,
             'advance_over_revenue': advance_over_revenue,
@@ -2486,22 +2527,16 @@ def get_detailed_stats():
 @app.route('/api/debts', methods=['GET'])
 @login_required
 def get_debts():
-    # Выручка как в списке объектов: sum_work + работы и материалы по сметам
-    objects = fetch_all(
-        _sql_objects_estimate_aggregates('estimate_works', 'estimate_materials', 'estimate_material_profit')
-        + "WHERE o.user_id = ? GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER,
-        (current_user.id,),
-    )
+    """Долги клиентов — balance после того же расчёта, что на главной и в статистике."""
+    objects = _fetch_objects_with_financials(current_user.id)
 
     debts = {}
     for obj in objects:
         if obj.get('status') in OBJECT_STATUSES_NOT_DEBT:
             continue
-        ew = obj.get('estimate_works', 0) or 0
-        em = obj.get('estimate_materials', 0) or 0
-        revenue = _work_revenue_once(obj.get('sum_work'), ew) + em
-        advance = obj.get('advance', 0) or 0
-        debt = revenue - advance
+        revenue = float(obj.get('total_revenue') or 0)
+        advance = float(obj.get('advance') or 0)
+        debt = float(obj.get('balance') or 0)
         if debt <= 0:
             continue
 
@@ -2524,51 +2559,32 @@ def get_report():
         start = (request.args.get('start') or '').strip()[:10]
         end = (request.args.get('end') or '').strip()[:10]
 
-        base = (
-            _sql_objects_estimate_aggregates('estimate_works', 'estimate_materials', 'estimate_material_profit')
-            + "WHERE o.user_id = ? "
-        )
-        params = [current_user.id]
-
-        # Даты в objects — TEXT YYYY-MM-DD: сравниваем как строки (SQLite и PostgreSQL).
+        where_parts = []
+        params = []
         eff_date = "COALESCE(NULLIF(TRIM(o.date_end), ''), o.date_start)"
         if start:
-            base += f" AND ({eff_date}) >= ?"
+            where_parts.append(f" AND ({eff_date}) >= ?")
             params.append(start)
         if end:
-            base += " AND o.date_start <= ?"
+            where_parts.append(" AND o.date_start <= ?")
             params.append(end)
 
-        base += " GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER
-        objects = fetch_all(base, tuple(params))
-
-        total_revenue = 0
-        total_expenses = 0
-        total_salary = 0
-        total_profit = 0
-        total_debt = 0
-        total_material_profit = 0
-
-        for obj in objects:
-            _apply_object_financial_enrichment(obj, current_user.id)
-
-            total_revenue += obj['total_revenue']
-            total_expenses += obj['total_expenses']
-            total_salary += obj.get('salary', 0)
-            total_profit += obj['total_profit']
-            total_material_profit += float(obj.get('estimate_material_profit', 0) or 0)
-            if obj['balance'] > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
-                total_debt += obj['balance']
+        objects = _fetch_objects_with_financials(
+            current_user.id, ''.join(where_parts), tuple(params),
+        )
+        p = _portfolio_financial_totals(objects)
 
         return jsonify({
             'objects': objects,
             'totals': {
-                'revenue': total_revenue,
-                'expenses': total_expenses,
-                'salary': total_salary,
-                'profit': total_profit,
-                'debt': total_debt,
-                'material_profit': total_material_profit,
+                'revenue': p['total_revenue'],
+                'expenses': p['total_expenses'],
+                'salary': p['total_salary'],
+                'profit': p['total_profit'],
+                'profit_before_tax': p['total_profit_before_tax'],
+                'tax': p['total_tax'],
+                'debt': p['total_debt'],
+                'material_profit': p['total_material_profit'],
             },
         })
     except Exception as e:
