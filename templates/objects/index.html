@@ -198,6 +198,12 @@
         }
         .client-info-object-item:hover { background: #f3e5f5; }
         .client-info-object-item:last-child { border-bottom: none; }
+        .client-phone-hint {
+            font-size: 12px;
+            color: #5c6bc0;
+            margin-top: 4px;
+            min-height: 1.2em;
+        }
 
         .debt-row td { font-weight: 600; }
         .balance-cell { font-weight: bold; text-align: right; }
@@ -431,12 +437,13 @@
                 <div class="form-group">
                     <label>Клиент</label>
                     <div style="display:flex; gap:8px; align-items:center;">
-                        <select id="client" style="flex:1">
+                        <select id="client" style="flex:1" title="">
                             <option value="">-- Выберите клиента --</option>
                             <option value="__new__">+ Создать нового клиента...</option>
                         </select>
                         <button type="button" class="btn" style="background:#9C27B0; color:white; padding:6px 12px; font-size:12px;" onclick="openNewClientModal()" title="Создать клиента">+</button>
                     </div>
+                    <div id="client-phone-hint" class="client-phone-hint" aria-live="polite"></div>
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label>Сумма работ</label><input type="number" id="sum-work" step="0.01" value="0"></div>
@@ -1043,6 +1050,38 @@
             return (c.name || '') + ' (ID ' + c.id + ')';
         }
 
+        function clientPhoneTitle(c) {
+            if (!c) return '';
+            var p = String(c.phone || '').trim();
+            return p ? ('Телефон: ' + p) : 'Телефон не указан';
+        }
+
+        function clientBySelectValue(val) {
+            var id = parseInt(val, 10);
+            if (Number.isNaN(id)) return null;
+            return clients.find(function(c) { return Number(c.id) === id; }) || null;
+        }
+
+        function applyClientOptionTitle(opt, clientRow) {
+            if (!opt) return;
+            opt.title = clientPhoneTitle(clientRow);
+        }
+
+        function refreshClientSelectPhoneUi(selectId, hintId) {
+            var sel = document.getElementById(selectId);
+            if (!sel) return;
+            var c = clientBySelectValue(sel.value);
+            var title = clientPhoneTitle(c);
+            sel.title = title;
+            if (hintId) {
+                var hint = document.getElementById(hintId);
+                if (hint) {
+                    var p = c && String(c.phone || '').trim();
+                    hint.textContent = p ? ('Телефон: ' + p) : (c ? 'Телефон не указан' : '');
+                }
+            }
+        }
+
         function clientSelectValueForObject(obj) {
             if (!obj) return '';
             if (obj.client_id != null && obj.client_id !== '') {
@@ -1063,6 +1102,8 @@
             var opt = document.createElement('option');
             opt.value = idStr;
             opt.textContent = (clientName || 'Клиент') + ' (ID ' + clientId + ')';
+            var row = clients.find(function(c) { return String(c.id) === idStr; });
+            applyClientOptionTitle(opt, row || { name: clientName, phone: '' });
             var newOpt = select.querySelector('option[value="__new__"]');
             if (newOpt) select.insertBefore(opt, newOpt);
             else select.appendChild(opt);
@@ -1139,6 +1180,7 @@
                 const opt = document.createElement('option');
                 opt.value = String(c.id);
                 opt.textContent = clientLabel(c);
+                applyClientOptionTitle(opt, c);
                 select.appendChild(opt);
             });
             const newOpt = document.createElement('option');
@@ -1159,7 +1201,35 @@
                 const opt = document.createElement('option');
                 opt.value = String(c.id);
                 opt.textContent = clientLabel(c);
+                applyClientOptionTitle(opt, c);
                 filterSelect.appendChild(opt);
+            });
+            refreshClientSelectPhoneUi('client', 'client-phone-hint');
+        }
+
+        function bindClientSelectPhoneHover(selectId, hintId) {
+            var sel = document.getElementById(selectId);
+            if (!sel || sel._clientPhoneHoverBound) return;
+            sel._clientPhoneHoverBound = true;
+            sel.addEventListener('change', function() {
+                refreshClientSelectPhoneUi(selectId, hintId);
+            });
+            sel.addEventListener('mouseover', function(e) {
+                var t = e.target;
+                if (t && t.tagName === 'OPTION' && t.value && t.value !== '__new__') {
+                    var c = clientBySelectValue(t.value);
+                    sel.title = clientPhoneTitle(c);
+                    if (hintId) {
+                        var hint = document.getElementById(hintId);
+                        if (hint) {
+                            var p = c && String(c.phone || '').trim();
+                            hint.textContent = p ? ('Телефон: ' + p) : (c ? 'Телефон не указан' : '');
+                        }
+                    }
+                }
+            });
+            sel.addEventListener('mouseout', function() {
+                refreshClientSelectPhoneUi(selectId, hintId);
             });
         }
 
@@ -1763,6 +1833,7 @@
                 document.getElementById('name').value = obj.name;
                 ensureClientOptionInSelect(obj.client_id, obj.client);
                 document.getElementById('client').value = clientSelectValueForObject(obj);
+                refreshClientSelectPhoneUi('client', 'client-phone-hint');
                 document.getElementById('status').value = obj.status;
                 document.getElementById('advance').value = obj.advance;
                 document.getElementById('salary').value = obj.salary;
@@ -2171,6 +2242,7 @@
                     clients.push(newClient);
                     renderClients();
                     document.getElementById('client').value = String(newClient.id);
+                    refreshClientSelectPhoneUi('client', 'client-phone-hint');
                     console.log('Client select set to:', document.getElementById('client').value);
                     closeNewClientModal();
                     document.getElementById('name').focus();
@@ -2186,7 +2258,11 @@
         });
 
         // При выборе "__new__" в селекте — открываем модалку; иначе сохраняем клиента на объекте
+        bindClientSelectPhoneHover('client', 'client-phone-hint');
+        bindClientSelectPhoneHover('filter-client', null);
+
         document.getElementById('client').addEventListener('change', function() {
+            refreshClientSelectPhoneUi('client', 'client-phone-hint');
             if (this.value === '__new__') {
                 _skipClientAutosave = true;
                 var prevVal = '';
