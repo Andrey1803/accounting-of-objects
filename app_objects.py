@@ -342,6 +342,22 @@ def _expand_date_range_inclusive(date_start, date_end):
     return out
 
 
+def object_touched_calendar_day(row, date_ymd):
+    """Есть ли у объекта рабочий день date_ymd (YYYY-MM-DD)."""
+    if not date_ymd:
+        return False
+    return date_ymd in object_work_days_from_row(row)
+
+
+def sum_profit_for_calendar_day(objects, date_ymd):
+    """Сумма total_profit по объектам, у которых в этот день есть work_dates."""
+    total = 0.0
+    for o in objects or []:
+        if object_touched_calendar_day(o, date_ymd):
+            total += float(o.get('total_profit') or 0)
+    return round(total, 2)
+
+
 def object_work_days_from_row(row):
     """Календарные дни работ на объекте (YYYY-MM-DD), отсортированы и уникальны."""
     if not row:
@@ -1177,12 +1193,18 @@ def get_objects_with_estimates():
     # Подсчёт по статусам
     in_progress = sum(1 for o in objects if o.get('status') == OBJECT_STATUS_ACTIVE)
     completed = sum(1 for o in objects if o.get('status') in OBJECT_STATUSES_FINISHED)
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    today_profit = sum_profit_for_calendar_day(objects, today_str)
+    today_objects = sum(1 for o in objects if object_touched_calendar_day(o, today_str))
 
     return jsonify({
         'objects': objects,
         'total': len(objects),
         'in_progress': in_progress,
         'completed': completed,
+        'today_profit': today_profit,
+        'today_objects': today_objects,
+        'today_date': today_str,
         'page': 1,
         'per_page': 50,
         'total_pages': 1

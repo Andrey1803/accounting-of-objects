@@ -82,6 +82,8 @@
         }
         .header .stats .stat-card--progress .value { color: #1565c0; }
         .header .stats .stat-card--completed .value { color: #2e7d32; }
+        .header .stats .stat-card--profit-today .value { color: #1b5e20; font-size: clamp(16px, 2vw, 28px); }
+        .header .stats .stat-card--profit-today .value.negative { color: #c62828; }
 
         .header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
         .header-actions .btn-group { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
@@ -340,6 +342,7 @@
             <div class="stat-card stat-card--total"><div class="value" id="stat-total">0</div><div class="label">Всего</div></div>
             <div class="stat-card stat-card--progress"><div class="value" id="stat-progress">0</div><div class="label">В работе</div></div>
             <div class="stat-card stat-card--completed"><div class="value" id="stat-completed">0</div><div class="label">Выполнено / закрыто</div></div>
+            <div class="stat-card stat-card--profit-today"><div class="value" id="stat-today-profit">0</div><div class="label">Прибыль сегодня</div></div>
         </div>
 
         <!-- Навигация -->
@@ -1038,10 +1041,33 @@
             }
         }
 
+        function computeTodayProfitFromObjects(objs) {
+            var today = new Date().toISOString().slice(0, 10);
+            var sum = 0;
+            (objs || []).forEach(function(obj) {
+                if (parseWorkDatesFromObject(obj).indexOf(today) >= 0) {
+                    sum += Number(obj.total_profit) || 0;
+                }
+            });
+            return Math.round(sum * 100) / 100;
+        }
+
+        function formatProfitStat(n) {
+            var v = Number(n) || 0;
+            return v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
         function renderStats(data) {
             document.getElementById('stat-total').textContent = data.total || 0;
             document.getElementById('stat-progress').textContent = data.in_progress || 0;
             document.getElementById('stat-completed').textContent = data.completed || 0;
+            var todayProfit = data.today_profit;
+            if (todayProfit === undefined || todayProfit === null) {
+                todayProfit = computeTodayProfitFromObjects(objects);
+            }
+            var profitEl = document.getElementById('stat-today-profit');
+            profitEl.textContent = formatProfitStat(todayProfit);
+            profitEl.classList.toggle('negative', Number(todayProfit) < 0);
         }
         
         function renderPagination(data) {
