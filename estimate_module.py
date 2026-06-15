@@ -512,47 +512,77 @@ def _pdf_filter_table_rows(rows):
     return out
 
 
+def _pdf_header_looks_like_qty(h):
+    """Заголовок колонки количества (в т.ч. «кол-\\nчество» из pdfplumber)."""
+    if not h:
+        return False
+    return (
+        'колво' in h
+        or 'кол во' in h
+        or 'колич' in h
+        or h.startswith('кол')
+        or 'чество' in h
+    )
+
+
+def _pdf_supplier_pricelist_column_sets():
+    """Два типичных формата счёта: с пустой col0 (счёт) и без (прайс РРЦ)."""
+    return (
+        {'num_idx': 1, 'name_idx': 2, 'qty_idx': 3, 'unit_idx': 4, 'price_idx': 5, 'sum_idx': 6},
+        {'num_idx': 0, 'name_idx': 1, 'qty_idx': 2, 'unit_idx': 3, 'price_idx': 4, 'sum_idx': 5},
+    )
+
+
 def _pdf_detect_supplier_pricelist_row_layout(row, import_mode='retail'):
     """
-    Счёт / прайс РРЦ (№ 6005 и аналоги): пустая col0, № | наименование | кол-во | ед. | цена | сумма.
+    Счёт / прайс РРЦ: № | наименование | кол-во | ед. | цена | сумма.
+    Поддерживает ведущую пустую колонку (счёт) и формат без неё (Цены РРЦ).
     """
-    if not row or len(row) < 7:
+    if not row or len(row) < 6:
         return None
     cells = [str(c or '').strip() for c in row]
     if _pdf_row_has_mega_cell(cells):
         return None
-    num_cell = cells[1] if len(cells) > 1 else ''
-    if not re.fullmatch(r'\d{1,4}', num_cell or ''):
-        return None
-    name_cell = (cells[2] if len(cells) > 2 else '').strip()
-    if len(name_cell) < 3:
-        return None
-    if not _pdf_cell_is_unit(cells[4] if len(cells) > 4 else ''):
-        return None
-    qty_hint = _pdf_parse_qty_cell(cells[3] if len(cells) > 3 else '')
-    list_price = _pdf_parse_money_cell(cells[5] if len(cells) > 5 else '')
-    if qty_hint is None or list_price is None:
-        return None
-    retail_idx = 5
-    purchase_idx = None
-    purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(
-        cells,
-        retail_idx,
-        qty_hint,
-        list_price,
-        for_wholesale=(str(import_mode).lower() == 'wholesale'),
-    )
-    return {
-        'name_idx': 2,
-        'unit_idx': 4,
-        'qty_idx': 3,
-        'retail_idx': retail_idx,
-        'purchase_idx': purchase_idx,
-        'sum_idx': 6,
-        'purchase_from_tail': purchase_hint,
-        'line_sum_from_tail': sum_hint,
-        'layout_source': 'supplier_pricelist',
-    }
+    for cols in _pdf_supplier_pricelist_column_sets():
+        num_idx = cols['num_idx']
+        name_idx = cols['name_idx']
+        qty_idx = cols['qty_idx']
+        unit_idx = cols['unit_idx']
+        price_idx = cols['price_idx']
+        sum_idx = cols['sum_idx']
+        if len(cells) <= price_idx:
+            continue
+        num_cell = cells[num_idx] if num_idx < len(cells) else ''
+        if not re.fullmatch(r'\d{1,4}', num_cell or ''):
+            continue
+        name_cell = (cells[name_idx] if name_idx < len(cells) else '').strip()
+        if len(name_cell) < 3:
+            continue
+        if not _pdf_cell_is_unit(cells[unit_idx] if unit_idx < len(cells) else ''):
+            continue
+        qty_hint = _pdf_parse_qty_cell(cells[qty_idx] if qty_idx < len(cells) else '')
+        list_price = _pdf_parse_money_cell(cells[price_idx] if price_idx < len(cells) else '')
+        if qty_hint is None or list_price is None:
+            continue
+        purchase_hint, sum_hint = _pdf_table_tail_purchase_and_sum(
+            cells,
+            price_idx,
+            qty_hint,
+            list_price,
+            for_wholesale=(str(import_mode).lower() == 'wholesale'),
+        )
+        return {
+            'name_idx': name_idx,
+            'unit_idx': unit_idx,
+            'qty_idx': qty_idx,
+            'retail_idx': price_idx,
+            'purchase_idx': None,
+            'sum_idx': sum_idx if sum_idx < len(cells) else price_idx + 1,
+            'purchase_from_tail': purchase_hint,
+            'line_sum_from_tail': sum_hint,
+            'layout_source': 'supplier_pricelist',
+        }
+    return None
 
 
 def _pdf_is_supplier_pricelist_layout(table_layout):
@@ -652,7 +682,7 @@ def _pdf_detect_header_layout(rows, import_mode='retail'):
                 name_idx = i
             if unit_idx is None and (h.startswith('ед') or 'изм' in h or h == 'ед'):
                 unit_idx = i
-            if qty_idx is None and ('колво' in h or 'кол во' in h or 'колич' in h):
+            if qty_idx is None and _pdf_header_looks_like_qty(h):
                 qty_idx = i
             if retail_idx is None and (
                 'розн' in h or 'ррц' in h or h == 'цена' or 'ценопт' in h or h == 'ценаопт'
@@ -2542,14 +2572,23 @@ def _to_float_ru(v):
         return None
 
 
-def _pdf_supplier_line_number(row):
+def _pdf_supplier_line_number(row, table_layout=None):
     """Номер позиции в счёте/прайсе (колонка №)."""
     try:
-        if not row or len(row) < 2:
+        if not row:
             return None
-        s = str(row[1] or '').strip()
-        if re.fullmatch(r'\d{1,4}', s):
-            return int(s)
+        if table_layout and table_layout.get('layout_source') == 'supplier_pricelist':
+            num_idx = int(table_layout.get('name_idx', 2)) - 1
+            if 0 <= num_idx < len(row):
+                s = str(row[num_idx] or '').strip()
+                if re.fullmatch(r'\d{1,4}', s):
+                    return int(s)
+        for idx in (1, 0):
+            if idx >= len(row):
+                continue
+            s = str(row[idx] or '').strip()
+            if re.fullmatch(r'\d{1,4}', s):
+                return int(s)
     except (TypeError, ValueError):
         pass
     return None
@@ -2598,7 +2637,7 @@ def _pdf_build_wholesale_lookup(wholesale_rows, wholesale_header_layout):
         price = _pdf_wholesale_unit_from_row(row, wholesale_header_layout)
         if price is None or price <= 0:
             continue
-        line_no = _pdf_supplier_line_number(row)
+        line_no = _pdf_supplier_line_number(row, w_layout)
         if line_no is not None:
             by_line[line_no] = float(price)
         try:
@@ -2615,7 +2654,7 @@ def _pdf_build_wholesale_lookup(wholesale_rows, wholesale_header_layout):
 
 def _pdf_match_wholesale_for_retail(retail_row, retail_layout, wholesale_by_line, wholesale_by_name):
     """Сопоставить строку РРЦ со строкой счёта по № или наименованию (не по индексу массива)."""
-    line_no = _pdf_supplier_line_number(retail_row)
+    line_no = _pdf_supplier_line_number(retail_row, retail_layout)
     if line_no is not None and line_no in wholesale_by_line:
         return wholesale_by_line[line_no]
     try:
@@ -2845,7 +2884,30 @@ def api_pdf_import_dual_materials():
             })
 
         if not materials:
-            return jsonify({"error": "Не удалось собрать материалы из двух PDF"}), 400
+            retail_n = sum(
+                1
+                for row in retail_rows
+                if row
+                and _pdf_is_supplier_pricelist_layout(
+                    _pdf_detect_supplier_pricelist_row_layout(row, 'retail')
+                    or _pdf_table_layout_for_row(row, 'retail', retail_header_layout)
+                )
+            )
+            wholesale_n = sum(
+                1
+                for row in (wholesale_rows or [])
+                if row
+                and _pdf_is_supplier_pricelist_layout(
+                    _pdf_detect_supplier_pricelist_row_layout(row, 'wholesale')
+                    or _pdf_table_layout_for_row(row, 'wholesale', wholesale_header_layout)
+                )
+            )
+            hint = (
+                f"Розница: распознано строк {retail_n}, опт: {wholesale_n}. "
+                "Проверьте: в «PDF розница» — счёт с ценами для клиента, в «PDF опт» — прайс РРЦ. "
+                "Файлы не перепутаны?"
+            )
+            return jsonify({"error": "Не удалось собрать материалы из двух PDF. " + hint}), 400
 
         added_to_catalog = 0
         updated_in_catalog = 0
