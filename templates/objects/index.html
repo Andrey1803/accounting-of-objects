@@ -404,6 +404,12 @@
         </div>
         <!-- Пагинация -->
         <div id="pagination" style="display:flex;justify-content:center;gap:5px;padding:15px;align-items:center;"></div>
+        <div id="closed-load-more" style="display:none; text-align:center; padding:0 15px 20px;">
+            <button type="button" class="btn" style="background:#607D8B;color:white;" onclick="loadMoreClosedObjects()">
+                Открыть следующие 10
+            </button>
+            <span id="closed-load-more-hint" style="margin-left:10px;font-size:12px;color:#666;"></span>
+        </div>
     </div>
 
     <!-- Карточка объекта (просмотр) -->
@@ -758,6 +764,9 @@
         let objectWorkDaysEdit = [];
         let currentPage = 1;
         const perPage = 50;
+        const closedPageSize = 10;
+        let closedVisibleLimit = closedPageSize;
+        let closedTotal = 0;
 
         function parseWorkDatesFromObject(obj) {
             if (!obj) return [];
@@ -911,7 +920,31 @@
             });
         }
 
-        /** Deep link с диспетчера: /?openObject=123 — открыть модалку объекта после загрузки списка. */
+        function updateClosedLoadMoreUi(data) {
+            const el = document.getElementById('closed-load-more');
+            if (!el) return;
+            closedTotal = Number(data && data.closed_total) || 0;
+            const shown = Number(data && data.closed_shown) || 0;
+            const hint = document.getElementById('closed-load-more-hint');
+            if (closedTotal > shown) {
+                el.style.display = 'block';
+                if (hint) {
+                    hint.textContent = 'Закрытых объектов: показано ' + shown + ' из ' + closedTotal;
+                }
+            } else {
+                el.style.display = 'none';
+                if (hint) hint.textContent = '';
+            }
+        }
+
+        function loadMoreClosedObjects() {
+            closedVisibleLimit += closedPageSize;
+            return loadData(currentPage);
+        }
+
+        function resetClosedVisibleLimit() {
+            closedVisibleLimit = closedPageSize;
+        }
         function tryOpenObjectFromQuery() {
             try {
                 var params = new URLSearchParams(window.location.search || '');
@@ -934,12 +967,15 @@
             }
         }
 
-        async function loadData(page = 1) {
+        async function loadData(page = 1, opts) {
             try {
+                if (opts && opts.resetClosed) resetClosedVisibleLimit();
                 console.log('loadData: starting, page =', page);
                 currentPage = page;
                 
                 const params = new URLSearchParams({ page, per_page: perPage });
+                params.set('closed_limit', String(closedVisibleLimit));
+                params.set('closed_offset', '0');
                 
                 console.log('loadData: fetching objects with params:', params.toString());
                 const objectsPromise = fetch(`/api/objects-with-estimates?${params}`);
@@ -987,6 +1023,7 @@
                 renderClients();
                 renderTable();
                 renderPagination(data);
+                updateClosedLoadMoreUi(data);
                 updateOnlineStatus();
                 tryOpenObjectFromQuery();
                 console.log('loadData: finished');
@@ -1030,6 +1067,7 @@
                     renderClients();
                     renderTable();
                     renderPagination({ total: total, page: 1, per_page: 50, total_pages: 1 });
+                    updateClosedLoadMoreUi({ closed_total: 0, closed_shown: 0 });
                     console.log('Loaded from cache:', objects.length, 'objects');
                     updateOnlineStatus();
                     tryOpenObjectFromQuery();
@@ -2810,11 +2848,13 @@
         // Поиск ТОЛЬКО по кнопке Enter, НЕ по каждому вводу
         document.getElementById('filter-search').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
-                renderTable();
+                resetClosedVisibleLimit();
+                void loadData(1, { resetClosed: true });
             }
         });
         document.getElementById('filter-status').addEventListener('change', function() {
-            renderTable();
+            resetClosedVisibleLimit();
+            void loadData(1, { resetClosed: true });
         });
         document.getElementById('filter-client').addEventListener('change', function() {
             renderTable();

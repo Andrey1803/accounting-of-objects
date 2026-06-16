@@ -294,6 +294,8 @@ OBJECT_STATUS_DONE = 'Выполнен'
 OBJECT_STATUS_CLOSED = 'Закрыт'
 OBJECT_STATUSES_SALARY = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
 OBJECT_STATUSES_FINISHED = (OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
+# Финансово закрытые объекты — в списке по умолчанию только последние N (см. API objects-with-estimates).
+OBJECT_STATUSES_ARCHIVED = (OBJECT_STATUS_CLOSED, 'Оплачен')
 # До миграции БД или в копии дампа без перезапуска могли остаться старые подписи
 OBJECT_STATUSES_NOT_DEBT = (OBJECT_STATUS_WAITING, 'Запланирован')
 
@@ -469,6 +471,10 @@ def _sql_fragment_order_objects_by_status(prefix: str) -> str:
 
 
 _SQL_OBJECTS_ORDER = _sql_fragment_order_objects_by_status("o")
+_SQL_ORDER_CLOSED_RECENT = (
+    "COALESCE(NULLIF(TRIM(o.updated_at), ''), NULLIF(TRIM(o.date_end), ''), "
+    "NULLIF(TRIM(o.date_start), ''), '') DESC, o.id DESC"
+)
 
 
 def _sql_objects_estimate_aggregates(as_work, as_mat, as_profit, as_mat_cost='estimate_material_cost'):
@@ -627,16 +633,36 @@ def _estimate_fields_from_object(obj):
     )
 
 
-def _fetch_objects_with_financials(user_id, where_sql='', extra_params=()):
+def _count_objects_for_user(user_id, where_sql='', extra_params=()):
+    """Число объектов пользователя (лёгкий COUNT без JOIN смет)."""
+    row = fetch_one(
+        "SELECT COUNT(*) AS c FROM objects o WHERE o.user_id = ? " + where_sql,
+        (user_id,) + tuple(extra_params),
+    )
+    return int(row['c'] if row else 0)
+
+
+def _fetch_objects_with_financials(
+    user_id,
+    where_sql='',
+    extra_params=(),
+    order_sql=None,
+    limit=None,
+    offset=None,
+):
     """Объекты пользователя с агрегатами смет и полями total_revenue / total_profit / balance."""
+    order = order_sql if order_sql else _SQL_OBJECTS_ORDER
     sql = (
         _sql_objects_estimate_aggregates(
             'estimate_works', 'estimate_materials', 'estimate_material_profit', 'estimate_material_cost',
         )
-        + "WHERE o.user_id = ? " + where_sql + " GROUP BY o.id ORDER BY " + _SQL_OBJECTS_ORDER
+        + "WHERE o.user_id = ? " + where_sql + " GROUP BY o.id ORDER BY " + order
     )
-    params = (user_id,) + tuple(extra_params)
-    rows = fetch_all(sql, params)
+    params = [user_id, *extra_params]
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params.extend([int(limit), int(offset or 0)])
+    rows = fetch_all(sql, tuple(params))
     for row in rows:
         _apply_object_financial_enrichment(row, user_id)
     return rows
@@ -1187,21 +1213,52 @@ def delete_account():
 @app.route('/api/objects-with-estimates', methods=['GET'])
 @login_required
 def get_objects_with_estimates():
-    # ОДИН запрос с LEFT JOIN вместо N+1
-    objects = _fetch_objects_with_financials(current_user.id)
+    closed_limit = request.args.get('closed_limit', 10, type=int)
+    closed_offset = request.args.get('closed_offset', 0, type=int)
+    closed_limit = max(1, min(closed_limit, 100))
+    closed_offset = max(0, closed_offset)
 
-    # Подсчёт по статусам
-    in_progress = sum(1 for o in objects if o.get('status') == OBJECT_STATUS_ACTIVE)
-    completed = sum(1 for o in objects if o.get('status') in OBJECT_STATUSES_FINISHED)
+    uid = current_user.id
+    archived_ph = ','.join(['?'] * len(OBJECT_STATUSES_ARCHIVED))
+    finished_ph = ','.join(['?'] * len(OBJECT_STATUSES_FINISHED))
+
+    total = _count_objects_for_user(uid)
+    in_progress = _count_objects_for_user(uid, "AND o.status = ?", (OBJECT_STATUS_ACTIVE,))
+    completed = _count_objects_for_user(
+        uid, f"AND o.status IN ({finished_ph})", OBJECT_STATUSES_FINISHED,
+    )
+    closed_total = _count_objects_for_user(
+        uid, f"AND o.status IN ({archived_ph})", OBJECT_STATUSES_ARCHIVED,
+    )
+
+    active_objects = _fetch_objects_with_financials(
+        uid,
+        f"AND o.status NOT IN ({archived_ph}) ",
+        OBJECT_STATUSES_ARCHIVED,
+    )
+    closed_objects = _fetch_objects_with_financials(
+        uid,
+        f"AND o.status IN ({archived_ph}) ",
+        OBJECT_STATUSES_ARCHIVED,
+        order_sql=_SQL_ORDER_CLOSED_RECENT,
+        limit=closed_limit,
+        offset=closed_offset,
+    )
+    objects = active_objects + closed_objects
+
     today_str = datetime.now().strftime('%Y-%m-%d')
     today_profit = sum_profit_for_calendar_day(objects, today_str)
     today_objects = sum(1 for o in objects if object_touched_calendar_day(o, today_str))
 
     return jsonify({
         'objects': objects,
-        'total': len(objects),
+        'total': total,
         'in_progress': in_progress,
         'completed': completed,
+        'closed_total': closed_total,
+        'closed_limit': closed_limit,
+        'closed_offset': closed_offset,
+        'closed_shown': len(closed_objects),
         'today_profit': today_profit,
         'today_objects': today_objects,
         'today_date': today_str,
