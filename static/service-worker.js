@@ -1,4 +1,4 @@
-const CACHE_NAME = 'accounting-v9';
+const CACHE_NAME = 'accounting-v10';
 const OFFLINE_URL = '/offline';
 
 /** Повтор при обрыве сети (холодный старт хостинга, мобильный интернет). */

@@ -471,10 +471,16 @@ def _sql_fragment_order_objects_by_status(prefix: str) -> str:
 
 
 _SQL_OBJECTS_ORDER = _sql_fragment_order_objects_by_status("o")
-_SQL_ORDER_CLOSED_RECENT = (
-    "COALESCE(NULLIF(TRIM(o.updated_at), ''), NULLIF(TRIM(o.date_end), ''), "
-    "NULLIF(TRIM(o.date_start), ''), '') DESC, o.id DESC"
-)
+if IS_POSTGRES:
+    _SQL_ORDER_CLOSED_RECENT = (
+        "o.updated_at DESC NULLS LAST, o.date_end DESC NULLS LAST, "
+        "o.date_start DESC NULLS LAST, o.id DESC"
+    )
+else:
+    _SQL_ORDER_CLOSED_RECENT = (
+        "COALESCE(NULLIF(TRIM(o.updated_at), ''), NULLIF(TRIM(o.date_end), ''), "
+        "NULLIF(TRIM(o.date_start), ''), '') DESC, o.id DESC"
+    )
 
 
 def _sql_objects_estimate_aggregates(as_work, as_mat, as_profit, as_mat_cost='estimate_material_cost'):
@@ -1117,6 +1123,7 @@ def health_check():
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
         "passport_pdf": pdf_ok,
+        "objects_list_version": 2,
     }), 200
 
 
@@ -1236,14 +1243,18 @@ def get_objects_with_estimates():
         f"AND o.status NOT IN ({archived_ph}) ",
         OBJECT_STATUSES_ARCHIVED,
     )
-    closed_objects = _fetch_objects_with_financials(
-        uid,
-        f"AND o.status IN ({archived_ph}) ",
-        OBJECT_STATUSES_ARCHIVED,
-        order_sql=_SQL_ORDER_CLOSED_RECENT,
-        limit=closed_limit,
-        offset=closed_offset,
-    )
+    closed_objects = []
+    try:
+        closed_objects = _fetch_objects_with_financials(
+            uid,
+            f"AND o.status IN ({archived_ph}) ",
+            OBJECT_STATUSES_ARCHIVED,
+            order_sql=_SQL_ORDER_CLOSED_RECENT,
+            limit=closed_limit,
+            offset=closed_offset,
+        )
+    except Exception as exc:
+        logging.error("closed objects fetch failed: %s", exc)
     objects = active_objects + closed_objects
 
     today_str = datetime.now().strftime('%Y-%m-%d')

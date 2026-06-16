@@ -767,6 +767,49 @@
         const closedPageSize = 10;
         let closedVisibleLimit = closedPageSize;
         let closedTotal = 0;
+        let lastObjectsApiData = null;
+
+        function isClosedArchivedStatus(status) {
+            var s = String(status || '').trim();
+            return s === 'Закрыт' || s === 'Оплачен';
+        }
+
+        function closedObjectSortKey(obj) {
+            return String(obj.updated_at || obj.date_end || obj.date_start || '') + '\t' + String(obj.id || '');
+        }
+
+        function splitActiveAndClosed(arr) {
+            var active = [];
+            var closed = [];
+            (arr || []).forEach(function(obj) {
+                if (isClosedArchivedStatus(obj.status)) closed.push(obj);
+                else active.push(obj);
+            });
+            closed.sort(function(a, b) {
+                return closedObjectSortKey(b).localeCompare(closedObjectSortKey(a));
+            });
+            return { active: active, closed: closed };
+        }
+
+        /** Активные + не более N последних закрытых (защита при старом API / офлайн-кэше). */
+        function objectsVisibleInList(all) {
+            var split = splitActiveAndClosed(all);
+            return split.active.concat(split.closed.slice(0, closedVisibleLimit));
+        }
+
+        function countClosedForUi(all, apiData) {
+            if (apiData && apiData.closed_total != null && apiData.closed_shown != null) {
+                return {
+                    total: Number(apiData.closed_total) || 0,
+                    shown: Number(apiData.closed_shown) || 0,
+                };
+            }
+            var split = splitActiveAndClosed(all);
+            return {
+                total: split.closed.length,
+                shown: Math.min(closedVisibleLimit, split.closed.length),
+            };
+        }
 
         function parseWorkDatesFromObject(obj) {
             if (!obj) return [];
@@ -923,8 +966,9 @@
         function updateClosedLoadMoreUi(data) {
             const el = document.getElementById('closed-load-more');
             if (!el) return;
-            closedTotal = Number(data && data.closed_total) || 0;
-            const shown = Number(data && data.closed_shown) || 0;
+            const counts = countClosedForUi(objects, data || lastObjectsApiData);
+            closedTotal = counts.total;
+            const shown = counts.shown;
             const hint = document.getElementById('closed-load-more-hint');
             if (closedTotal > shown) {
                 el.style.display = 'block';
@@ -939,7 +983,11 @@
 
         function loadMoreClosedObjects() {
             closedVisibleLimit += closedPageSize;
-            return loadData(currentPage);
+            if (lastObjectsApiData && lastObjectsApiData.closed_total != null) {
+                return loadData(currentPage);
+            }
+            renderTable();
+            updateClosedLoadMoreUi(null);
         }
 
         function resetClosedVisibleLimit() {
@@ -994,7 +1042,9 @@
                 }
                 
                 const data = await res.json();
-                console.log('loadData: received', (data.objects || []).length, 'objects');
+                lastObjectsApiData = data;
+                console.log('loadData: received', (data.objects || []).length, 'objects',
+                    'closed', data.closed_shown, '/', data.closed_total);
                 objects = data.objects || [];
 
                 // Вычисляем маржу для каждого объекта
@@ -1067,7 +1117,8 @@
                     renderClients();
                     renderTable();
                     renderPagination({ total: total, page: 1, per_page: 50, total_pages: 1 });
-                    updateClosedLoadMoreUi({ closed_total: 0, closed_shown: 0 });
+                    lastObjectsApiData = null;
+                    updateClosedLoadMoreUi(null);
                     console.log('Loaded from cache:', objects.length, 'objects');
                     updateOnlineStatus();
                     tryOpenObjectFromQuery();
@@ -1646,7 +1697,7 @@
             
             console.log('renderTable: objects count =', objects.length);
             
-            let filtered = objects.filter(obj => {
+            let filtered = objectsVisibleInList(objects).filter(obj => {
                 var nameLc = String(obj.name || '').toLowerCase();
                 if (search && !nameLc.includes(search)) return false;
                 if (statusFilter && obj.status !== statusFilter) return false;
@@ -2883,7 +2934,7 @@
         // === PWA ===
         {% if not service_worker_disabled %}
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/service-worker.js?v=9')
+            navigator.serviceWorker.register('/service-worker.js?v=10')
                 .then(function(reg) { console.log('SW OK:', reg.scope); })
                 .catch(function(err) { console.log('SW err:', err); });
         }
