@@ -2179,6 +2179,82 @@ def export_well_passport_preview(obj_id):
     )
 
 
+@app.route('/api/integration/from-taskmgr/lead-lost', methods=['POST'])
+def integration_lead_lost_from_taskmgr():
+    """
+    Диспетчер: заявка в «Отказ» → последняя смета объекта «Отказ клиента».
+    JSON: task_id и/или customer_phone, опционально reason.
+    """
+    try:
+        if not _integration_api_key_matches():
+            return jsonify({'error': 'Unauthorized'}), 401
+        uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
+        if not uid_raw:
+            return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
+        try:
+            target_user_id = int(uid_raw)
+        except ValueError:
+            return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
+        if not fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,)):
+            return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
+
+        data = request.json or {}
+        task_id = (data.get('task_id') or '').strip()
+        phone = str(data.get('customer_phone') or '').strip()
+        reason = (data.get('reason') or '').strip() or 'Отказ клиента'
+        lost_status = 'Отказ клиента'
+
+        object_id = None
+        if task_id:
+            row = fetch_one(
+                'SELECT id FROM objects WHERE user_id = ? AND integration_source = ?',
+                (target_user_id, f'taskmgr:{task_id}'),
+            )
+            if row:
+                object_id = row['id']
+
+        if object_id is None and phone:
+            phone_digits = re.sub(r'\D', '', phone)
+            if phone_digits:
+                objs = fetch_all(
+                    'SELECT id, client FROM objects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 200',
+                    (target_user_id,),
+                )
+                for o in objs or []:
+                    if re.sub(r'\D', '', str(o.get('client') or '')) == phone_digits:
+                        object_id = o['id']
+                        break
+
+        if object_id is None:
+            return jsonify({'ok': True, 'updated': False, 'reason': 'object_not_found'})
+
+        est = fetch_one(
+            """SELECT id, status, notes FROM estimates
+               WHERE user_id = ? AND object_id = ?
+               ORDER BY updated_at DESC, id DESC LIMIT 1""",
+            (target_user_id, object_id),
+        )
+        if not est:
+            return jsonify({'ok': True, 'updated': False, 'reason': 'no_estimate', 'objectId': object_id})
+
+        prev_status = (est.get('status') or '').strip()
+        if prev_status == lost_status:
+            return jsonify({'ok': True, 'updated': False, 'estimateId': est['id'], 'objectId': object_id})
+
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        note_line = f'[{now}] {reason}'
+        prev_notes = (est.get('notes') or '').strip()
+        notes = f'{prev_notes}\n{note_line}'.strip() if prev_notes else note_line
+        execute(
+            'UPDATE estimates SET status = ?, notes = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+            (lost_status, notes, now, est['id'], target_user_id),
+        )
+        return jsonify({'ok': True, 'updated': True, 'estimateId': est['id'], 'objectId': object_id})
+    except Exception:
+        logging.exception('integration: lead-lost failed')
+        return jsonify({'error': 'Internal error'}), 500
+
+
 @app.route('/api/integration/from-taskmgr/well-survey', methods=['POST'])
 def integration_add_well_survey_from_taskmgr():
     """

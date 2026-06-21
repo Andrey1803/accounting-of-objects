@@ -3291,7 +3291,7 @@ def _dispatcher_notify_estimate_status(user_id, object_id, status, estimate_numb
     if not base or not key or not client_id:
         return
     status = (status or '').strip()
-    if status not in ('Отправлена', 'Утверждена'):
+    if status not in ('Отправлена', 'Утверждена', 'Отказ клиента'):
         return
     task_id = ''
     phone = (customer_phone or '').strip()
@@ -3364,7 +3364,7 @@ def api_update_estimate(est_id):
          _safe_float(data.get('discount_percent')), data.get('notes', ''), object_id, now, est_id, current_user.id))
     if n == 0:
         return jsonify({"error": "Not found"}), 404
-    if new_status != prev_status and new_status in ('Отправлена', 'Утверждена'):
+    if new_status != prev_status and new_status in ('Отправлена', 'Утверждена', 'Отказ клиента'):
         _dispatcher_notify_estimate_status(
             current_user.id,
             object_id,
