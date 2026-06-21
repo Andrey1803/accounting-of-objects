@@ -412,6 +412,7 @@
             <h2 id="object-info-title" style="color:#2E75B6;">Объект</h2>
             <div id="object-info-body" class="info-detail-grid"></div>
             <div class="modal-buttons" style="margin-top:16px;">
+                <a href="#" class="btn btn-secondary" id="object-info-dispatcher-btn" target="_blank" rel="noopener noreferrer" style="display:none;text-decoration:none;">📋 Задача в диспетчере</a>
                 <button type="button" class="btn btn-primary" id="object-info-edit-btn">✏️ Редактировать</button>
                 <button type="button" class="btn btn-estimate" id="object-info-est-btn" style="background:#FF6B35;color:#fff;">📊 Сметы</button>
                 <button type="button" class="btn btn-cancel" onclick="closeObjectInfoModal()">Закрыть</button>
@@ -528,6 +529,9 @@
                         </div>
                     </div>
                     <small id="object-expense-total" style="color:#666;display:block;margin-top:6px;font-size:12px;"></small>
+                </div>
+                <div id="object-dispatcher-task-link" class="object-dispatcher-link" style="display:none;margin-bottom:12px;padding:10px 12px;background:#e8f4fc;border-radius:8px;border:1px solid #b3d9f2;">
+                    <a id="object-dispatcher-task-anchor" href="#" target="_blank" rel="noopener noreferrer" style="color:#2E75B6;font-weight:600;text-decoration:none;">📋 Открыть задачу в диспетчере</a>
                 </div>
                 <div class="form-group"><label>Примечания</label><textarea id="notes" rows="2" placeholder="Дополнительная информация..."></textarea></div>
                 <div class="form-group" style="display:flex; align-items:center; gap:8px;">
@@ -744,6 +748,7 @@
     <script src="/static/js/table-pan.js?v=2"></script>
     <script>
         let objects = [], clients = [], editingId = null, currentObjectId = null;
+        const DISPATCHER_TASKS_URL = {{ (dispatcher_tasks_url or '')|tojson }};
         let objectExpenseEntries = [];
         const OBJECT_EXPENSE_CAT_LABELS = {
             fuel: 'Топливо', subcontract: 'Субподряд', equipment: 'Аренда техники',
@@ -1320,6 +1325,41 @@
             return '<div class="info-detail-row"><span class="info-detail-label">' + escHtml(label) + '</span><span class="info-detail-value">' + escHtml(value != null && value !== '' ? String(value) : '—') + '</span></div>';
         }
 
+        function dispatcherTaskUrlFromIntegrationSource(src) {
+            var base = String(DISPATCHER_TASKS_URL || '').trim().replace(/\/+$/, '');
+            if (!base) return null;
+            var s = String(src || '').trim();
+            if (!s.startsWith('taskmgr:')) return null;
+            var taskId = s.slice('taskmgr:'.length).trim();
+            if (!taskId) return null;
+            return base + '/tasks/' + encodeURIComponent(taskId);
+        }
+
+        function syncObjectDispatcherTaskLink(obj) {
+            var box = document.getElementById('object-dispatcher-task-link');
+            var anchor = document.getElementById('object-dispatcher-task-anchor');
+            var infoBtn = document.getElementById('object-info-dispatcher-btn');
+            var url = obj ? dispatcherTaskUrlFromIntegrationSource(obj.integration_source) : null;
+            if (box && anchor) {
+                if (url) {
+                    anchor.href = url;
+                    box.style.display = 'block';
+                } else {
+                    anchor.removeAttribute('href');
+                    box.style.display = 'none';
+                }
+            }
+            if (infoBtn) {
+                if (url) {
+                    infoBtn.href = url;
+                    infoBtn.style.display = '';
+                } else {
+                    infoBtn.removeAttribute('href');
+                    infoBtn.style.display = 'none';
+                }
+            }
+        }
+
         function clientInfoRow(label, value) {
             return infoDetailRow(label, value);
         }
@@ -1355,11 +1395,15 @@
             }
 
             title.textContent = obj.name || ('Объект #' + obj.id);
+            syncObjectDispatcherTaskLink(obj);
             body.innerHTML =
                 infoDetailRow('ID', obj.id) +
                 infoDetailRow('Наименование', obj.name) +
                 infoDetailRow('Клиент', objectClientDisplay(obj)) +
                 infoDetailRow('Статус', obj.status) +
+                (dispatcherTaskUrlFromIntegrationSource(obj.integration_source)
+                    ? '<div class="info-detail-row"><span class="info-detail-label">Диспетчер</span><span class="info-detail-value"><a href="' + escHtml(dispatcherTaskUrlFromIntegrationSource(obj.integration_source)) + '" target="_blank" rel="noopener noreferrer">📋 Задача в диспетчере</a></span></div>'
+                    : '') +
                 infoDetailRow('Расчёт', SETTLEMENT_LABELS[st] || st) +
                 (st === 'cashless' ? infoDetailRow('Налог', TAX_REGIME_LABELS[obj.tax_regime] || obj.tax_regime || '—') : '') +
                 infoDetailRow('Дни на объекте', formatWorkDaysCell(obj)) +
@@ -1899,7 +1943,9 @@
 
                 // Загружаем инфо о рабочих
                 loadSalaryInfo(obj.id);
+                syncObjectDispatcherTaskLink(obj);
             } else {
+                syncObjectDispatcherTaskLink(null);
                 document.getElementById('object-form').reset();
                 objectWorkDaysEdit = [new Date().toISOString().split('T')[0]];
                 renderWorkDaysEditor();
