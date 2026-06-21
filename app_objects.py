@@ -1387,6 +1387,7 @@ def integration_create_object_from_taskmgr():
                 or ('work_dates' in data and data.get('work_dates') is not None)
                 or advance_payload is not None
                 or advance_delta_payload is not None
+                or (data.get('status') is not None and str(data.get('status') or '').strip())
             )
             contacts_changed = bool(contact_in or company_in or phone or address)
             if contacts_changed:
@@ -1438,9 +1439,23 @@ def integration_create_object_from_taskmgr():
                     advance_new = float(existing.get('advance') or 0)
                 except (TypeError, ValueError):
                     advance_new = 0.0
+            status_in = (data.get('status') or '').strip() if data.get('status') is not None else ''
+            status_new = status_in if status_in else (existing.get('status') or OBJECT_STATUS_WAITING)
             execute(
-                'UPDATE objects SET name=?, date_start=?, date_end=?, work_dates=?, client=?, client_id=?, advance=? WHERE id=? AND user_id=?',
-                (name_new, ds_b, de_b, work_dates_json, client_name, client_id, advance_new, existing['id'], target_user_id),
+                'UPDATE objects SET name=?, date_start=?, date_end=?, work_dates=?, client=?, client_id=?, advance=?, status=?, updated_at=? WHERE id=? AND user_id=?',
+                (
+                    name_new,
+                    ds_b,
+                    de_b,
+                    work_dates_json,
+                    client_name,
+                    client_id,
+                    advance_new,
+                    status_new,
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    existing['id'],
+                    target_user_id,
+                ),
             )
             if business_client_id and phone:
                 _dispatcher_upsert_profile(
