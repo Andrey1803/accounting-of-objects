@@ -8,6 +8,10 @@ from database import fetch_all, fetch_one, execute, execute_rowcount
 import logging
 import re
 import openpyxl
+import os
+import json
+import urllib.request
+import urllib.parse
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 import io
 
@@ -3279,6 +3283,55 @@ def api_get_estimate(est_id):
                 )
     return jsonify({**est, 'items': items})
 
+def _dispatcher_notify_estimate_status(user_id, object_id, status, estimate_number='', customer_phone=''):
+    """Webhook в диспетчер: смета «Отправлена» / «Утверждена» → стадия заявки."""
+    base = (os.environ.get('DISPATCHER_API_BASE_URL') or os.environ.get('DISPATCHER_API_URL') or '').strip().rstrip('/')
+    key = (os.environ.get('INTEGRATION_API_KEY') or '').strip()
+    client_id = (os.environ.get('DISPATCHER_BUSINESS_CLIENT_ID') or '').strip()
+    if not base or not key or not client_id:
+        return
+    status = (status or '').strip()
+    if status not in ('Отправлена', 'Утверждена'):
+        return
+    task_id = ''
+    phone = (customer_phone or '').strip()
+    if object_id:
+        obj = fetch_one(
+            'SELECT integration_source, client FROM objects WHERE id = ? AND user_id = ?',
+            (object_id, user_id),
+        )
+        if obj:
+            src = str(obj.get('integration_source') or '').strip()
+            if src.startswith('taskmgr:'):
+                task_id = src.split(':', 1)[1].strip()
+            if not phone:
+                phone = str(obj.get('client') or '').strip()
+    payload = {
+        'clientId': client_id,
+        'estimateStatus': status,
+        'taskId': task_id or None,
+        'customerPhone': phone or None,
+        'estimateNumber': (estimate_number or '').strip() or None,
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
+    url = f"{base}/v1/integration/object-accounting/estimate-status"
+    body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    req = urllib.request.Request(
+        url=url,
+        data=body,
+        headers={
+            'Authorization': f'Bearer {key}',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        },
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12):
+            return
+    except Exception:
+        logger.exception('integration: dispatcher estimate-status POST failed')
+
 @estimate_bp.route('/api/estimates/<int:est_id>', methods=['PUT'])
 @login_required
 @_require_csrf
@@ -3287,24 +3340,38 @@ def api_update_estimate(est_id):
     if err: return err
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     prev = fetch_one(
-        "SELECT object_id FROM estimates WHERE id = ? AND user_id = ?",
+        """SELECT e.object_id, e.status AS prev_status, e.number,
+                  o.integration_source, o.client
+           FROM estimates e
+           LEFT JOIN objects o ON o.id = e.object_id AND o.user_id = e.user_id
+           WHERE e.id = ? AND e.user_id = ?""",
         (est_id, current_user.id),
     )
     if not prev:
         return jsonify({"error": "Not found"}), 404
     object_id = prev.get('object_id') or 0
+    prev_status = (prev.get('prev_status') or '').strip()
     if 'object_id' in data:
         object_id, bad = _resolve_object_id_for_user(data.get('object_id'), current_user.id)
         if bad:
             return bad
+    new_status = (data.get('status') or prev_status or 'Черновик').strip()
     n = execute_rowcount("""UPDATE estimates SET date=?, object_name=?, client=?, status=?,
            vat_percent=?, markup_percent=?, discount_percent=?, notes=?, object_id=?, updated_at=?
            WHERE id=? AND user_id=?""",
-        (data.get('date'), data.get('object_name'), data.get('client'), data.get('status'),
+        (data.get('date'), data.get('object_name'), data.get('client'), new_status,
          _safe_float(data.get('vat_percent')), _safe_float(data.get('markup_percent')),
          _safe_float(data.get('discount_percent')), data.get('notes', ''), object_id, now, est_id, current_user.id))
     if n == 0:
         return jsonify({"error": "Not found"}), 404
+    if new_status != prev_status and new_status in ('Отправлена', 'Утверждена'):
+        _dispatcher_notify_estimate_status(
+            current_user.id,
+            object_id,
+            new_status,
+            estimate_number=prev.get('number') or '',
+            customer_phone=(data.get('client') or prev.get('client') or ''),
+        )
     return jsonify({"ok": True})
 
 @estimate_bp.route('/api/estimates/<int:est_id>', methods=['DELETE'])
