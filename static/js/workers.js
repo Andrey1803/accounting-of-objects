@@ -278,14 +278,14 @@ var WorkersPage = (function(API, UI) {
             if (!w) return;
             if (wName) wName.value = w.full_name || '';
             if (wPhone) wPhone.value = w.phone || '';
-            if (wRate) wRate.value = w.daily_rate || 150;
+            if (wRate) wRate.value = numInputDisplay(w.daily_rate);
             if (wHireDate) wHireDate.value = w.hire_date || '';
             if (wNotes) wNotes.value = w.notes || '';
             if (wActive) wActive.checked = isActive(w);
         } else {
             if (wName) wName.value = '';
             if (wPhone) wPhone.value = '';
-            if (wRate) wRate.value = 150;
+            if (wRate) wRate.value = '';
             if (wHireDate) wHireDate.value = '';
             if (wNotes) wNotes.value = '';
             if (wActive) wActive.checked = true;

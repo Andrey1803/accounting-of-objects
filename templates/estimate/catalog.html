@@ -134,10 +134,10 @@
                 <div class="fg"><label>Категория</label><select id="f-cat"></select></div>
             </div>
             <div class="frow" id="pRowMat">
-                <div class="fg"><label>Закупка</label><input type="number" step="0.01" id="f-purch"></div>
-                <div class="fg"><label>РРЦ</label><input type="number" step="0.01" id="f-retail"></div>
+                <div class="fg"><label>Закупка</label><input type="number" step="0.01" id="f-purch" placeholder="0"></div>
+                <div class="fg"><label>РРЦ</label><input type="number" step="0.01" id="f-retail" placeholder="0"></div>
             </div>
-            <div class="fg" id="pRowWork" style="display:none;"><label>Цена</label><input type="number" step="0.01" id="f-wprice"></div>
+            <div class="fg" id="pRowWork" style="display:none;"><label>Цена</label><input type="number" step="0.01" id="f-wprice" placeholder="0"></div>
             <div class="fg"><label>Тип</label><input type="text" id="f-type"></div>
             <div class="modal-actions">
                 <button class="btn" style="background:#999" onclick="closeModal()">Отмена</button>
@@ -161,6 +161,7 @@
         </div>
     </div>
 
+    <script src="/static/js/utils.js?v=6"></script>
     <script>
         let curType='mat', curCat='', curCatDescendants=[], curFilterType='', allData=[], categoryTree=[], currentPath=[];
         let dbCategories=[], selectedDbCatId=null, catPresetParentId=null;
@@ -598,10 +599,10 @@
             document.getElementById('f-type').value=d.item_type||'';
             document.getElementById('f-unit').value=d.unit||'шт';
             if(curType==='mat'){
-                document.getElementById('f-purch').value=d.purchase_price||0;
-                document.getElementById('f-retail').value=d.retail_price||0;
+                document.getElementById('f-purch').value = numInputDisplay(d.purchase_price);
+                document.getElementById('f-retail').value = numInputDisplay(d.retail_price);
             } else {
-                document.getElementById('f-wprice').value=d.price||0;
+                document.getElementById('f-wprice').value = numInputDisplay(d.price);
             }
             document.getElementById('pRowMat').style.display=curType==='mat'?'flex':'none';
             document.getElementById('pRowWork').style.display=curType==='work'?'block':'none';

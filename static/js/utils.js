@@ -37,6 +37,23 @@ function formatMoney(num) {
 }
 
 /**
+ * Значение для числового поля: пусто вместо нуля (ноль — только placeholder).
+ */
+function numInputDisplay(v) {
+    if (v === null || v === undefined || v === '') return '';
+    var n = parseFloat(v);
+    if (!isFinite(n) || n === 0) return '';
+    return String(v);
+}
+
+function clearMoneyInputIds(ids) {
+    (ids || []).forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+}
+
+/**
  * Форматирование даты
  */
 function formatDate(dateStr) {

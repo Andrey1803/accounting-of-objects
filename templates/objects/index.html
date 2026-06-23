@@ -471,8 +471,8 @@
                     <div id="client-phone-hint" class="client-phone-hint" aria-live="polite"></div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group"><label>Сумма работ</label><input type="number" id="sum-work" step="0.01" value="0"></div>
-                    <div class="form-group"><label>Прочие затраты (сводно)</label><input type="number" id="expenses" step="0.01" value="0" title="Сумма вне сметы; доп. строки учитываются отдельно ниже"></div>
+                    <div class="form-group"><label>Сумма работ</label><input type="number" id="sum-work" step="0.01" placeholder="0"></div>
+                    <div class="form-group"><label>Прочие затраты (сводно)</label><input type="number" id="expenses" step="0.01" placeholder="0" title="Сумма вне сметы; доп. строки учитываются отдельно ниже"></div>
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label>Расчёт с заказчиком</label>
@@ -494,7 +494,7 @@
                     <div class="form-group"><label>Статус</label>
                         <select id="status" title="Ожидает старта — ещё не начали. Выполнен — работы сданы. Закрыт — объект финансово закрыт."><option>Ожидает старта</option><option>В работе</option><option>Приостановлен</option><option>Выполнен</option><option>Закрыт</option></select>
                     </div>
-                    <div class="form-group"><label>Аванс</label><input type="number" id="advance" step="0.01" value="0"></div>
+                    <div class="form-group"><label>Аванс</label><input type="number" id="advance" step="0.01" placeholder="0"></div>
                 </div>
                 <div class="form-group"><label>Расчёт «затрат на рабочих»</label>
                     <select id="salary-allocation-mode" title="По умолчанию доля всех активных рабочих на все объекты за день. Исключения — если выезжали сами или на объекте не вся бригада.">
@@ -506,7 +506,7 @@
                 </div>
                 <div class="form-group"><label>Затраты на рабочих</label>
                     <div style="display:flex; gap:8px; align-items:center;">
-                        <input type="number" id="salary" step="0.01" value="0" style="flex:1;" readonly title="Рассчитывается автоматически">
+                        <input type="number" id="salary" step="0.01" placeholder="0" style="flex:1;" readonly title="Рассчитывается автоматически">
                         <button type="button" class="btn" style="background:#9C27B0; color:white; font-size:11px; padding:6px 10px;" onclick="openWorkersModal(editingId)">👷 Рабочие</button>
                         <button type="button" class="btn" style="background:#00796B; color:white; font-size:11px; padding:6px 10px;" onclick="openWellSurveysModal()" title="Опытные замеры и расчёт дебита">🔬 Замеры</button>
                     </div>
@@ -517,7 +517,7 @@
                     <div id="object-expense-list" style="max-height:160px; overflow-y:auto; font-size:13px; margin-bottom:8px;"></div>
                     <div class="form-row" style="margin-bottom:0;">
                         <div class="form-group" style="flex:0 0 110px;"><label style="font-size:12px;">Дата</label><input type="date" id="obj-exp-date"></div>
-                        <div class="form-group" style="flex:0 0 90px;"><label style="font-size:12px;">Сумма</label><input type="number" id="obj-exp-amount" step="0.01" min="0"></div>
+                        <div class="form-group" style="flex:0 0 90px;"><label style="font-size:12px;">Сумма</label><input type="number" id="obj-exp-amount" step="0.01" min="0" placeholder="0"></div>
                         <div class="form-group" style="flex:1;"><label style="font-size:12px;">Категория</label>
                             <select id="obj-exp-category">
                                 <option value="fuel">Топливо</option>
@@ -752,7 +752,7 @@
 
     <button class="sync-btn" id="syncBtn" onclick="syncNow()">🔄 Синхронизация</button>
 
-    <script src="/static/js/utils.js?v=5"></script>
+    <script src="/static/js/utils.js?v=6"></script>
     <script src="/static/js/addressParse.js?v=1"></script>
     <script src="/static/js/offline.js?v=3"></script>
     <script src="/static/js/table-pan.js?v=2"></script>
@@ -2064,8 +2064,8 @@
                 document.getElementById('client').value = clientSelectValueForObject(obj);
                 refreshClientSelectPhoneUi('client', 'client-phone-hint');
                 document.getElementById('status').value = obj.status;
-                document.getElementById('advance').value = obj.advance;
-                document.getElementById('salary').value = obj.salary;
+                document.getElementById('advance').value = numInputDisplay(obj.advance);
+                document.getElementById('salary').value = numInputDisplay(obj.salary);
                 document.getElementById('salary-allocation-mode').value = obj.salary_allocation_mode || 'all_workers';
                 syncSalaryAllocationUi();
                 document.getElementById('notes').value = obj.notes || '';
@@ -2081,8 +2081,8 @@
                 loadEstimateData(obj.id, function(estTotals) {
                     const sumWork = estTotals.total_works || obj.sum_work || 0;
                     const expenses = estTotals.total_materials || obj.expenses || 0;
-                    document.getElementById('sum-work').value = sumWork;
-                    document.getElementById('expenses').value = expenses;
+                    document.getElementById('sum-work').value = numInputDisplay(sumWork);
+                    document.getElementById('expenses').value = numInputDisplay(expenses);
                 });
 
                 // Загружаем инфо о рабочих
@@ -2094,6 +2094,7 @@
                 var histFold = document.getElementById('object-history-fold');
                 if (histFold) histFold.style.display = 'none';
                 document.getElementById('object-form').reset();
+                clearMoneyInputIds(['sum-work', 'expenses', 'advance', 'salary']);
                 objectWorkDaysEdit = [new Date().toISOString().split('T')[0]];
                 renderWorkDaysEditor();
                 document.getElementById('salary-allocation-mode').value = 'all_workers';
@@ -2282,6 +2283,7 @@
         function closeModal() {
             document.getElementById('modal').classList.remove('active');
             document.getElementById('object-form').reset();
+            clearMoneyInputIds(['sum-work', 'expenses', 'advance', 'salary']);
             objectWorkDaysEdit = [];
             editingId = null;
             objectExpenseEntries = [];
@@ -3263,7 +3265,7 @@
 
                 // Обновляем поле зарплаты в форме объекта
                 const salaryInput = document.getElementById('salary');
-                if (salaryInput) salaryInput.value = Number(data.total_pay).toLocaleString('ru-RU', {minimumFractionDigits:2});
+                if (salaryInput) salaryInput.value = numInputDisplay(data.total_pay);
                 document.getElementById('salary-info').textContent = `👷 ${objectWorkersData.length} рабочих, ${Number(data.total_pay).toLocaleString('ru-RU', {minimumFractionDigits:2})} руб`;
 
                 renderObjectWorkers();
@@ -3289,7 +3291,7 @@
                 objectWorkersData = objectWorkersData.filter(a => a.id !== assignmentId);
 
                 const salaryInput = document.getElementById('salary');
-                if (salaryInput) salaryInput.value = '0.00';
+                if (salaryInput) salaryInput.value = '';
                 document.getElementById('salary-info').textContent = 'Рабочий удалён';
 
                 renderObjectWorkers();
