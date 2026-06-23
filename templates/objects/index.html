@@ -540,6 +540,10 @@
                     <a id="object-dispatcher-task-anchor" href="#" target="_blank" rel="noopener noreferrer" style="color:#2E75B6;font-weight:600;text-decoration:none;">📋 Открыть задачу в диспетчере</a>
                 </div>
                 <div class="form-group"><label>Примечания</label><textarea id="notes" rows="2" placeholder="Дополнительная информация..."></textarea></div>
+                <details id="object-history-fold" class="object-history-fold" style="display:none;margin:12px 0 0;">
+                    <summary style="cursor:pointer;font-weight:600;color:#2E75B6;">История изменений</summary>
+                    <ul id="object-history-list" class="history-list" style="margin:10px 0 0;padding-left:0;list-style:none;max-height:220px;overflow-y:auto;"></ul>
+                </details>
                 <div class="form-group" style="display:flex; align-items:center; gap:8px;">
                     <input type="checkbox" id="is-regular-to">
                     <label for="is-regular-to" style="margin:0;">Регулярное ТО</label>
@@ -1993,6 +1997,57 @@
             } catch (err) { alert('Ошибка: ' + err.message); }
         }
 
+        function formatObjectHistoryAction(item) {
+            if (item.action === 'create') return 'Создан объект';
+            if (item.action === 'delete') return 'Объект удалён';
+            if (item.action === 'update' && item.field_label) {
+                var oldV = (item.old_value || '—').toString();
+                var newV = (item.new_value || '—').toString();
+                if (oldV.length > 80) oldV = oldV.slice(0, 77) + '…';
+                if (newV.length > 80) newV = newV.slice(0, 77) + '…';
+                return item.field_label + ': «' + oldV + '» → «' + newV + '»';
+            }
+            return item.action || 'Изменение';
+        }
+
+        function formatObjectHistorySource(src) {
+            if (src === 'integration') return 'интеграция';
+            if (src === 'ui') return 'интерфейс';
+            return src || '';
+        }
+
+        async function loadObjectHistory(objectId) {
+            var fold = document.getElementById('object-history-fold');
+            var list = document.getElementById('object-history-list');
+            if (!fold || !list || !objectId) return;
+            fold.style.display = 'block';
+            list.innerHTML = '<li style="color:#888;font-size:13px;">Загрузка…</li>';
+            try {
+                var res = await fetch('/api/objects/' + objectId + '/history?limit=80');
+                if (!res.ok) {
+                    list.innerHTML = '<li style="color:#c00;font-size:13px;">Не удалось загрузить историю</li>';
+                    return;
+                }
+                var data = await res.json();
+                var items = data.items || [];
+                if (!items.length) {
+                    list.innerHTML = '<li style="color:#888;font-size:13px;">Пока нет записей (история ведётся с момента обновления)</li>';
+                    return;
+                }
+                list.innerHTML = items.map(function(item) {
+                    var when = item.changed_at ? new Date(item.changed_at).toLocaleString('ru-RU') : '';
+                    var who = item.changed_by_username || (item.source === 'integration' ? 'Диспетчер' : '—');
+                    var src = formatObjectHistorySource(item.source);
+                    return '<li style="border-bottom:1px solid #eee;padding:6px 0;font-size:13px;">' +
+                        '<span style="color:#888;">' + when + '</span> · <strong>' + who + '</strong>' +
+                        (src ? ' <span style="color:#aaa;">(' + src + ')</span>' : '') +
+                        '<br>' + formatObjectHistoryAction(item) + '</li>';
+                }).join('');
+            } catch (err) {
+                list.innerHTML = '<li style="color:#c00;font-size:13px;">Ошибка: ' + err.message + '</li>';
+            }
+        }
+
         function openModal(id = null) {
             editingId = id;
             document.getElementById('modal').classList.add('active');
@@ -2033,8 +2088,11 @@
                 // Загружаем инфо о рабочих
                 loadSalaryInfo(obj.id);
                 syncObjectDispatcherTaskLink(obj);
+                loadObjectHistory(obj.id);
             } else {
                 syncObjectDispatcherTaskLink(null);
+                var histFold = document.getElementById('object-history-fold');
+                if (histFold) histFold.style.display = 'none';
                 document.getElementById('object-form').reset();
                 objectWorkDaysEdit = [new Date().toISOString().split('T')[0]];
                 renderWorkDaysEditor();

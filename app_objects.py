@@ -44,6 +44,13 @@ from well_passport import (
     generate_passport_files,
     survey_row_for_passport,
 )
+from object_audit import (
+    get_object_change_history,
+    log_object_create,
+    log_object_delete,
+    log_object_field_diff,
+    OBJECT_AUDIT_FIELDS,
+)
 
 app = Flask(__name__)
 # Секретный ключ для сессий — генерируется при запуске или берётся из окружения
@@ -1313,6 +1320,10 @@ def add_object():
     obj = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (oid, current_user.id))
     if obj:
         _apply_object_financial_enrichment(obj, current_user.id)
+        try:
+            log_object_create(current_user.id, oid, dict(obj), changed_by_user_id=current_user.id)
+        except Exception:
+            logging.exception("object_audit: failed to log create for object %s", oid)
     return jsonify(obj), 201
 
 
@@ -1473,6 +1484,18 @@ def integration_create_object_from_taskmgr():
             except Exception:
                 pass
             obj = fetch_one('SELECT * FROM objects WHERE id=? AND user_id=?', (existing['id'], target_user_id))
+            if obj:
+                try:
+                    log_object_field_diff(
+                        target_user_id,
+                        existing['id'],
+                        dict(existing),
+                        dict(obj),
+                        source='integration',
+                        changed_by_user_id=None,
+                    )
+                except Exception:
+                    logging.exception("object_audit: integration update log failed for object %s", existing['id'])
             return jsonify({'ok': True, 'idempotent': True, 'object': obj, 'synced': True}), 200
 
         name = (data.get('name') or '').strip()
@@ -1543,6 +1566,11 @@ def integration_create_object_from_taskmgr():
         except Exception:
             pass
         obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
+        if obj:
+            try:
+                log_object_create(target_user_id, oid, dict(obj), source='integration', changed_by_user_id=None)
+            except Exception:
+                logging.exception("object_audit: integration create log failed for object %s", oid)
         if business_client_id and phone:
             _dispatcher_upsert_profile(
                 business_client_id,
@@ -1626,6 +1654,16 @@ def update_object(obj_id):
 
     row = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id))
     if row:
+        try:
+            log_object_field_diff(
+                current_user.id,
+                obj_id,
+                dict(ex),
+                dict(row),
+                changed_by_user_id=current_user.id,
+            )
+        except Exception:
+            logging.exception("object_audit: update log failed for object %s", obj_id)
         obj_out = dict(row)
         _apply_object_financial_enrichment(obj_out, current_user.id)
         return jsonify(obj_out)
@@ -1635,6 +1673,13 @@ def update_object(obj_id):
 @login_required
 @require_csrf
 def delete_object(obj_id):
+    ex = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id))
+    if not ex:
+        return jsonify({"error": "Not found"}), 404
+    try:
+        log_object_delete(current_user.id, obj_id, dict(ex), changed_by_user_id=current_user.id)
+    except Exception:
+        logging.exception("object_audit: delete log failed for object %s", obj_id)
     # Получаем все сметы объекта
     estimates = fetch_all("SELECT id FROM estimates WHERE object_id = ? AND user_id = ?", (obj_id, current_user.id))
 
@@ -1838,6 +1883,20 @@ def _object_owned_or_404(obj_id, user_id):
     if not row:
         return None, (jsonify({"error": "Объект не найден"}), 404)
     return row, None
+
+
+@app.route('/api/objects/<int:obj_id>/history', methods=['GET'])
+@login_required
+def get_object_history(obj_id):
+    _, err = _object_owned_or_404(obj_id, current_user.id)
+    if err:
+        return err
+    try:
+        limit = int(request.args.get('limit', 100))
+    except (TypeError, ValueError):
+        limit = 100
+    items = get_object_change_history(current_user.id, obj_id, limit=limit)
+    return jsonify({"items": items, "fieldLabels": OBJECT_AUDIT_FIELDS})
 
 
 @app.route('/api/objects/<int:obj_id>/expense-entries', methods=['GET'])

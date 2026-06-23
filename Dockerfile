@@ -17,7 +17,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY app_objects.py auth.py database.py estimate_module.py extensions.py well_passport.py price_sync.py gunicorn.conf.py ./
+COPY app_objects.py auth.py database.py object_audit.py estimate_module.py extensions.py well_passport.py price_sync.py gunicorn.conf.py ./
 COPY templates/ templates/
 COPY static/ static/
 

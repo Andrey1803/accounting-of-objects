@@ -240,6 +240,7 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS idx_workers_user ON workers(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_worker_account_user_worker ON worker_account_entries(user_id, worker_id)",
         "CREATE INDEX IF NOT EXISTS idx_well_surveys_object ON object_well_surveys(user_id, object_id)",
+        "CREATE INDEX IF NOT EXISTS idx_object_change_log_object ON object_change_log(user_id, object_id, id)",
     ]
     try:
         for sql in stmts:
@@ -442,6 +443,52 @@ def _migrate_object_status_labels(conn):
         mc.close()
 
 
+def _ensure_object_change_log_table(conn):
+    """Таблица журнала изменений объектов (для баз, созданных до появления фичи)."""
+    cur = conn.cursor()
+    try:
+        if IS_POSTGRES:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS object_change_log (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    object_id INTEGER NOT NULL REFERENCES objects(id) ON DELETE CASCADE,
+                    changed_at TIMESTAMP DEFAULT NOW(),
+                    changed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    source TEXT DEFAULT 'ui',
+                    action TEXT NOT NULL,
+                    field_name TEXT,
+                    old_value TEXT,
+                    new_value TEXT,
+                    snapshot_json TEXT)
+                """
+            )
+        else:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS object_change_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    object_id INTEGER NOT NULL,
+                    changed_at TEXT DEFAULT '',
+                    changed_by_user_id INTEGER,
+                    source TEXT DEFAULT 'ui',
+                    action TEXT NOT NULL,
+                    field_name TEXT,
+                    old_value TEXT,
+                    new_value TEXT,
+                    snapshot_json TEXT)
+                """
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+
+
 def init_db():
     """Создать таблицы если не существуют. Не удаляет файл БД и не DROP TABLE — только CREATE/ALTER при необходимости."""
     conn = get_connection()
@@ -574,6 +621,20 @@ def init_db():
                 computed_json TEXT DEFAULT '{}',
                 conclusion TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT NOW())
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS object_change_log (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                object_id INTEGER NOT NULL REFERENCES objects(id) ON DELETE CASCADE,
+                changed_at TIMESTAMP DEFAULT NOW(),
+                changed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                source TEXT DEFAULT 'ui',
+                action TEXT NOT NULL,
+                field_name TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                snapshot_json TEXT)
             """,
         ])
 
@@ -710,6 +771,18 @@ def init_db():
                 computed_json TEXT DEFAULT '{}',
                 conclusion TEXT DEFAULT '',
                 created_at TEXT DEFAULT '');
+            CREATE TABLE IF NOT EXISTS object_change_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                object_id INTEGER NOT NULL,
+                changed_at TEXT DEFAULT '',
+                changed_by_user_id INTEGER,
+                source TEXT DEFAULT 'ui',
+                action TEXT NOT NULL,
+                field_name TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                snapshot_json TEXT);
         """)
 
     # Миграция для старых баз (добавляем parent_id если нет)
@@ -888,6 +961,11 @@ def init_db():
         _backfill_objects_work_dates(conn)
     except Exception as e:
         logging.warning("Миграция work_dates objects: %s", e)
+
+    try:
+        _ensure_object_change_log_table(conn)
+    except Exception as e:
+        logging.warning("Миграция object_change_log: %s", e)
 
     cur.close()
     _ensure_indexes()
