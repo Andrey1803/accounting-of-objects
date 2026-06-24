@@ -1323,7 +1323,7 @@ def delete_account():
 def get_objects_with_estimates():
     closed_limit = request.args.get('closed_limit', 10, type=int)
     closed_offset = request.args.get('closed_offset', 0, type=int)
-    closed_limit = max(1, min(closed_limit, 100))
+    closed_limit = max(1, min(closed_limit, 500))
     closed_offset = max(0, closed_offset)
 
     uid = current_user.id

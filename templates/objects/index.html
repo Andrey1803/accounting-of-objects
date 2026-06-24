@@ -774,10 +774,13 @@
         let currentPage = 1;
         const perPage = 50;
         const closedPageSize = 10;
+        const closedFetchMax = 500;
+        const SORT_COL_STATUS = 4;
         let closedVisibleLimit = closedPageSize;
         let closedTotal = 0;
         let lastObjectsApiData = null;
-        let sortCol = -1;
+        /** По умолчанию: статус ↑, внутри статуса — свежие даты выше. */
+        let sortCol = SORT_COL_STATUS;
         let sortAsc = true;
 
         function isClosedArchivedStatus(status) {
@@ -802,32 +805,48 @@
             return { active: active, closed: closed };
         }
 
-        /** Активные + не более N последних закрытых (защита при старом API / офлайн-кэше). */
-        function objectsVisibleInList(all) {
-            if (sortCol >= 0) {
-                var closedShown = 0;
-                return (all || []).filter(function(obj) {
-                    if (!isClosedArchivedStatus(obj.status)) return true;
-                    closedShown++;
-                    return closedShown <= closedVisibleLimit;
-                });
+        /** Сколько закрытых запросить у API (все — для корректной сортировки, в т.ч. «свернутых»). */
+        function closedLimitForFetch() {
+            var want = Math.max(closedVisibleLimit, 100);
+            if (lastObjectsApiData && lastObjectsApiData.closed_total != null) {
+                want = Math.max(want, Number(lastObjectsApiData.closed_total) || 0);
             }
-            var split = splitActiveAndClosed(all);
-            return split.active.concat(split.closed.slice(0, closedVisibleLimit));
+            return Math.min(want, closedFetchMax);
+        }
+
+        function countClosedInArray(arr) {
+            return (arr || []).filter(function(o) { return isClosedArchivedStatus(o.status); }).length;
+        }
+
+        /** Активные + закрытые с учётом сортировки и лимита «свернутых». */
+        function objectsVisibleInList(all) {
+            var arr = all || [];
+            // Сортировка не по статусу (дата, имя, …) — показываем все загруженные объекты.
+            if (sortCol >= 0 && sortCol !== SORT_COL_STATUS) {
+                return arr;
+            }
+            // Статус (в т.ч. по умолчанию): порядок общий, но закрытых видно не больше N.
+            var closedShown = 0;
+            return arr.filter(function(obj) {
+                if (!isClosedArchivedStatus(obj.status)) return true;
+                closedShown++;
+                return closedShown <= closedVisibleLimit;
+            });
         }
 
         function countClosedForUi(all, apiData) {
-            if (apiData && apiData.closed_total != null && apiData.closed_shown != null) {
-                return {
-                    total: Number(apiData.closed_total) || 0,
-                    shown: Number(apiData.closed_shown) || 0,
-                };
+            var total = 0;
+            if (apiData && apiData.closed_total != null) {
+                total = Number(apiData.closed_total) || 0;
+            } else {
+                total = countClosedInArray(all);
             }
-            var split = splitActiveAndClosed(all);
-            return {
-                total: split.closed.length,
-                shown: Math.min(closedVisibleLimit, split.closed.length),
-            };
+            var loadedClosed = countClosedInArray(all);
+            var shown = countClosedInArray(objectsVisibleInList(all));
+            if (sortCol >= 0 && sortCol !== SORT_COL_STATUS) {
+                shown = loadedClosed;
+            }
+            return { total: total, shown: shown, loadedClosed: loadedClosed };
         }
 
         function parseWorkDatesFromObject(obj) {
@@ -1050,7 +1069,8 @@
             closedTotal = counts.total;
             const shown = counts.shown;
             const hint = document.getElementById('closed-load-more-hint');
-            if (closedTotal > shown) {
+            var hideLoadMore = sortCol >= 0 && sortCol !== SORT_COL_STATUS;
+            if (!hideLoadMore && closedTotal > shown) {
                 el.style.display = 'block';
                 if (hint) {
                     hint.textContent = 'Закрытых объектов: показано ' + shown + ' из ' + closedTotal;
@@ -1102,7 +1122,7 @@
                 currentPage = page;
                 
                 const params = new URLSearchParams({ page, per_page: perPage });
-                params.set('closed_limit', String(closedVisibleLimit));
+                params.set('closed_limit', String(closedLimitForFetch()));
                 params.set('closed_offset', '0');
                 
                 console.log('loadData: fetching objects with params:', params.toString());
@@ -1133,7 +1153,7 @@
                     const profit = obj.total_profit || 0;
                     obj.margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
                 });
-                applyObjectsSort(false);
+                applyObjectsSort(true);
 
                 const clientsRes = await clientsPromise;
                 if (clientsRes.ok) {
@@ -1188,7 +1208,7 @@
                         var profit = obj.total_profit || 0;
                         obj.margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
                     });
-                    applyObjectsSort(false);
+                    applyObjectsSort(true);
                     renderStats({ total: total, in_progress: inProg, completed: compl });
                     renderClients();
                     renderTable();
