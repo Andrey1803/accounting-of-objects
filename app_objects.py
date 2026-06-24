@@ -523,13 +523,19 @@ def _sql_objects_estimate_aggregates(as_work, as_mat, as_profit, as_mat_cost='es
 
 
 def _work_revenue_once(sum_work, estimate_works):
-    """Выручка по работам: sum_work подтягивается из сметы, не суммировать с estimate_works."""
+    """Выручка по работам: при наличии сметы — только сумма работ из сметы (как «ИТОГО» в редакторе).
+
+    Поле objects.sum_work может устареть после правки сметы; max(sum_work, estimate) давало
+    завышенную выручку и ложный «остаток к доплате» при авансе ≥ сумме сметы.
+    """
     try:
         sw = float(sum_work or 0)
         ew = float(estimate_works or 0)
     except (TypeError, ValueError):
         sw, ew = 0.0, 0.0
-    return max(sw, ew)
+    if ew > 0:
+        return ew
+    return sw
 
 
 def _norm_settlement_type(value):
@@ -586,7 +592,7 @@ def _compute_object_financials(
     двойному вычитанию розницы материалов и занижало прибыль.
 
     Сейчас:
-    - Выручка = max(sum_work, работы_по_смете) + розница_материалов_по_смете (em)
+    - Выручка = работы_по_смете (или sum_work без сметы) + розница_материалов_по_смете (em)
     - Закуп материалов: сумма по смете (purchase_price*qty), иначе em - material_profit
     - Прочие затраты из objects.expenses: сначала снимаем дубль розницы сметы (если expenses >= em),
       иначе при известном закупе — дубль закупа (если expenses >= emc); иначе expenses целиком

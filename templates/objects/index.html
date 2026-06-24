@@ -395,7 +395,7 @@
                         <th onclick="sortTable(7)" style="cursor:pointer">Прибыль ↕</th>
                         <th onclick="sortTable(8)" style="cursor:pointer">Прибыль с матер. ↕</th>
                         <th onclick="sortTable(9)" style="cursor:pointer">Маржа ↕</th>
-                        <th onclick="sortTable(10)" style="cursor:pointer">Остаток ↕</th>
+                        <th onclick="sortTable(10)" style="cursor:pointer" title="Сумма по смете минус аванс. Отрицательное значение — переплата">К доплате ↕</th>
                         <th>Действия</th>
                     </tr>
                 </thead>
@@ -1504,13 +1504,14 @@
                 infoDetailRow('Затраты всего', formatMoney(obj.total_expenses != null ? obj.total_expenses : (obj.expenses || 0))) +
                 (obj.extra_expenses ? infoDetailRow('Доп. расходы (журнал)', formatMoney(obj.extra_expenses)) : '') +
                 infoDetailRow('Прочие (поле)', formatMoney(obj.expenses || 0)) +
+                infoDetailRow('Выручка (смета)', formatMoney(revenue)) +
                 infoDetailRow('Аванс', formatMoney(obj.advance || 0)) +
                 infoDetailRow('Затраты на рабочих', formatMoney(obj.salary || 0)) +
                 infoDetailRow('Расчёт зарплаты', salaryModeLabel(obj.salary_allocation_mode)) +
                 (taxHtml || infoDetailRow('Прибыль', formatMoney(profit))) +
                 infoDetailRow('Прибыль с материалов', formatMoney(obj.estimate_material_profit || 0)) +
                 infoDetailRow('Маржа', margin) +
-                infoDetailRow('Остаток', formatMoney(bal)) +
+                infoDetailRow('К доплате', formatMoney(bal) + (bal < -0.01 ? ' <span class="muted">(переплата)</span>' : '')) +
                 infoDetailRow('Дата начала', obj.date_start ? formatDate(obj.date_start) : '') +
                 infoDetailRow('Дата окончания', obj.date_end ? formatDate(obj.date_end) : '') +
                 (obj.is_regular_to
@@ -1853,7 +1854,8 @@
                     td10b.textContent = margin.toFixed(1) + '%';
                 tr.appendChild(td10b);
                 const td11 = document.createElement('td');
-                    td11.className = 'balance-cell ' + (hasDebt ? 'negative' : 'positive');
+                    td11.className = 'balance-cell ' + (balance < -0.01 ? 'positive' : (hasDebt ? 'negative' : 'positive'));
+                    td11.title = balance < -0.01 ? 'Переплата клиента' : (hasDebt ? 'Клиент должен доплатить' : 'Оплачено по смете');
                     td11.textContent = formatMoney(balance);
                 tr.appendChild(td11);
                 const td12 = document.createElement('td');
