@@ -802,6 +802,14 @@
 
         /** Активные + не более N последних закрытых (защита при старом API / офлайн-кэше). */
         function objectsVisibleInList(all) {
+            if (sortCol >= 0) {
+                var closedShown = 0;
+                return (all || []).filter(function(obj) {
+                    if (!isClosedArchivedStatus(obj.status)) return true;
+                    closedShown++;
+                    return closedShown <= closedVisibleLimit;
+                });
+            }
             var split = splitActiveAndClosed(all);
             return split.active.concat(split.closed.slice(0, closedVisibleLimit));
         }
@@ -850,11 +858,12 @@
             return out;
         }
 
-        /** Дата для сортировки и колонки таблицы — последний день выезда (или единственный). */
+        /** Дата для сортировки и колонки таблицы — последний день выезда (или date_start). */
         function objectPrimaryWorkDate(obj) {
             var d = parseWorkDatesFromObject(obj);
-            if (!d.length) return '';
-            return d[d.length - 1];
+            if (d.length) return d[d.length - 1];
+            var ds = String(obj && obj.date_start || '').trim().slice(0, 10);
+            return /^\d{4}-\d{2}-\d{2}$/.test(ds) ? ds : '';
         }
 
         function formatWorkDaysCell(obj) {
@@ -940,10 +949,8 @@
             arr.sort(function(a, b) {
                 var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
                 if (pa !== pb) return pa - pb;
-                var da = objectPrimaryWorkDate(a) || String(a.date_start || '');
-                var db = objectPrimaryWorkDate(b) || String(b.date_start || '');
-                var ds = String(db).localeCompare(String(da));
-                if (ds !== 0) return ds;
+                var dc = compareWorkDatesForSort(a, b, false);
+                if (dc !== 0) return dc;
                 return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
             });
         }
@@ -1477,7 +1484,7 @@
 
         function salaryModeLabel(mode) {
             var labels = {
-                all_workers: 'Все активные рабочие ÷ объекты «В работе»/«Выполнен» за день',
+                all_workers: 'Все активные рабочие ÷ объекты с выездом в этот день (включая закрытые по work_dates)',
                 assigned_workers: 'Только рабочие с объекта',
                 manual: 'Вручную'
             };
@@ -2209,12 +2216,37 @@
             }
         }
 
+        function parseWorkDatesJsonOnly(obj) {
+            if (!obj) return [];
+            if (obj.work_dates == null || obj.work_dates === '') return [];
+            try {
+                var a = typeof obj.work_dates === 'string' ? JSON.parse(obj.work_dates) : obj.work_dates;
+                if (!Array.isArray(a)) return [];
+                var u = [];
+                a.forEach(function(x) {
+                    var s = String(x).trim().slice(0, 10);
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) u.push(s);
+                });
+                u.sort();
+                return u;
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function objectWorkDaysForSalaryDivisor(obj) {
+            if (!obj) return [];
+            var st = String(obj.status || '').trim();
+            if (st === 'Закрыт' || st === 'Оплачен') return parseWorkDatesJsonOnly(obj);
+            if (st === 'В работе' || st === 'Выполнен' || st === 'Завершён') return parseWorkDatesFromObject(obj);
+            if (st === 'Ожидает старта' || st === 'Запланирован' || st === 'Приостановлен') return parseWorkDatesJsonOnly(obj);
+            return [];
+        }
+
         function salaryCountsForDay(allObjects, dayIso, excludeId) {
             return allObjects.filter(function(o) {
                 if (excludeId && o.id === excludeId) return false;
-                var st = String(o.status || '').trim();
-                if (st !== 'В работе' && st !== 'Выполнен' && st !== 'Завершён') return false;
-                return parseWorkDatesFromObject(o).indexOf(dayIso) >= 0;
+                return objectWorkDaysForSalaryDivisor(o).indexOf(dayIso) >= 0;
             }).length + 1;
         }
 
@@ -3032,6 +3064,7 @@
                 if (key === 'status') {
                     var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
                     if (pa !== pb) return sortAsc ? pa - pb : pb - pa;
+                    // Внутри статуса — всегда свежие даты выше (независимо от ↑/↓ по статусу).
                     var dc = compareWorkDatesForSort(a, b, false);
                     if (dc !== 0) return dc;
                     return String(a.name || '').localeCompare(String(b.name || ''), 'ru');

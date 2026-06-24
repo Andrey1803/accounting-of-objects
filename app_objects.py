@@ -300,10 +300,11 @@ OBJECT_STATUS_ACTIVE = 'В работе'
 OBJECT_STATUS_DONE = 'Выполнен'
 OBJECT_STATUS_CLOSED = 'Закрыт'
 OBJECT_STATUSES_SALARY = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
-# В делитель «сколько объектов в этот день» — только параллельные выезды, не архив.
-OBJECT_STATUSES_SALARY_COUNT = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, 'Завершён')
+# Автопересчёт objects.salary — только для «живых» статусов.
 OBJECT_STATUSES_SALARY_AUTO = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, 'Завершён')
 OBJECT_STATUSES_SALARY_FROZEN = (OBJECT_STATUS_CLOSED, 'Оплачен')
+# В делитель n по дню также входят закрытые/оплаченные — только по явному work_dates (без разворота date_start..date_end).
+OBJECT_STATUSES_SALARY_DIVISOR_ACTIVE = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, 'Завершён')
 OBJECT_STATUSES_FINISHED = (OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
 # Финансово закрытые объекты — в списке по умолчанию только последние N (см. API objects-with-estimates).
 OBJECT_STATUSES_ARCHIVED = (OBJECT_STATUS_CLOSED, 'Оплачен')
@@ -392,6 +393,46 @@ def object_work_days_from_row(row):
     return _expand_date_range_inclusive(row.get('date_start'), row.get('date_end'))
 
 
+def _work_dates_json_list(row):
+    """Только явный JSON work_dates, без fallback на date_start..date_end."""
+    if not row:
+        return []
+    raw = row.get('work_dates')
+    if raw is None or str(raw).strip() in ('', '[]', 'null'):
+        return []
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(parsed, list):
+            return []
+        days = []
+        for x in parsed:
+            d = _parse_iso_date_ymd(x)
+            if d:
+                days.append(d)
+        return sorted(set(days))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+
+
+def _object_work_days_for_salary_divisor(row):
+    """Дни объекта, участвующие в делителе n (сколько объектов в этот день).
+
+    Активные — work_dates или date_start..date_end.
+    Закрытые/оплаченные и «ожидает» — только явный work_dates, чтобы архив с широким
+    диапазоном дат не занижал зарплату на все дни периода.
+    """
+    if not row:
+        return []
+    st = row.get('status')
+    if st in OBJECT_STATUSES_SALARY_FROZEN:
+        return _work_dates_json_list(row)
+    if st in OBJECT_STATUSES_SALARY_DIVISOR_ACTIVE:
+        return object_work_days_from_row(row)
+    if st in OBJECT_STATUSES_NOT_DEBT or st == 'Приостановлен':
+        return _work_dates_json_list(row)
+    return []
+
+
 def _serialize_work_dates(days):
     return json.dumps(sorted(set(days)), ensure_ascii=False)
 
@@ -428,9 +469,10 @@ def _resolve_work_dates_bounds_for_save(data, existing=None):
 
 
 def _build_salary_calendar_counts(uid):
-    """Для каждой календарной даты — сколько объектов «В работе»/«Выполнен» в этот день (делитель n).
+    """Для каждой календарной даты — сколько объектов делят бригаду в этот день (делитель n).
 
-    Закрытые и оплаченные не участвуют: иначе старые объекты занижают долю на активных.
+    Учитываются активные объекты и закрытые/оплаченные с явным work_dates на этот день
+    (свернутые в списке, но параллельные выезды в прошлом).
     """
     from collections import defaultdict
 
@@ -440,9 +482,7 @@ def _build_salary_calendar_counts(uid):
     )
     cnt = defaultdict(int)
     for r in rows:
-        if r.get('status') not in OBJECT_STATUSES_SALARY_COUNT:
-            continue
-        for d in object_work_days_from_row(r):
+        for d in _object_work_days_for_salary_divisor(r):
             cnt[d] += 1
     return cnt
 
@@ -2556,11 +2596,12 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
     """Пересчитать поле objects.salary: сумма по каждому дню из work_dates (доля бригады на этот день).
 
     Режим salary_allocation_mode:
-      all_workers — для каждого дня выезда: (Σ daily_rate всех активных рабочих) / число объектов «В работе» или «Выполнен» в этот день;
+      all_workers — для каждого дня выезда: (Σ daily_rate всех активных рабочих) / число объектов с выездом в этот день;
       assigned_workers — то же, но Σ только по рабочим с назначением на объект;
       manual — не менять salary.
 
-    Закрытые/оплаченные объекты не пересчитываются (salary зафиксирована). В делитель n не входят.
+    Закрытые/оплаченные объекты не пересчитываются (salary зафиксирована), но участвуют в делителе n
+    по своим явным work_dates. Свернутые в списке архивные объекты учитываются так же.
 
     user_id: для фонового пересчёта при старте (без контекста Flask current_user).
     calendar_counts: опционально словарь дата -> число объектов (один раз на пакет пересчётов).
