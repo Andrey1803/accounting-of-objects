@@ -2298,6 +2298,8 @@
 
         function objectWorkDaysForSalaryDivisor(obj) {
             if (!obj) return [];
+            var st = String(obj.status || '').trim();
+            if (st === 'Ожидает старта' || st === 'Запланирован') return [];
             var explicit = parseWorkDatesJsonOnly(obj);
             if (explicit.length) return explicit;
             var ds = String(obj.date_start || '').trim().slice(0, 10);
