@@ -300,6 +300,10 @@ OBJECT_STATUS_ACTIVE = 'В работе'
 OBJECT_STATUS_DONE = 'Выполнен'
 OBJECT_STATUS_CLOSED = 'Закрыт'
 OBJECT_STATUSES_SALARY = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
+# В делитель «сколько объектов в этот день» — только параллельные выезды, не архив.
+OBJECT_STATUSES_SALARY_COUNT = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, 'Завершён')
+OBJECT_STATUSES_SALARY_AUTO = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, 'Завершён')
+OBJECT_STATUSES_SALARY_FROZEN = (OBJECT_STATUS_CLOSED, 'Оплачен')
 OBJECT_STATUSES_FINISHED = (OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
 # Финансово закрытые объекты — в списке по умолчанию только последние N (см. API objects-with-estimates).
 OBJECT_STATUSES_ARCHIVED = (OBJECT_STATUS_CLOSED, 'Оплачен')
@@ -424,7 +428,10 @@ def _resolve_work_dates_bounds_for_save(data, existing=None):
 
 
 def _build_salary_calendar_counts(uid):
-    """Для каждой календарной даты — сколько объектов (со статусами из OBJECT_STATUSES_SALARY) в эту день."""
+    """Для каждой календарной даты — сколько объектов «В работе»/«Выполнен» в этот день (делитель n).
+
+    Закрытые и оплаченные не участвуют: иначе старые объекты занижают долю на активных.
+    """
     from collections import defaultdict
 
     rows = fetch_all(
@@ -433,11 +440,58 @@ def _build_salary_calendar_counts(uid):
     )
     cnt = defaultdict(int)
     for r in rows:
-        if r.get('status') not in OBJECT_STATUSES_SALARY:
+        if r.get('status') not in OBJECT_STATUSES_SALARY_COUNT:
             continue
         for d in object_work_days_from_row(r):
             cnt[d] += 1
     return cnt
+
+
+def _object_brigade_daily_rate(uid, obj_id, mode):
+    """Сумма дневных ставок для расчёта objects.salary (по режиму распределения)."""
+    if mode == SALARY_ALLOCATION_ASSIGNED_WORKERS:
+        rows = fetch_all(
+            """
+            SELECT DISTINCT w.daily_rate
+            FROM worker_assignments wa
+            JOIN workers w ON w.id = wa.worker_id AND w.user_id = wa.user_id
+            WHERE wa.object_id = ? AND wa.user_id = ? AND w.is_active = 1
+            """,
+            (obj_id, uid),
+        )
+        return sum(float(r['daily_rate'] or 0) for r in rows)
+    all_workers = fetch_all(
+        "SELECT daily_rate FROM workers WHERE user_id = ? AND is_active = 1",
+        (uid,),
+    )
+    return sum(float(w['daily_rate'] or 0) for w in all_workers) if all_workers else 0.0
+
+
+def _salary_auto_breakdown(uid, obj_row, calendar_counts=None):
+    """Пошаговая расшифровка автозарплаты по дням work_dates."""
+    if calendar_counts is None:
+        calendar_counts = _build_salary_calendar_counts(uid)
+    mode = _norm_salary_allocation_mode(obj_row.get('salary_allocation_mode'))
+    if mode == SALARY_ALLOCATION_MANUAL:
+        return []
+    work_days = object_work_days_from_row(obj_row)
+    if not work_days:
+        return []
+    total_daily_rate = _object_brigade_daily_rate(uid, obj_row['id'], mode)
+    if total_daily_rate <= 0:
+        return []
+    lines = []
+    for d in work_days:
+        n = int(calendar_counts.get(d, 0))
+        if n <= 0:
+            n = 1
+        lines.append({
+            'date': d,
+            'objects_on_day': n,
+            'brigade_rate': round(total_daily_rate, 2),
+            'share': round(total_daily_rate / n, 2),
+        })
+    return lines
 
 
 # Подотчёт рабочих: выручка у клиента, расходы, сдача
@@ -1987,9 +2041,23 @@ def get_object_workers(obj_id):
             WHERE wa.object_id = ? AND wa.user_id = ?
             ORDER BY wa.work_date, w.full_name
         """, (obj_id, current_user.id))
+
+        obj_row = fetch_one(
+            "SELECT id, work_dates, date_start, date_end, status, salary_allocation_mode, salary FROM objects WHERE id = ? AND user_id = ?",
+            (obj_id, current_user.id),
+        )
+        counts = _build_salary_calendar_counts(current_user.id)
+        breakdown = _salary_auto_breakdown(current_user.id, obj_row, counts) if obj_row else []
+        auto_salary = float(obj_row['salary'] or 0) if obj_row else 0.0
         
         total_salary = sum(a['total_pay'] for a in assignments) if assignments else 0
-        return jsonify({'assignments': assignments, 'total_salary': total_salary})
+        return jsonify({
+            'assignments': assignments,
+            'total_salary': total_salary,
+            'auto_salary': round(auto_salary, 2),
+            'salary_allocation_mode': obj_row.get('salary_allocation_mode') if obj_row else None,
+            'auto_salary_breakdown': breakdown,
+        })
     except Exception as e:
         import logging
         logging.error(f"get_object_workers error: {e}")
@@ -2025,8 +2093,8 @@ def add_object_worker(obj_id):
             VALUES (?, ?, ?, ?, ?, ?)""",
             (current_user.id, int(worker_id), obj_id, work_date, days, total_pay), return_id=True)
 
-        # Пересчитать зарплату объекта (учитывает статус)
-        recalc_object_salary(obj_id)
+        # Пересчитать зарплату всех объектов (делитель n общий по календарю)
+        _recalc_salaries_for_user_id(current_user.id)
 
         return jsonify({"id": aid, "total_pay": total_pay}), 201
     except Exception as e:
@@ -2041,8 +2109,7 @@ def add_object_worker(obj_id):
 def remove_object_worker(obj_id, assignment_id):
     execute("DELETE FROM worker_assignments WHERE id = ? AND object_id = ? AND user_id = ?",
             (assignment_id, obj_id, current_user.id))
-    # Пересчитать зарплату объекта (учитывает статус)
-    recalc_object_salary(obj_id)
+    _recalc_salaries_for_user_id(current_user.id)
     return jsonify({"ok": True})
 
 def _recalc_salaries_for_user_id(uid):
@@ -2489,9 +2556,11 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
     """Пересчитать поле objects.salary: сумма по каждому дню из work_dates (доля бригады на этот день).
 
     Режим salary_allocation_mode:
-      all_workers — для каждого дня выезда: (Σ daily_rate всех активных рабочих) / число объектов в этот день;
+      all_workers — для каждого дня выезда: (Σ daily_rate всех активных рабочих) / число объектов «В работе» или «Выполнен» в этот день;
       assigned_workers — то же, но Σ только по рабочим с назначением на объект;
       manual — не менять salary.
+
+    Закрытые/оплаченные объекты не пересчитываются (salary зафиксирована). В делитель n не входят.
 
     user_id: для фонового пересчёта при старте (без контекста Flask current_user).
     calendar_counts: опционально словарь дата -> число объектов (один раз на пакет пересчётов).
@@ -2511,13 +2580,15 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
         if not obj:
             return
 
+        if obj.get('status') in OBJECT_STATUSES_SALARY_FROZEN:
+            return
+
         work_days = object_work_days_from_row(obj)
         if not work_days:
             execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
-        valid_statuses = OBJECT_STATUSES_SALARY
-        if obj.get('status') not in valid_statuses:
+        if obj.get('status') not in OBJECT_STATUSES_SALARY_AUTO:
             execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
@@ -2528,27 +2599,7 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
         if calendar_counts is None:
             calendar_counts = _build_salary_calendar_counts(uid)
 
-        if mode == SALARY_ALLOCATION_ASSIGNED_WORKERS:
-            rows = fetch_all(
-                """
-                SELECT DISTINCT w.daily_rate
-                FROM worker_assignments wa
-                JOIN workers w ON w.id = wa.worker_id AND w.user_id = wa.user_id
-                WHERE wa.object_id = ? AND wa.user_id = ? AND w.is_active = 1
-                """,
-                (obj_id, uid),
-            )
-            total_daily_rate = sum(float(r['daily_rate'] or 0) for r in rows)
-        else:
-            all_workers = fetch_all(
-                "SELECT daily_rate FROM workers WHERE user_id = ? AND is_active = 1",
-                (uid,),
-            )
-            if not all_workers:
-                execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
-                return
-            total_daily_rate = sum(float(w['daily_rate'] or 0) for w in all_workers)
-
+        total_daily_rate = _object_brigade_daily_rate(uid, obj_id, mode)
         if total_daily_rate <= 0:
             execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
@@ -2557,7 +2608,7 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
         for d in work_days:
             n = int(calendar_counts.get(d, 0))
             if n <= 0:
-                continue
+                n = 1
             total_salary += total_daily_rate / n
 
         execute(

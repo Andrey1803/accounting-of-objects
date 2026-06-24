@@ -1459,7 +1459,7 @@
 
         function salaryModeLabel(mode) {
             var labels = {
-                all_workers: 'Все активные рабочие ÷ объекты за день',
+                all_workers: 'Все активные рабочие ÷ объекты «В работе»/«Выполнен» за день',
                 assigned_workers: 'Только рабочие с объекта',
                 manual: 'Вручную'
             };
@@ -2191,6 +2191,15 @@
             }
         }
 
+        function salaryCountsForDay(allObjects, dayIso, excludeId) {
+            return allObjects.filter(function(o) {
+                if (excludeId && o.id === excludeId) return false;
+                var st = String(o.status || '').trim();
+                if (st !== 'В работе' && st !== 'Выполнен' && st !== 'Завершён') return false;
+                return parseWorkDatesFromObject(o).indexOf(dayIso) >= 0;
+            }).length + 1;
+        }
+
         async function showExpectedSalary() {
             try {
                 var modeEl = document.getElementById('salary-allocation-mode');
@@ -2221,10 +2230,7 @@
                         return;
                     }
                     function countOnDay(dayIso) {
-                        return allObjects.filter(function(o) {
-                            if (editingId && o.id === editingId) return false;
-                            return parseOd(o).indexOf(dayIso) >= 0;
-                        }).length + 1;
+                        return salaryCountsForDay(allObjects, dayIso, editingId);
                     }
                     var estA = 0;
                     myDays.forEach(function(d) {
@@ -2249,10 +2255,7 @@
                     totalDailyRate += w.daily_rate;
                 });
                 function countOnDay2(dayIso) {
-                    return allObjects.filter(function(o) {
-                        if (editingId && o.id === editingId) return false;
-                        return parseOd(o).indexOf(dayIso) >= 0;
-                    }).length + 1;
+                    return salaryCountsForDay(allObjects, dayIso, editingId);
                 }
                 var est = 0;
                 myDays.forEach(function(d) {
@@ -2274,10 +2277,26 @@
                 const ct = res.headers.get('content-type');
                 if (!ct || !ct.includes('application/json')) return;
                 const data = await res.json();
+                const el = document.getElementById('salary-info');
+                if (!el) return;
+                var parts = [];
+                if (data.auto_salary_breakdown && data.auto_salary_breakdown.length) {
+                    var dayLines = data.auto_salary_breakdown.map(function(row) {
+                        return row.date + ': ' + Number(row.share).toFixed(2) + ' руб'
+                            + ' (ставки ' + Number(row.brigade_rate).toFixed(0)
+                            + ' ÷ ' + row.objects_on_day + ' объект.)';
+                    });
+                    parts.push('Авто: ' + Number(data.auto_salary || 0).toFixed(2) + ' руб — ' + dayLines.join('; '));
+                } else if (data.auto_salary != null && Number(data.auto_salary) > 0) {
+                    parts.push('Авто: ' + Number(data.auto_salary).toFixed(2) + ' руб');
+                }
                 const count = (data.assignments || []).length;
                 const total = data.total_salary || 0;
                 if (count > 0) {
-                    document.getElementById('salary-info').textContent = `👷 ${count} рабочих, ${Number(total).toLocaleString('ru-RU', {minimumFractionDigits:2})} руб`;
+                    parts.push('Назначения 👷: ' + count + ' записей, ' + Number(total).toLocaleString('ru-RU', {minimumFractionDigits:2}) + ' руб');
+                }
+                if (parts.length) {
+                    el.textContent = parts.join(' · ');
                 }
             } catch(e) {}
         }
