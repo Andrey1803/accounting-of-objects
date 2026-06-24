@@ -3032,6 +3032,8 @@
                 if (key === 'status') {
                     var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
                     if (pa !== pb) return sortAsc ? pa - pb : pb - pa;
+                    var dc = compareWorkDatesForSort(a, b, false);
+                    if (dc !== 0) return dc;
                     return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
                 }
                 var va = a[key];
