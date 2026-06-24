@@ -850,6 +850,13 @@
             return out;
         }
 
+        /** Дата для сортировки и колонки таблицы — последний день выезда (или единственный). */
+        function objectPrimaryWorkDate(obj) {
+            var d = parseWorkDatesFromObject(obj);
+            if (!d.length) return '';
+            return d[d.length - 1];
+        }
+
         function formatWorkDaysCell(obj) {
             var d = parseWorkDatesFromObject(obj);
             if (!d.length) return '-';
@@ -862,6 +869,17 @@
             if (!d.length) return '-';
             if (d.length === 1) return formatDate(d[0]);
             return formatDate(d[d.length - 1]) + ' (+' + (d.length - 1) + ')';
+        }
+
+        function compareWorkDatesForSort(a, b, asc) {
+            var da = objectPrimaryWorkDate(a);
+            var db = objectPrimaryWorkDate(b);
+            if (!da && !db) return (Number(a.id) || 0) - (Number(b.id) || 0);
+            if (!da) return 1;
+            if (!db) return -1;
+            var c = da.localeCompare(db);
+            if (c !== 0) return asc ? c : -c;
+            return (Number(a.id) || 0) - (Number(b.id) || 0);
         }
 
         function renderWorkDaysEditor() {
@@ -922,8 +940,8 @@
             arr.sort(function(a, b) {
                 var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
                 if (pa !== pb) return pa - pb;
-                var da = (parseWorkDatesFromObject(a)[0] || String(a.date_start || ''));
-                var db = (parseWorkDatesFromObject(b)[0] || String(b.date_start || ''));
+                var da = objectPrimaryWorkDate(a) || String(a.date_start || '');
+                var db = objectPrimaryWorkDate(b) || String(b.date_start || '');
                 var ds = String(db).localeCompare(String(da));
                 if (ds !== 0) return ds;
                 return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
@@ -3006,18 +3024,24 @@
             });
 
             objects.sort(function(a, b) {
-                var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
-                if (pa !== pb) return pa - pb;
                 var keys = ['id','__work_days__','name','client','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
                 var key = keys[colIdx] || 'name';
-                var va, vb;
                 if (key === '__work_days__') {
-                    va = (parseWorkDatesFromObject(a)[0] || '');
-                    vb = (parseWorkDatesFromObject(b)[0] || '');
-                } else {
-                    va = a[key] || 0; vb = b[key] || 0;
+                    return compareWorkDatesForSort(a, b, sortAsc);
                 }
-                if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+                if (key === 'status') {
+                    var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
+                    if (pa !== pb) return sortAsc ? pa - pb : pb - pa;
+                    return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
+                }
+                var va = a[key];
+                var vb = b[key];
+                if (va == null || va === '') va = (key === 'name' || key === 'client') ? '' : 0;
+                if (vb == null || vb === '') vb = (key === 'name' || key === 'client') ? '' : 0;
+                if (typeof va === 'string' || typeof vb === 'string') {
+                    var sc = String(va).localeCompare(String(vb), 'ru');
+                    return sortAsc ? sc : -sc;
+                }
                 return sortAsc ? (va - vb) : (vb - va);
             });
             renderTable();
