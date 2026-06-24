@@ -777,6 +777,8 @@
         let closedVisibleLimit = closedPageSize;
         let closedTotal = 0;
         let lastObjectsApiData = null;
+        let sortCol = -1;
+        let sortAsc = true;
 
         function isClosedArchivedStatus(status) {
             var s = String(status || '').trim();
@@ -961,6 +963,50 @@
             });
         }
 
+        function compareObjectsForColumn(a, b, colIdx) {
+            var keys = ['id','__work_days__','name','client','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
+            var key = keys[colIdx] || 'name';
+            if (key === '__work_days__') {
+                return compareWorkDatesForSort(a, b, sortAsc);
+            }
+            if (key === 'status') {
+                var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
+                if (pa !== pb) return sortAsc ? pa - pb : pb - pa;
+                var dc = compareWorkDatesForSort(a, b, false);
+                if (dc !== 0) return dc;
+                return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
+            }
+            var va = a[key];
+            var vb = b[key];
+            if (va == null || va === '') va = (key === 'name' || key === 'client') ? '' : 0;
+            if (vb == null || vb === '') vb = (key === 'name' || key === 'client') ? '' : 0;
+            if (typeof va === 'string' || typeof vb === 'string') {
+                var sc = String(va).localeCompare(String(vb), 'ru');
+                return sortAsc ? sc : -sc;
+            }
+            return sortAsc ? (va - vb) : (vb - va);
+        }
+
+        function updateTableSortHeaders(colIdx) {
+            document.querySelectorAll('th').forEach(function(th, i) {
+                if (i === colIdx) th.textContent = th.textContent.replace(' ↕', sortAsc ? ' ↑' : ' ↓');
+                else if (th.onclick) th.textContent = th.textContent.replace(/ [↑↓]/, ' ↕');
+            });
+        }
+
+        /** Применить текущую сортировку к массиву objects (сохраняется при автообновлении). */
+        function applyObjectsSort(updateHeaders) {
+            if (sortCol < 0) {
+                sortObjectsDefaultOrder(objects);
+                if (updateHeaders) resetTableSortHeaders();
+                return;
+            }
+            objects.sort(function(a, b) {
+                return compareObjectsForColumn(a, b, sortCol);
+            });
+            if (updateHeaders) updateTableSortHeaders(sortCol);
+        }
+
         /** Маркер для других вкладок: данные по объектам изменились на сервере. */
         var OBJECTS_DATA_TS_KEY = 'accountingObjectsDataTs';
         var OBJECTS_AUTO_POLL_MS = 60000;
@@ -1087,9 +1133,7 @@
                     const profit = obj.total_profit || 0;
                     obj.margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
                 });
-                sortObjectsDefaultOrder(objects);
-                sortCol = -1;
-                resetTableSortHeaders();
+                applyObjectsSort(false);
 
                 const clientsRes = await clientsPromise;
                 if (clientsRes.ok) {
@@ -1144,9 +1188,7 @@
                         var profit = obj.total_profit || 0;
                         obj.margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
                     });
-                    sortObjectsDefaultOrder(objects);
-                    sortCol = -1;
-                    resetTableSortHeaders();
+                    applyObjectsSort(false);
                     renderStats({ total: total, in_progress: inProg, completed: compl });
                     renderClients();
                     renderTable();
@@ -2236,11 +2278,10 @@
 
         function objectWorkDaysForSalaryDivisor(obj) {
             if (!obj) return [];
-            var st = String(obj.status || '').trim();
-            if (st === 'Закрыт' || st === 'Оплачен') return parseWorkDatesJsonOnly(obj);
-            if (st === 'В работе' || st === 'Выполнен' || st === 'Завершён') return parseWorkDatesFromObject(obj);
-            if (st === 'Ожидает старта' || st === 'Запланирован' || st === 'Приостановлен') return parseWorkDatesJsonOnly(obj);
-            return [];
+            var explicit = parseWorkDatesJsonOnly(obj);
+            if (explicit.length) return explicit;
+            var ds = String(obj.date_start || '').trim().slice(0, 10);
+            return /^\d{4}-\d{2}-\d{2}$/.test(ds) ? [ds] : [];
         }
 
         function salaryCountsForDay(allObjects, dayIso, excludeId) {
@@ -3044,41 +3085,10 @@
         }
 
         // Сортировка таблицы
-        var sortCol = -1, sortAsc = true;
         function sortTable(colIdx) {
             if (sortCol === colIdx) { sortAsc = !sortAsc; }
             else { sortCol = colIdx; sortAsc = true; }
-
-            // Обновляем заголовки
-            document.querySelectorAll('th').forEach(function(th, i) {
-                if (i === colIdx) th.textContent = th.textContent.replace(' ↕', sortAsc ? ' ↑' : ' ↓');
-                else if (th.onclick) th.textContent = th.textContent.replace(/ [↑↓]/, ' ↕');
-            });
-
-            objects.sort(function(a, b) {
-                var keys = ['id','__work_days__','name','client','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
-                var key = keys[colIdx] || 'name';
-                if (key === '__work_days__') {
-                    return compareWorkDatesForSort(a, b, sortAsc);
-                }
-                if (key === 'status') {
-                    var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
-                    if (pa !== pb) return sortAsc ? pa - pb : pb - pa;
-                    // Внутри статуса — всегда свежие даты выше (независимо от ↑/↓ по статусу).
-                    var dc = compareWorkDatesForSort(a, b, false);
-                    if (dc !== 0) return dc;
-                    return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
-                }
-                var va = a[key];
-                var vb = b[key];
-                if (va == null || va === '') va = (key === 'name' || key === 'client') ? '' : 0;
-                if (vb == null || vb === '') vb = (key === 'name' || key === 'client') ? '' : 0;
-                if (typeof va === 'string' || typeof vb === 'string') {
-                    var sc = String(va).localeCompare(String(vb), 'ru');
-                    return sortAsc ? sc : -sc;
-                }
-                return sortAsc ? (va - vb) : (vb - va);
-            });
+            applyObjectsSort(true);
             renderTable();
         }
         

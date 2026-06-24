@@ -303,8 +303,6 @@ OBJECT_STATUSES_SALARY = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, OBJECT_STATU
 # Автопересчёт objects.salary — только для «живых» статусов.
 OBJECT_STATUSES_SALARY_AUTO = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, 'Завершён')
 OBJECT_STATUSES_SALARY_FROZEN = (OBJECT_STATUS_CLOSED, 'Оплачен')
-# В делитель n по дню также входят закрытые/оплаченные — только по явному work_dates (без разворота date_start..date_end).
-OBJECT_STATUSES_SALARY_DIVISOR_ACTIVE = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, 'Завершён')
 OBJECT_STATUSES_FINISHED = (OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
 # Финансово закрытые объекты — в списке по умолчанию только последние N (см. API objects-with-estimates).
 OBJECT_STATUSES_ARCHIVED = (OBJECT_STATUS_CLOSED, 'Оплачен')
@@ -415,21 +413,17 @@ def _work_dates_json_list(row):
 
 
 def _object_work_days_for_salary_divisor(row):
-    """Дни объекта, участвующие в делителе n (сколько объектов в этот день).
+    """Дни объекта в делителе n — только явные work_dates или один legacy-день date_start.
 
-    Активные — work_dates или date_start..date_end.
-    Закрытые/оплаченные и «ожидает» — только явный work_dates, чтобы архив с широким
-    диапазоном дат не занижал зарплату на все дни периода.
+    Не разворачиваем date_start..date_end: иначе объект «на месяц» попадает в каждый день
+    периода и занижает зарплату (например 300/5 вместо 300/3).
     """
-    if not row:
-        return []
-    st = row.get('status')
-    if st in OBJECT_STATUSES_SALARY_FROZEN:
-        return _work_dates_json_list(row)
-    if st in OBJECT_STATUSES_SALARY_DIVISOR_ACTIVE:
-        return object_work_days_from_row(row)
-    if st in OBJECT_STATUSES_NOT_DEBT or st == 'Приостановлен':
-        return _work_dates_json_list(row)
+    days = _work_dates_json_list(row)
+    if days:
+        return days
+    ds = _parse_iso_date_ymd(row.get('date_start'))
+    if ds:
+        return [ds]
     return []
 
 
@@ -1751,6 +1745,7 @@ def update_object(obj_id):
 
     if any(k in data for k in ('status', 'date_start', 'date_end', 'work_dates', 'salary_allocation_mode')):
         _recalc_salaries_for_user_id(current_user.id)
+        _recalc_frozen_salaries(current_user.id)
 
     row = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id))
     if row:
@@ -2152,14 +2147,14 @@ def remove_object_worker(obj_id, assignment_id):
     _recalc_salaries_for_user_id(current_user.id)
     return jsonify({"ok": True})
 
-def _recalc_salaries_for_user_id(uid):
+def _recalc_salaries_for_user_id(uid, include_frozen=False):
     """Пересчитать objects.salary у всех объектов пользователя с одним calendar_counts.
 
     Делитель по дням общий для всех объектов; при изменении дат/статуса одного объекта
     нужно пересчитать всех, иначе у соседей остаётся устаревшая доля.
 
-    Режим manual не трогаем (recalc_object_salary выходит без UPDATE); предварительный
-    UPDATE salary=0 по всем объектам не выполняем — он затирал ручные суммы.
+    include_frozen: пересчитать закрытые/оплаченные (полный recalc, смена дат соседей).
+    При смене ставок рабочих оставляем False — архив не меняется.
     """
     if not uid:
         return 0
@@ -2168,8 +2163,23 @@ def _recalc_salaries_for_user_id(uid):
         return 0
     counts = _build_salary_calendar_counts(uid)
     for obj in all_objs:
-        recalc_object_salary(obj['id'], uid, calendar_counts=counts)
+        recalc_object_salary(obj['id'], uid, calendar_counts=counts, include_frozen=include_frozen)
     return len(all_objs)
+
+
+def _recalc_frozen_salaries(uid):
+    """Пересчитать salary у закрытых/оплаченных (делитель n или даты соседей изменились)."""
+    if not uid:
+        return 0
+    counts = _build_salary_calendar_counts(uid)
+    ph = ','.join(['?'] * len(OBJECT_STATUSES_SALARY_FROZEN))
+    rows = fetch_all(
+        f"SELECT id FROM objects WHERE user_id = ? AND status IN ({ph})",
+        (uid, *OBJECT_STATUSES_SALARY_FROZEN),
+    )
+    for row in rows:
+        recalc_object_salary(row['id'], uid, calendar_counts=counts, include_frozen=True)
+    return len(rows)
 
 def _json_obj(v, default=None):
     d = {} if default is None else default
@@ -2579,7 +2589,7 @@ def recalc_all_salaries():
     """Пересчитать зарплаты ВСЕХ объектов пользователя по новой логике."""
     try:
         uid = current_user.id
-        n = _recalc_salaries_for_user_id(uid)
+        n = _recalc_salaries_for_user_id(uid, include_frozen=True)
         return jsonify({"ok": True, "objects_recalc": n})
     except Exception as e:
         import logging, traceback
@@ -2592,7 +2602,7 @@ def recalc_objects_for_dates(dates):
         return
     _recalc_salaries_for_user_id(current_user.id)
 
-def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
+def recalc_object_salary(obj_id, user_id=None, calendar_counts=None, include_frozen=False):
     """Пересчитать поле objects.salary: сумма по каждому дню из work_dates (доля бригады на этот день).
 
     Режим salary_allocation_mode:
@@ -2600,8 +2610,7 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
       assigned_workers — то же, но Σ только по рабочим с назначением на объект;
       manual — не менять salary.
 
-    Закрытые/оплаченные объекты не пересчитываются (salary зафиксирована), но участвуют в делителе n
-    по своим явным work_dates. Свернутые в списке архивные объекты учитываются так же.
+    include_frozen: пересчитать закрытые/оплаченные (иначе salary зафиксирована после закрытия).
 
     user_id: для фонового пересчёта при старте (без контекста Flask current_user).
     calendar_counts: опционально словарь дата -> число объектов (один раз на пакет пересчётов).
@@ -2621,15 +2630,17 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
         if not obj:
             return
 
-        if obj.get('status') in OBJECT_STATUSES_SALARY_FROZEN:
+        frozen = obj.get('status') in OBJECT_STATUSES_SALARY_FROZEN
+        if frozen and not include_frozen:
             return
 
         work_days = object_work_days_from_row(obj)
         if not work_days:
-            execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
+            if not frozen:
+                execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
-        if obj.get('status') not in OBJECT_STATUSES_SALARY_AUTO:
+        if not frozen and obj.get('status') not in OBJECT_STATUSES_SALARY_AUTO:
             execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
@@ -3064,7 +3075,7 @@ def _recalc_all_salaries_on_startup():
         uids = sorted({r['user_id'] for r in uid_rows if r.get('user_id') is not None})
 
         for uid in uids:
-            n = _recalc_salaries_for_user_id(uid)
+            n = _recalc_salaries_for_user_id(uid, include_frozen=True)
             workers = fetch_all(
                 "SELECT daily_rate FROM workers WHERE is_active = 1 AND user_id = ?",
                 (uid,),
