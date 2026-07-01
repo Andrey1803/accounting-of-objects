@@ -2056,24 +2056,69 @@ def _build_material_category_tree(user_id):
     return tree
 
 
+def _catalog_items_count(user_id, cat_type):
+    table = 'catalog_materials' if cat_type == 'material' else 'catalog_works'
+    row = fetch_one(f"SELECT COUNT(*) as c FROM {table} WHERE user_id = ?", (user_id,))
+    return int(row['c']) if row else 0
+
+
+def _tree_root_coverage(roots):
+    return sum(int(r.get('count') or 0) for r in (roots or []))
+
+
+def _build_flat_catalog_category_tree(user_id, cat_type):
+    """Плоское дерево из поля category (для работ или запасной вариант)."""
+    table = 'catalog_materials' if cat_type == 'material' else 'catalog_works'
+    items = fetch_all(f"SELECT category FROM {table} WHERE user_id = ?", (user_id,))
+    counts = {}
+    for it in items:
+        k = (it.get('category') or '').strip() or 'Без категории'
+        counts[k] = counts.get(k, 0) + 1
+    return [
+        {
+            'id': None,
+            'name': name,
+            'count': counts[name],
+            'children': [],
+            'all_descendants': [],
+        }
+        for name in sorted(counts.keys())
+    ]
+
+
+def _catalog_field_category_tree(user_id, cat_type):
+    if cat_type == 'material':
+        return _build_material_category_tree(user_id)
+    return _build_flat_catalog_category_tree(user_id, cat_type)
+
+
 @estimate_bp.route('/api/catalog/categories/tree', methods=['GET'])
 @login_required
 def api_get_categories_tree():
-    """Древовидная структура: из БД (категория → подкатегория) или из полей материалов."""
+    """Древовидная структура: из БД или из полей каталога, если ручные категории не покрывают товары."""
     cat_type = request.args.get('type', 'material')
     db_tree = _build_db_category_tree(current_user.id, cat_type)
+    field_tree = _catalog_field_category_tree(current_user.id, cat_type)
+
     if db_tree is not None:
+        total = _catalog_items_count(current_user.id, cat_type)
+        covered = _tree_root_coverage(db_tree)
+        if total > 0 and covered < total:
+            return jsonify(field_tree)
         return jsonify(db_tree)
-    if cat_type != 'material':
-        cats = fetch_all(
-            "SELECT * FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name",
-            (current_user.id, cat_type),
-        )
+
+    if cat_type == 'material':
+        return jsonify(field_tree)
+    cats = fetch_all(
+        "SELECT * FROM categories WHERE user_id = ? AND category_type = ? ORDER BY name",
+        (current_user.id, cat_type),
+    )
+    if cats:
         return jsonify([
             {'id': c['id'], 'name': c['name'], 'children': [], 'all_descendants': [], 'count': 0}
             for c in cats
         ])
-    return jsonify(_build_material_category_tree(current_user.id))
+    return jsonify(field_tree)
 
 @estimate_bp.route('/api/catalog/categories', methods=['POST'])
 @login_required
