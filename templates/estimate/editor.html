@@ -344,6 +344,7 @@
         let catIdToName = {};  // cat_* → название категории (поле category у товара)
         let categoryTree = { material: [], work: [] };
         let catNamesForFilter = { material: {}, work: {} };
+        let subCategoryParent = { material: {}, work: {} };
 
         function getCatalogItems(type) {
             var t = type || currentType;
@@ -392,9 +393,25 @@
 
         function countItemsInCategoryNames(names, list) {
             var n = 0;
+            var catType = currentType === 'material' ? 'material' : 'work';
+            var parentBySub = (catType === 'material') ? (subCategoryParent[catType] || {}) : {};
             (list || []).forEach(function(item) {
                 var c = (item.category || 'Без категории').trim();
-                if (names.indexOf(c) !== -1) n++;
+                var itype = (item.item_type || 'Другое').trim();
+                if (names.indexOf(c) !== -1) {
+                    n++;
+                    return;
+                }
+                if (catType === 'material') {
+                    for (var si = 0; si < names.length; si++) {
+                        var sub = names[si];
+                        var parent = parentBySub[sub];
+                        if (parent && c === parent && itype === sub) {
+                            n++;
+                            return;
+                        }
+                    }
+                }
             });
             return n;
         }
@@ -405,17 +422,20 @@
                 .then(function(tree) {
                     categoryTree[type] = Array.isArray(tree) ? tree : [];
                     catNamesForFilter[type] = {};
-                    function walk(nodes) {
+                    subCategoryParent[type] = {};
+                    function walk(nodes, parentName) {
                         (nodes || []).forEach(function(node) {
                             catNamesForFilter[type][node.name] = node.all_descendants || [];
-                            if (node.children && node.children.length) walk(node.children);
+                            if (parentName) subCategoryParent[type][node.name] = parentName;
+                            if (node.children && node.children.length) walk(node.children, node.name);
                         });
                     }
-                    walk(categoryTree[type]);
+                    walk(categoryTree[type], null);
                 })
                 .catch(function() {
                     categoryTree[type] = [];
                     catNamesForFilter[type] = {};
+                    subCategoryParent[type] = {};
                 });
         }
 
@@ -441,6 +461,10 @@
                 for (var ai = 0; ai < allowed.length; ai++) {
                     if ((allowed[ai] || '').trim().toLowerCase() === catNorm) return true;
                 }
+                var catType = currentType === 'material' ? 'material' : 'work';
+                var parentBySub = subCategoryParent[catType] || {};
+                var parent = parentBySub[cName];
+                if (parent && catNorm === parent.toLowerCase() && (itype || '').trim().toLowerCase() === cName.toLowerCase()) return true;
             }
             for (si = 0; si < selectedCats.length; si++) {
                 var s2 = selectedCats[si];
@@ -487,7 +511,7 @@
                 var catId = makeCatId(cat);
                 catIdToName[catId] = cat;
                 var names = categoryNamesWithDescendants(cat);
-                var cTotal = countItemsInCategoryNames(names, list);
+                var cTotal = typeof node.count === 'number' ? node.count : countItemsInCategoryNames(names, list);
                 var catSel = selectedCats.indexOf(catId) !== -1;
                 var cIsOpen = catTreeOpen[catId] === true;
                 var bg = depth === 0 ? '#e8f5e9' : (depth === 1 ? '#f1f8e9' : '#fafafa');

@@ -163,7 +163,7 @@
 
     <script src="/static/js/utils.js?v=6"></script>
     <script>
-        let curType='mat', curCat='', curCatDescendants=[], curFilterType='', allData=[], categoryTree=[], currentPath=[];
+        let curType='mat', curCat='', curCatParent='', curCatDescendants=[], curFilterType='', allData=[], categoryTree=[], currentPath=[];
         let dbCategories=[], selectedDbCatId=null, catPresetParentId=null;
 
         function csrf(){ const m=document.querySelector('meta[name="csrf-token"]'); return m?m.getAttribute('content'):''; }
@@ -310,12 +310,13 @@
                     else filterLevel = '1';
                 }
                 const nodeId = node.id != null ? node.id : 'null';
+                const parentCat = node.parent_category_name || '';
 
                 const countBadge = node.count ? `<span class="tree-count">${node.count}</span>` : '';
 
                 html += `<div class="tree-node">
                     <span class="${toggleClass}" onclick="toggleTreeNode(this)">&#9654;</span>
-                    <span class="${labelClass}" data-name="${attrEsc(node.name)}" data-level="${filterLevel}" data-id="${nodeId}">${icon} ${esc(node.name)}</span>
+                    <span class="${labelClass}" data-name="${attrEsc(node.name)}" data-level="${filterLevel}" data-id="${nodeId}" data-parent="${attrEsc(parentCat)}">${icon} ${esc(node.name)}</span>
                     ${countBadge}
                     ${hasChildren ? `<div class="tree-children">${renderTreeNodes(node.children, isBrand ? 2 : depth+1)}</div>` : ''}
                 </div>`;
@@ -383,6 +384,7 @@
         function resetDrill() {
             currentPath = [];
             curCat = '';
+            curCatParent = '';
             curCatDescendants = [];
             curFilterType = '';
             selectedDbCatId = null;
@@ -422,10 +424,11 @@
             btn.disabled = !!(rec && rec.parent_id);
         }
 
-        function selectCategory(name, depth, catId) { selCat(name, depth, catId); }
+        function selectCategory(name, depth, catId, parentName) { selCat(name, depth, catId, parentName); }
 
-        function selCat(c, depth, catId){
+        function selCat(c, depth, catId, parentName){
             curCat = c;
+            curCatParent = parentName || '';
             curFilterType = depth !== undefined ? depth : '';
             selectedDbCatId = (catId && catId !== 'null') ? catId : null;
             updateSubcatButton();
@@ -473,16 +476,24 @@
             var items=allData;
             if(curCat) {
                 if(curFilterType === '0' || curFilterType === '') {
-                    // Клик на категорию: показываем все материалы этой категории + всех типов и брендов
                     var catsToInclude = [curCat].concat(curCatDescendants || []);
-                    items = items.filter(function(d){ return catsToInclude.indexOf(d.category) !== -1; });
+                    items = items.filter(function(d){
+                        var cat = (d.category || '').trim();
+                        if (cat === curCat || catsToInclude.indexOf(cat) !== -1) return true;
+                        return false;
+                    });
                 } else if(curFilterType === '1') {
-                    // Клик на тип: фильтруем по item_type
                     items = items.filter(function(d){ return (d.item_type || 'Другое') === curCat; });
                 } else if(curFilterType === '2') {
                     items = items.filter(function(d){ return (d.brand || 'Без бренда') === curCat; });
                 } else if(curFilterType === 'sub') {
-                    items = items.filter(function(d){ return (d.category || '') === curCat; });
+                    items = items.filter(function(d){
+                        var cat = (d.category || '').trim();
+                        var itype = (d.item_type || 'Другое').trim();
+                        if (cat === curCat) return true;
+                        if (curCatParent && cat === curCatParent && itype === curCat) return true;
+                        return false;
+                    });
                 }
             }
             if(q){
@@ -734,7 +745,7 @@
             var label = e.target.closest('.tree-label');
             if (!label || label.dataset.name === undefined) return;
             var id = label.dataset.id;
-            selectCategory(label.dataset.name, label.dataset.level, (!id || id === 'null') ? null : id);
+            selectCategory(label.dataset.name, label.dataset.level, (!id || id === 'null') ? null : id, label.dataset.parent || '');
         });
         document.getElementById('catGrid').addEventListener('click', function(e) {
             var card = e.target.closest('.cat-card[data-cat-name]');

@@ -286,7 +286,7 @@
                     <div class="fg" style="flex:0.5"><label>Ед</label>
                         <select id="c-unit"><option>шт</option><option>м</option><option>м²</option><option>м³</option><option>кг</option><option>т</option><option>л</option><option>компл</option><option>усл</option><option>ч</option></select>
                     </div>
-                    <div class="fg"><label>Цена</label><input type="number" step="0.01" id="c-price"></div>
+                    <div class="fg"><label>Цена</label><input type="number" step="0.01" id="c-price" placeholder="0"></div>
                 </div>
                 <div class="fg" id="c-cat-row" style="display:none;"><label>Категория</label>
                     <select id="c-category">
@@ -327,6 +327,7 @@
         </div>
     </div>
 
+    <script src="/static/js/utils.js?v=6"></script>
     <script src="/static/js/offline.js?v=4"></script>
     <script>
         let estimateId = {{ estimate_id | tojson }};
@@ -343,6 +344,7 @@
         let catIdToName = {};  // cat_* → название категории (поле category у товара)
         let categoryTree = { material: [], work: [] };
         let catNamesForFilter = { material: {}, work: {} };
+        let subCategoryParent = { material: {}, work: {} };
 
         function getCatalogItems(type) {
             var t = type || currentType;
@@ -391,9 +393,25 @@
 
         function countItemsInCategoryNames(names, list) {
             var n = 0;
+            var catType = currentType === 'material' ? 'material' : 'work';
+            var parentBySub = (catType === 'material') ? (subCategoryParent[catType] || {}) : {};
             (list || []).forEach(function(item) {
                 var c = (item.category || 'Без категории').trim();
-                if (names.indexOf(c) !== -1) n++;
+                var itype = (item.item_type || 'Другое').trim();
+                if (names.indexOf(c) !== -1) {
+                    n++;
+                    return;
+                }
+                if (catType === 'material') {
+                    for (var si = 0; si < names.length; si++) {
+                        var sub = names[si];
+                        var parent = parentBySub[sub];
+                        if (parent && c === parent && itype === sub) {
+                            n++;
+                            return;
+                        }
+                    }
+                }
             });
             return n;
         }
@@ -404,17 +422,20 @@
                 .then(function(tree) {
                     categoryTree[type] = Array.isArray(tree) ? tree : [];
                     catNamesForFilter[type] = {};
-                    function walk(nodes) {
+                    subCategoryParent[type] = {};
+                    function walk(nodes, parentName) {
                         (nodes || []).forEach(function(node) {
                             catNamesForFilter[type][node.name] = node.all_descendants || [];
-                            if (node.children && node.children.length) walk(node.children);
+                            if (parentName) subCategoryParent[type][node.name] = parentName;
+                            if (node.children && node.children.length) walk(node.children, node.name);
                         });
                     }
-                    walk(categoryTree[type]);
+                    walk(categoryTree[type], null);
                 })
                 .catch(function() {
                     categoryTree[type] = [];
                     catNamesForFilter[type] = {};
+                    subCategoryParent[type] = {};
                 });
         }
 
@@ -440,6 +461,10 @@
                 for (var ai = 0; ai < allowed.length; ai++) {
                     if ((allowed[ai] || '').trim().toLowerCase() === catNorm) return true;
                 }
+                var catType = currentType === 'material' ? 'material' : 'work';
+                var parentBySub = subCategoryParent[catType] || {};
+                var parent = parentBySub[cName];
+                if (parent && catNorm === parent.toLowerCase() && (itype || '').trim().toLowerCase() === cName.toLowerCase()) return true;
             }
             for (si = 0; si < selectedCats.length; si++) {
                 var s2 = selectedCats[si];
@@ -486,7 +511,7 @@
                 var catId = makeCatId(cat);
                 catIdToName[catId] = cat;
                 var names = categoryNamesWithDescendants(cat);
-                var cTotal = countItemsInCategoryNames(names, list);
+                var cTotal = typeof node.count === 'number' ? node.count : countItemsInCategoryNames(names, list);
                 var catSel = selectedCats.indexOf(catId) !== -1;
                 var cIsOpen = catTreeOpen[catId] === true;
                 var bg = depth === 0 ? '#e8f5e9' : (depth === 1 ? '#f1f8e9' : '#fafafa');
@@ -1233,17 +1258,17 @@
                 if (isMat && marginPct < 0) rowStyle = ' style="background:#ffebee;"';
                 else if (isMat && marginPct < 10) rowStyle = ' style="background:#fff8e1;"';
                 var priceCells = isMat
-                    ? ('<td><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></td>'+
-                       '<td><input type="number" value="'+purch+'" step="0.01" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></td>'+
+                    ? ('<td><input type="number" value="'+numInputDisplay(item.price)+'" step="0.01" placeholder="0" onchange="updateItem('+item.id+', \'price\', this.value)"></td>'+
+                       '<td><input type="number" value="'+numInputDisplay(purch)+'" step="0.01" placeholder="0" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></td>'+
                        '<td style="text-align:center;font-weight:600;color:'+(marginPct >= 30 ? '#2e7d32' : (marginPct >= 15 ? '#f57f17' : '#c62828'))+'">'+marginPct.toFixed(1)+'%</td>')
-                    : ('<td><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></td>');
+                    : ('<td><input type="number" value="'+numInputDisplay(item.price)+'" step="0.01" placeholder="0" onchange="updateItem('+item.id+', \'price\', this.value)"></td>');
                 return '<tr'+rowStyle+'>'+
                     '<td style="text-align:center;color:#546e7a;font-weight:600;">'+(idx + 1)+'</td>'+
                     '<td><input type="text" value="'+esc(item.name)+'" onchange="updateItem('+item.id+', \'name\', this.value)"></td>'+
                     '<td><select onchange="updateItem('+item.id+', \'unit\', this.value)">'+
                         ['шт','м','м²','м³','кг','т','л','компл'].map(u => '<option'+(item.unit===u?' selected':'')+'>'+esc(u)+'</option>').join('')+
                     '</select></td>'+
-                    '<td><input type="number" value="'+item.quantity+'" step="0.1" onchange="updateItem('+item.id+', \'quantity\', this.value)"></td>'+
+                    '<td><input type="number" value="'+numInputDisplay(item.quantity)+'" step="0.1" placeholder="0" onchange="updateItem('+item.id+', \'quantity\', this.value)"></td>'+
                     priceCells +
                     '<td style="font-weight:bold; text-align:right">'+item.total.toFixed(2)+'</td>'+
                     '<td style="text-align:center;vertical-align:middle;"><input type="checkbox" class="est-row-cb" data-item-id="'+item.id+'"'+(isEstimateItemSelected(item.id)?' checked':'')+' aria-label="Выбрать строку"></td>'+
@@ -1255,11 +1280,11 @@
                 var purch = (item.purchase_price != null && item.purchase_price !== '') ? item.purchase_price : 0;
                 var priceFields = isMat
                     ? ('<div style="display:flex; gap:10px; flex-wrap:wrap;">'+
-                        '<div class="field" style="flex:1;min-width:110px"><label>Розница</label><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></div>'+
-                        '<div class="field" style="flex:1;min-width:110px"><label>Закуп</label><input type="number" value="'+purch+'" step="0.01" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></div>'+
+                        '<div class="field" style="flex:1;min-width:110px"><label>Розница</label><input type="number" value="'+numInputDisplay(item.price)+'" step="0.01" placeholder="0" onchange="updateItem('+item.id+', \'price\', this.value)"></div>'+
+                        '<div class="field" style="flex:1;min-width:110px"><label>Закуп</label><input type="number" value="'+numInputDisplay(purch)+'" step="0.01" placeholder="0" onchange="updateItem('+item.id+', \'purchase_price\', this.value)"></div>'+
                         '<div class="field" style="flex:1;min-width:110px"><label>Маржа</label><input type="text" value="'+((parseFloat(item.price)||0) > 0 ? ((((parseFloat(item.price)||0)-(parseFloat(purch)||0))/(parseFloat(item.price)||0)*100).toFixed(1)+'%') : '0.0%')+'" disabled></div>'+
                       '</div>')
-                    : ('<div class="field"><label>Расценка</label><input type="number" value="'+item.price+'" step="0.01" onchange="updateItem('+item.id+', \'price\', this.value)"></div>');
+                    : ('<div class="field"><label>Расценка</label><input type="number" value="'+numInputDisplay(item.price)+'" step="0.01" placeholder="0" onchange="updateItem('+item.id+', \'price\', this.value)"></div>');
                 var cardWarnStyle = '';
                 if (isMat) {
                     var m = (parseFloat(item.price)||0) > 0 ? (((parseFloat(item.price)||0) - (parseFloat(purch)||0)) / (parseFloat(item.price)||0) * 100) : 0;
@@ -1276,7 +1301,7 @@
                         '<div class="field" style="flex:1"><label>Ед.</label><select onchange="updateItem('+item.id+', \'unit\', this.value)">'+
                             ['шт','м','м²','м³','кг','т','л','компл'].map(u => '<option'+(item.unit===u?' selected':'')+'>'+esc(u)+'</option>').join('')+
                         '</select></div>'+
-                        '<div class="field" style="flex:1"><label>Кол-во</label><input type="number" value="'+item.quantity+'" step="0.1" onchange="updateItem('+item.id+', \'quantity\', this.value)"></div>'+
+                        '<div class="field" style="flex:1"><label>Кол-во</label><input type="number" value="'+numInputDisplay(item.quantity)+'" step="0.1" placeholder="0" onchange="updateItem('+item.id+', \'quantity\', this.value)"></div>'+
                     '</div>'+
                     priceFields +
                     '<div style="font-size:16px; font-weight:bold; text-align:right; margin-top:5px;">'+item.total.toFixed(2)+' BYN</div>'+

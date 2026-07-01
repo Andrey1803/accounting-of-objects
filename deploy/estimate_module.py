@@ -1932,11 +1932,31 @@ def _build_db_category_tree(user_id, cat_type):
         return None
 
     table = 'catalog_materials' if cat_type == 'material' else 'catalog_works'
-    items = fetch_all(f"SELECT category FROM {table} WHERE user_id = ?", (user_id,))
+    if cat_type == 'material':
+        items = fetch_all(
+            "SELECT category, item_type FROM catalog_materials WHERE user_id = ?",
+            (user_id,),
+        )
+    else:
+        items = fetch_all(f"SELECT category FROM {table} WHERE user_id = ?", (user_id,))
+
     counts = {}
     for it in items:
         k = (it.get('category') or '').strip() or 'Без категории'
         counts[k] = counts.get(k, 0) + 1
+
+    def count_material_for_node(node_name, parent_name=None):
+        if cat_type != 'material':
+            return counts.get(node_name, 0)
+        total = 0
+        for it in items:
+            cat = (it.get('category') or '').strip()
+            itype = (it.get('item_type') or '').strip() or 'Другое'
+            if cat == node_name:
+                total += 1
+            elif parent_name and cat == parent_name and itype == node_name:
+                total += 1
+        return total
 
     nodes = {}
     for r in rows:
@@ -1950,6 +1970,7 @@ def _build_db_category_tree(user_id, cat_type):
             'is_brand_leaf': False,
             'is_db_category': True,
             'filter_level': '0',
+            'parent_category_name': None,
         }
     roots = []
     for r in rows:
@@ -1961,20 +1982,36 @@ def _build_db_category_tree(user_id, cat_type):
         else:
             roots.append(n)
 
-    def walk(node):
-        direct = counts.get(node['name'], 0)
-        child_names = []
-        total = direct
-        for ch in node['children']:
-            sub_names, sub_total = walk(ch)
-            child_names.extend(sub_names)
-            total += sub_total
+    def walk(node, parent_name=None):
+        node['parent_category_name'] = parent_name
+        if node['children']:
+            child_name_list = [ch['name'] for ch in node['children']]
+            child_total = 0
+            child_names = []
+            for ch in node['children']:
+                sub_names, sub_total = walk(ch, node['name'])
+                child_names.extend(sub_names)
+                child_total += sub_total
+            if cat_type == 'material':
+                loose = 0
+                for it in items:
+                    cat = (it.get('category') or '').strip()
+                    itype = (it.get('item_type') or '').strip() or 'Другое'
+                    if cat == node['name'] and itype not in child_name_list:
+                        loose += 1
+                direct = loose
+            else:
+                direct = max(0, counts.get(node['name'], 0) - child_total)
+            total = direct + child_total
+        else:
+            total = count_material_for_node(node['name'], parent_name)
+            child_names = []
         node['count'] = total
         node['all_descendants'] = child_names
         return [node['name']] + child_names, total
 
     for root in roots:
-        walk(root)
+        walk(root, None)
     return roots
 
 
