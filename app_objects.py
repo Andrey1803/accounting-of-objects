@@ -54,8 +54,35 @@ from object_audit import (
 
 # Версия в шапке и /health (minor = financial_logic_version)
 APP_VERSION_MAJOR = 4
-FINANCIAL_LOGIC_VERSION = 3
+FINANCIAL_LOGIC_VERSION = 4
 APP_VERSION = f"{APP_VERSION_MAJOR}.{FINANCIAL_LOGIC_VERSION}"
+
+
+def _expenses_near(a, b, tol=0.05):
+    try:
+        return abs(float(a or 0) - float(b or 0)) <= tol
+    except (TypeError, ValueError):
+        return False
+
+
+def _other_expenses_from_raw(raw_exp, em, emc, mat_cogs):
+    """Прочие затраты из objects.expenses без двойного учёта розницы/закупа сметы."""
+    raw = max(0.0, float(raw_exp or 0))
+    if raw <= 0:
+        return 0.0
+    em = float(em or 0)
+    emc = float(emc or 0)
+    mat_cogs = float(mat_cogs or 0)
+    # Поле часто = розница материалов (дубль выручки по смете) — не списываем повторно.
+    if em > 0 and (_expenses_near(raw, em) or raw + 1e-6 >= em):
+        return max(0.0, raw - em)
+    # Дубль закупа: mat_cogs уже учтён в себестоимости материалов.
+    if emc > 0 and mat_cogs > 0 and (_expenses_near(raw, emc) or raw + 1e-6 >= emc):
+        return max(0.0, raw - emc)
+    # raw между закупом и розницей — это наценка, уже в выручке (не «прочие»).
+    if em > 0 and emc > 0 and mat_cogs > 0 and emc < raw < em + 0.05:
+        return 0.0
+    return raw
 
 app = Flask(__name__)
 # Секретный ключ для сессий — генерируется при запуске или берётся из окружения
@@ -729,14 +756,7 @@ def _compute_object_financials(
     work_rev = _work_revenue_once(sum_work, ew)
     total_revenue = work_rev + em
     mat_cogs = _effective_material_cogs(em, emp, emc)
-    # Поле objects.expenses часто дублирует смету: либо розницу (em), либо закуп (emc), либо «прочее».
-    if em > 0 and raw_exp + 1e-9 >= em:
-        other_exp = max(0.0, raw_exp - em)
-    elif emc > 0 and raw_exp + 1e-9 >= emc:
-        # raw_exp < em, но покрывает закуп: иначе mat_cogs уже включает emc, а в other_exp оставался бы полный raw → двойной учёт.
-        other_exp = max(0.0, raw_exp - emc)
-    else:
-        other_exp = raw_exp
+    other_exp = _other_expenses_from_raw(raw_exp, em, emc, mat_cogs)
 
     total_expenses = mat_cogs + other_exp + max(0.0, extra)
     total_profit = total_revenue - total_expenses - sal
