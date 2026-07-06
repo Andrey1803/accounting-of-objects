@@ -32,6 +32,21 @@
         }
         .profit-view-tabs button.active { background: #4CAF50; color: #fff; border-color: #388E3C; }
         .profit-view-tabs button:hover:not(.active) { background: #f1f8e9; }
+        .profit-cell { min-width: 8.5rem; vertical-align: top; }
+        .profit-main { line-height: 1.25; }
+        .profit-split {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 0.45rem;
+            margin-top: 0.28rem;
+            font-size: 0.72rem;
+            font-weight: 600;
+            line-height: 1.2;
+        }
+        .profit-split-work { color: #1565c0; text-align: left; flex: 1 1 50%; }
+        .profit-split-mat { color: #e65100; text-align: right; flex: 1 1 50%; }
+        .profit-split-neg { color: #c62828 !important; }
     </style>
 </head>
 <body>
@@ -177,6 +192,37 @@
             var exp = objectExpenses(o);
             return rev - exp - (Number(o.salary) || 0);
         }
+        function objectMaterialProfit(o) {
+            if (o.estimate_material_profit != null && o.estimate_material_profit !== '') {
+                var emp = Number(o.estimate_material_profit);
+                if (!Number.isNaN(emp)) return emp;
+            }
+            if (o.est_mat_profit != null && o.est_mat_profit !== '') {
+                var empLegacy = Number(o.est_mat_profit);
+                if (!Number.isNaN(empLegacy)) return empLegacy;
+            }
+            var em = Number(o.estimate_materials) || Number(o.est_materials) || 0;
+            var emc = Number(o.estimate_material_cost) || Number(o.est_mat_cost) || 0;
+            if (emc > 0 && em > 0) return Math.max(0, em - emc);
+            return 0;
+        }
+        function objectWorkProfit(o) {
+            return objectProfit(o) - objectMaterialProfit(o);
+        }
+        function profitCompact(v) {
+            return Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        function profitCellHtml(totalProf, workProf, matProf) {
+            var mainCls = totalProf >= 0 ? 'profit-pos' : 'profit-neg';
+            var workCls = workProf >= 0 ? '' : ' profit-split-neg';
+            var matCls = matProf >= 0 ? '' : ' profit-split-neg';
+            return '<div class="profit-cell">' +
+                '<div class="profit-main ' + mainCls + '">' + money(totalProf) + '</div>' +
+                '<div class="profit-split">' +
+                '<span class="profit-split-work' + workCls + '" title="Прибыль за работы">' + profitCompact(workProf) + '</span>' +
+                '<span class="profit-split-mat' + matCls + '" title="Прибыль за материалы">' + profitCompact(matProf) + '</span>' +
+                '</div></div>';
+        }
         function objectSalary(o) {
             return Number(o.salary) || 0;
         }
@@ -200,7 +246,7 @@
             profitRows.forEach(function (o) {
                 var key = keyFn(o);
                 if (!map[key]) {
-                    map[key] = { key: key, objects: 0, revenue: 0, expenses: 0, salary: 0, profit: 0 };
+                    map[key] = { key: key, objects: 0, revenue: 0, expenses: 0, salary: 0, profit: 0, workProfit: 0, matProfit: 0 };
                 }
                 var g = map[key];
                 g.objects += 1;
@@ -208,6 +254,8 @@
                 g.expenses += objectExpenses(o);
                 g.salary += objectSalary(o);
                 g.profit += objectProfit(o);
+                g.workProfit += objectWorkProfit(o);
+                g.matProfit += objectMaterialProfit(o);
             });
             return Object.keys(map).map(function (k) { return map[k]; });
         }
@@ -331,7 +379,7 @@
                         '<td>' + money(g.revenue) + '</td>' +
                         '<td>' + money(g.expenses) + '</td>' +
                         '<td>' + money(g.salary) + '</td>' +
-                        '<td class="' + (g.profit >= 0 ? 'profit-pos' : 'profit-neg') + '">' + money(g.profit) + '</td>' +
+                        '<td>' + profitCellHtml(g.profit, g.workProfit, g.matProfit) + '</td>' +
                         '<td>' + marginBarHtml(g.revenue, g.profit) + '</td>';
                     tbl.appendChild(tr);
                 });
@@ -360,6 +408,8 @@
                 var exp = objectExpenses(o);
                 var sal = objectSalary(o);
                 var prof = objectProfit(o);
+                var workProf = objectWorkProfit(o);
+                var matProf = objectMaterialProfit(o);
                 var bal = objectBalance(o);
                 var debt = (bal > 0 && o.status !== 'Ожидает старта' && o.status !== 'Запланирован') ? bal : 0;
                 var tr = document.createElement('tr');
@@ -371,7 +421,7 @@
                     '<td>' + money(rev) + '</td>' +
                     '<td>' + money(exp) + '</td>' +
                     '<td>' + money(sal) + '</td>' +
-                    '<td class="' + (prof >= 0 ? 'profit-pos' : 'profit-neg') + '">' + money(prof) + '</td>' +
+                    '<td>' + profitCellHtml(prof, workProf, matProf) + '</td>' +
                     '<td>' + marginBarHtml(rev, prof) + '</td>' +
                     '<td class="' + (debt > 0 ? 'profit-neg' : '') + '">' + money(debt) + '</td>' +
                     '<td>' + esc(o.status || '') + '</td>';
