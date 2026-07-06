@@ -1475,6 +1475,13 @@ def integration_create_object_from_taskmgr():
             'SELECT * FROM objects WHERE user_id = ? AND integration_source = ?',
             (target_user_id, source_key),
         )
+        if existing and follow_up_from:
+            parent_row = fetch_one(
+                'SELECT id FROM objects WHERE user_id = ? AND integration_source = ?',
+                (target_user_id, f'taskmgr:{follow_up_from}'),
+            )
+            if parent_row and int(parent_row['id']) == int(existing['id']):
+                existing = None
         if existing:
             # Повторный вызов: дополняем клиента и привязку, если в диспетчере уже появились контакты
             # (первый синк часто без body — объект создался только с названием).
