@@ -206,8 +206,30 @@
             if (emc > 0 && em > 0) return Math.max(0, em - emc);
             return 0;
         }
+        function objectMaterialRetail(o) {
+            return Number(o.estimate_materials) || Number(o.est_materials) || 0;
+        }
+        function objectMaterialCogs(o) {
+            var em = objectMaterialRetail(o);
+            var emp = objectMaterialProfit(o);
+            var emc = Number(o.estimate_material_cost) || Number(o.est_mat_cost) || 0;
+            if (emc > 0) return emc;
+            return Math.max(0, em - emp);
+        }
+        /** Наценка на материалах, которая реально вошла в total_profit (не списана розницей в «Затраты»). */
+        function objectMaterialProfitInTotal(o) {
+            var emp = objectMaterialProfit(o);
+            if (emp <= 0) return 0;
+            var em = objectMaterialRetail(o);
+            if (em <= 0) return 0;
+            var exp = objectExpenses(o);
+            // Затраты ≈ розница материалов — наценка в прибыль не попала
+            if (exp >= em - 0.5) return 0;
+            var total = objectProfit(o);
+            return Math.min(emp, Math.max(0, total));
+        }
         function objectWorkProfit(o) {
-            return objectProfit(o) - objectMaterialProfit(o);
+            return objectProfit(o) - objectMaterialProfitInTotal(o);
         }
         function profitCompact(v) {
             return Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -255,7 +277,7 @@
                 g.salary += objectSalary(o);
                 g.profit += objectProfit(o);
                 g.workProfit += objectWorkProfit(o);
-                g.matProfit += objectMaterialProfit(o);
+                g.matProfit += objectMaterialProfitInTotal(o);
             });
             return Object.keys(map).map(function (k) { return map[k]; });
         }
@@ -409,7 +431,7 @@
                 var sal = objectSalary(o);
                 var prof = objectProfit(o);
                 var workProf = objectWorkProfit(o);
-                var matProf = objectMaterialProfit(o);
+                var matProf = objectMaterialProfitInTotal(o);
                 var bal = objectBalance(o);
                 var debt = (bal > 0 && o.status !== 'Ожидает старта' && o.status !== 'Запланирован') ? bal : 0;
                 var tr = document.createElement('tr');
