@@ -13,7 +13,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>👷 Рабочие</h1>
+        <h1>👷 Рабочие{% include 'partials/app_version.html' %}</h1>
         <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
             {% include 'partials/dispatcher_switch.html' %}
             <a href="/" class="btn btn-back">На главную</a>
@@ -84,7 +84,7 @@
             </div>
             <div class="fg">
                 <label>Ставка в день (руб)</label>
-                <input type="number" id="w-rate" value="150" step="10">
+                <input type="number" id="w-rate" step="10" placeholder="150">
             </div>
             <div class="fg">
                 <label>Дата найма</label>
@@ -171,8 +171,9 @@
     </div>
 
     <script src="/static/js/api.js?v=2"></script>
+    <script src="/static/js/utils.js?v=6"></script>
     <script src="/static/js/ui.js?v=1"></script>
-    <script src="/static/js/workers.js?v=3"></script>
+    <script src="/static/js/workers.js?v=4"></script>
     <script src="/static/js/table-pan.js?v=1"></script>
 </body>
 </html>

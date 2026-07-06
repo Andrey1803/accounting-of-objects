@@ -52,6 +52,11 @@ from object_audit import (
     OBJECT_AUDIT_FIELDS,
 )
 
+# Версия в шапке и /health (minor = financial_logic_version)
+APP_VERSION_MAJOR = 4
+FINANCIAL_LOGIC_VERSION = 3
+APP_VERSION = f"{APP_VERSION_MAJOR}.{FINANCIAL_LOGIC_VERSION}"
+
 app = Flask(__name__)
 # Секретный ключ для сессий — генерируется при запуске или берётся из окружения
 _secret_key = os.environ.get('SECRET_KEY')
@@ -84,6 +89,11 @@ limiter.init_app(app)
 if os.environ.get('FLASK_DEBUG', '0') != '1':
     from werkzeug.middleware.proxy_fix import ProxyFix
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=0)
+
+
+@app.context_processor
+def inject_app_version():
+    return {'app_version': APP_VERSION}
 
 
 @app.context_processor
@@ -733,9 +743,6 @@ def _compute_object_financials(
     return total_revenue, total_expenses, total_profit, mat_cogs, other_exp, max(0.0, extra)
 
 
-FINANCIAL_LOGIC_VERSION = 3
-
-
 def _effective_material_profit(em, emp, emc):
     """Наценка на материалах: из material_profit или розница − закуп."""
     try:
@@ -1321,6 +1328,7 @@ def health_check():
         "timestamp": datetime.now().isoformat(),
         "passport_pdf": pdf_ok,
         "objects_list_version": 2,
+        "app_version": APP_VERSION,
         "financial_logic_version": FINANCIAL_LOGIC_VERSION,
     }), 200
 

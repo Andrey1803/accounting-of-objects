@@ -150,6 +150,17 @@ body {
     font-weight: 600;
 }
 
+.app-version {
+    display: inline-block;
+    margin-left: 0.4em;
+    font-size: 0.58em;
+    font-weight: 700;
+    opacity: 0.78;
+    letter-spacing: 0.03em;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
 .header-actions {
     display: flex;
     gap: 10px;

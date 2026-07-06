@@ -58,7 +58,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>Каталог</h1>
+        <h1>Каталог{% include 'partials/app_version.html' %}</h1>
         <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
             {% include 'partials/dispatcher_switch.html' %}
             <a href="/" class="btn btn-back">На главную</a>

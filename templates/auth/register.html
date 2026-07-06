@@ -19,7 +19,7 @@
 </head>
 <body>
     <div class="card">
-        <h1>👤 Регистрация</h1>
+        <h1>👤 Регистрация{% include 'partials/app_version.html' %}</h1>
         {% if needs_invite|default(true) %}
         <p class="subtitle">Нужен ключ приглашения от администратора (или откройте ссылку из письма).</p>
         {% else %}

@@ -15,7 +15,7 @@
 </head>
 <body>
     <div class="login-card">
-        <h1>🔐 Учёт объектов</h1>
+        <h1>🔐 Учёт объектов{% include 'partials/app_version.html' %}</h1>
         <p class="subtitle">Войдите для продолжения</p>
         
         {% with messages = get_flashed_messages(with_categories=true) %}

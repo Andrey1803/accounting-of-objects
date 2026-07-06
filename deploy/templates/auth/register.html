@@ -19,8 +19,12 @@
 </head>
 <body>
     <div class="card">
-        <h1>👤 Регистрация</h1>
-        <p class="subtitle">Создайте свой аккаунт</p>
+        <h1>👤 Регистрация{% include 'partials/app_version.html' %}</h1>
+        {% if needs_invite|default(true) %}
+        <p class="subtitle">Нужен ключ приглашения от администратора (или откройте ссылку из письма).</p>
+        {% else %}
+        <p class="subtitle">Вы создаёте первого пользователя — он станет администратором. Ключ приглашения не требуется.</p>
+        {% endif %}
         
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}{% for category, message in messages %}
@@ -32,16 +36,22 @@
                 <label>Логин * (мин. 3 символа)</label>
                 <input type="text" name="username" required minlength="3" placeholder="Придумайте логин">
             </div>
+            {% if needs_invite|default(true) %}
             <div class="form-group">
-                <label>Пароль * (мин. 4 символа)</label>
-                <input type="password" name="password" id="pw1" required minlength="4" placeholder="Введите пароль">
+                <label>Ключ приглашения *</label>
+                <input type="text" name="invite_key" required autocomplete="off" placeholder="Вставьте ключ или откройте ссылку с ?invite=..." value="{{ invite_prefill|default('')|e }}">
+            </div>
+            {% endif %}
+            <div class="form-group">
+                <label>Пароль * (мин. 8 символов)</label>
+                <input type="password" name="password" id="pw1" required minlength="8" placeholder="Введите пароль">
                 <button type="button" class="toggle-pw" onclick="togglePw('pw1',this)" title="Показать пароль">👁️</button>
                 <div class="pw-strength"><div class="bar" id="pw-bar"></div></div>
                 <div class="pw-hint" id="pw-hint"></div>
             </div>
             <div class="form-group">
                 <label>Подтвердите пароль *</label>
-                <input type="password" name="password_confirm" id="pw2" required minlength="4" placeholder="Повторите пароль" oninput="checkMatch()">
+                <input type="password" name="password_confirm" id="pw2" required minlength="8" placeholder="Повторите пароль" oninput="checkMatch()">
                 <button type="button" class="toggle-pw" onclick="togglePw('pw2',this)" title="Показать пароль">👁️</button>
                 <div id="pw-match"></div>
             </div>
@@ -100,8 +110,8 @@
             const hint = document.getElementById('pw-hint');
             
             let strength = 0;
-            if (pw.length >= 4) strength++;
             if (pw.length >= 8) strength++;
+            if (pw.length >= 12) strength++;
             if (/[A-Z]/.test(pw)) strength++;
             if (/[0-9]/.test(pw)) strength++;
             if (/[^A-Za-z0-9]/.test(pw)) strength++;

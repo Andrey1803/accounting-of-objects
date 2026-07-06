@@ -15,7 +15,7 @@
 </head>
 <body>
     <div class="login-card">
-        <h1>🔐 Учёт объектов</h1>
+        <h1>🔐 Учёт объектов{% include 'partials/app_version.html' %}</h1>
         <p class="subtitle">Войдите для продолжения</p>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -50,7 +50,7 @@
         {% endif %}
         <div class="footer">
             {% if register_enabled %}
-            <p>Демо: admin / admin123</p>
+            <p style="font-size:12px;color:#666;line-height:1.45">Регистрация: если учётных записей ещё нет — можно создать первого (администратора) без ключа. После появления пользователей — только по ключу приглашения со страницы администратора.</p>
             {% else %}
             <p style="font-size:12px;color:#888;">Регистрация отключена. Вход только для существующих учётных записей.</p>
             {% endif %}

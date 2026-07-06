@@ -135,7 +135,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>Смета <span id="estimate-number"></span></h1>
+        <h1>Смета <span id="estimate-number"></span>{% include 'partials/app_version.html' %}</h1>
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
             {% include 'partials/dispatcher_switch.html' %}
             <button class="btn btn-secondary" onclick="window.location.href='/'" title="На главную">🏠</button>
@@ -1562,6 +1562,7 @@
             if (currentType === 'material') {
                 body.retail_price = price;
                 body.purchase_price = price * 0.7;
+                body.category = document.getElementById('c-category').value || '';
             } else {
                 body.category = document.getElementById('c-category').value || '';
             }
