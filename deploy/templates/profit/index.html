@@ -236,6 +236,9 @@
                 var pw = Number(o.profit_work);
                 if (!Number.isNaN(pw)) return pw;
             }
+            var workRev = Math.max(Number(o.sum_work) || 0, Number(o.estimate_works) || 0);
+            var sal = Number(o.salary) || 0;
+            if (workRev > 0) return workRev - sal;
             return objectProfit(o) - objectMaterialProfit(o);
         }
         function profitCompact(v) {

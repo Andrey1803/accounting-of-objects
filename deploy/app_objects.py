@@ -718,12 +718,15 @@ def _compute_object_financials(
 
     work_rev = _work_revenue_once(sum_work, ew)
     total_revenue = work_rev + em
-    if emc > 0:
-        mat_cogs = emc
-    elif emp > 0:
+    # Наценка (emp) надёжнее закупа из purchase_price: в сметах purchase часто = розница.
+    if emp > 0 and em > 0:
         mat_cogs = max(0.0, em - emp)
+    elif emc > 0:
+        if em > 0 and emc + 1e-9 >= em:
+            mat_cogs = 0.0
+        else:
+            mat_cogs = min(max(0.0, emc), max(0.0, em)) if em > 0 else max(0.0, emc)
     else:
-        # Без закупа/наценки не списываем всю розницу материалов в себестоимость
         mat_cogs = 0.0
     # Поле objects.expenses часто дублирует смету: либо розницу (em), либо закуп (emc), либо «прочее».
     if em > 0 and raw_exp + 1e-9 >= em:
@@ -736,7 +739,7 @@ def _compute_object_financials(
 
     total_expenses = mat_cogs + other_exp + max(0.0, extra)
     total_profit = total_revenue - total_expenses - sal
-    return total_revenue, total_expenses, total_profit
+    return total_revenue, total_expenses, total_profit, mat_cogs, other_exp, max(0.0, extra)
 
 
 def _material_profit_from_estimates(em, emp, emc):
@@ -754,12 +757,31 @@ def _material_profit_from_estimates(em, emp, emc):
     return 0.0
 
 
-def _profit_work_material_split(profit_before_tax, profit_after, em, emp, emc):
-    """Разбивка прибыли: работы + материалы = итого (с учётом налога пропорционально)."""
+def _profit_work_material_split(
+    profit_before_tax,
+    profit_after,
+    sum_work,
+    estimate_works,
+    em,
+    emp,
+    emc,
+    salary,
+    other_exp,
+    extra_exp,
+):
+    """Разбивка: работы = выручка работ − зарплата − прочие; материалы = наценка по смете."""
     pbt = float(profit_before_tax or 0)
     pa = float(profit_after if profit_after is not None else pbt)
     mat = _material_profit_from_estimates(em, emp, emc)
-    work = pbt - mat
+    work_rev = _work_revenue_once(sum_work, estimate_works)
+    sal = float(salary or 0)
+    other = max(0.0, float(other_exp or 0)) + max(0.0, float(extra_exp or 0))
+    if work_rev > 0:
+        work = work_rev - sal - other
+        if abs((work + mat) - pbt) > 0.05:
+            work = pbt - mat
+    else:
+        work = pbt - mat
     if pbt > 0 and abs(pa - pbt) > 0.004:
         ratio = pa / pbt
         mat = round(mat * ratio, 2)
@@ -914,7 +936,7 @@ def _apply_object_financial_enrichment(obj, user_id):
     oid = obj.get('id')
     extra = _sum_extra_expenses_for_object(oid, user_id) if oid else 0.0
     ew, em, emp, emc = _estimate_fields_from_object(obj)
-    tr, te, tp = _compute_object_financials(
+    tr, te, tp, _mat_cogs, other_exp, extra = _compute_object_financials(
         obj.get('sum_work'),
         ew,
         em,
@@ -934,7 +956,9 @@ def _apply_object_financial_enrichment(obj, user_id):
     obj['tax_rate'] = rate
     obj['tax_amount'] = tax_amt
     obj['total_profit'] = profit_after
-    work_profit, mat_profit = _profit_work_material_split(tp, profit_after, em, emp, emc)
+    work_profit, mat_profit = _profit_work_material_split(
+        tp, profit_after, obj.get('sum_work'), ew, em, emp, emc, obj.get('salary'), other_exp, extra,
+    )
     obj['profit_work'] = work_profit
     obj['profit_material'] = mat_profit
     obj['balance'] = round(tr - float(obj.get('advance', 0) or 0), 2)
