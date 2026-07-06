@@ -3582,25 +3582,80 @@ def api_get_materials():
 @_require_csrf
 def api_add_catalog_material():
     data, err = _require_json()
-    if err: return err
+    if err:
+        return err
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({"error": "Укажите название материала"}), 400
     try:
         retail = _safe_float(data.get('retail_price'))
+        if retail <= 0 and data.get('price') is not None:
+            retail = _safe_float(data.get('price'))
         purchase = _normalize_unit_purchase_price(
             _safe_float(data.get('purchase_price')), retail, qty=1.0
         )
         wholesale = _safe_float(data.get('wholesale_price'), default=retail)
-        category = data.get('category', '')
+        category = (data.get('category') or '').strip()
         min_qty = _safe_float(data.get('min_wholesale_qty'), default=10)
         desc = data.get('description', '')
-        execute("""INSERT INTO catalog_materials
+        unit = (data.get('unit') or 'шт').strip() or 'шт'
+        article = (data.get('article') or '').strip()
+        brand = (data.get('brand') or '').strip()
+        item_type = (data.get('item_type') or '').strip()
+
+        existing = fetch_one(
+            "SELECT id FROM catalog_materials WHERE user_id = ? AND name = ?",
+            (current_user.id, name),
+        )
+        if existing:
+            execute(
+                """UPDATE catalog_materials SET unit=?, category=?, article=?, brand=?, item_type=?,
+                   purchase_price=?, retail_price=?, wholesale_price=?, min_wholesale_qty=?, description=?,
+                   use_count = use_count + 1
+                   WHERE id=? AND user_id=?""",
+                (
+                    unit,
+                    category,
+                    article,
+                    brand,
+                    item_type,
+                    purchase,
+                    retail,
+                    wholesale,
+                    min_qty,
+                    desc,
+                    existing['id'],
+                    current_user.id,
+                ),
+            )
+            return jsonify({"status": "ok", "id": existing['id'], "updated": True}), 200
+
+        new_id = execute(
+            """INSERT INTO catalog_materials
             (user_id, name, unit, category, article, brand, item_type, purchase_price, retail_price, wholesale_price, min_wholesale_qty, description, use_count)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-            (current_user.id, data.get('name', ''), data.get('unit', 'шт'), category,
-             (data.get('article') or '').strip(), (data.get('brand') or '').strip(), (data.get('item_type') or '').strip(),
-             purchase, retail, wholesale, min_qty, desc))
-        return jsonify({"status": "ok"}), 201
+            (
+                current_user.id,
+                name,
+                unit,
+                category,
+                article,
+                brand,
+                item_type,
+                purchase,
+                retail,
+                wholesale,
+                min_qty,
+                desc,
+            ),
+            return_id=True,
+        )
+        return jsonify({"status": "ok", "id": new_id, "created": True}), 201
     except Exception as e:
-        logger.error(f"Add material error: {e}")
+        logger.exception("Add material error: %s", e)
+        err_text = str(e).lower()
+        if 'unique' in err_text or 'duplicate' in err_text:
+            return jsonify({"error": "Материал с таким названием уже есть в каталоге"}), 409
         return jsonify({"error": "Ошибка при создании материала"}), 400
 
 @estimate_bp.route('/api/catalog/materials/<int:item_id>', methods=['PUT'])
@@ -3644,17 +3699,39 @@ def api_get_works():
 @_require_csrf
 def api_add_catalog_work():
     data, err = _require_json()
-    if err: return err
+    if err:
+        return err
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({"error": "Укажите название услуги"}), 400
     try:
         price = _safe_float(data.get('price'))
         desc = data.get('description', '')
-        execute("""INSERT INTO catalog_works
+        unit = (data.get('unit') or 'шт').strip() or 'шт'
+        existing = fetch_one(
+            "SELECT id FROM catalog_works WHERE user_id = ? AND name = ?",
+            (current_user.id, name),
+        )
+        if existing:
+            execute(
+                """UPDATE catalog_works SET unit=?, price=?, description=?, use_count = use_count + 1
+                   WHERE id=? AND user_id=?""",
+                (unit, price, desc, existing['id'], current_user.id),
+            )
+            return jsonify({"status": "ok", "id": existing['id'], "updated": True}), 200
+        new_id = execute(
+            """INSERT INTO catalog_works
             (user_id, name, unit, price, description, use_count)
             VALUES (?, ?, ?, ?, ?, 1)""",
-            (current_user.id, data.get('name', ''), data.get('unit', 'шт'), price, desc))
-        return jsonify({"status": "ok"}), 201
+            (current_user.id, name, unit, price, desc),
+            return_id=True,
+        )
+        return jsonify({"status": "ok", "id": new_id, "created": True}), 201
     except Exception as e:
-        logger.error(f"Add work error: {e}")
+        logger.exception("Add work error: %s", e)
+        err_text = str(e).lower()
+        if 'unique' in err_text or 'duplicate' in err_text:
+            return jsonify({"error": "Услуга с таким названием уже есть в каталоге"}), 409
         return jsonify({"error": "Ошибка при создании работы"}), 400
 
 @estimate_bp.route('/api/catalog/works/<int:item_id>', methods=['PUT'])
