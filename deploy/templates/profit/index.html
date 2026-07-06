@@ -32,6 +32,41 @@
         }
         .profit-view-tabs button.active { background: #4CAF50; color: #fff; border-color: #388E3C; }
         .profit-view-tabs button:hover:not(.active) { background: #f1f8e9; }
+        .profit-cell { min-width: 9.5rem; vertical-align: top; }
+        .profit-main { line-height: 1.25; font-size: 1rem; }
+        .profit-split {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 0.35rem;
+            margin-top: 0.35rem;
+            padding-top: 0.3rem;
+            border-top: 1px dashed #ddd;
+            font-size: 0.68rem;
+            font-weight: 600;
+            line-height: 1.15;
+        }
+        .profit-split-item { flex: 1 1 50%; display: flex; flex-direction: column; gap: 0.1rem; }
+        .profit-split-work { color: #1565c0; text-align: left; }
+        .profit-split-mat { color: #e65100; text-align: right; align-items: flex-end; }
+        .profit-split-lbl {
+            font-size: 0.62rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            opacity: 0.85;
+        }
+        .profit-split-val { font-size: 0.72rem; }
+        .profit-split-neg { color: #c62828 !important; }
+        .profit-col-hint {
+            display: block;
+            margin-top: 0.2rem;
+            font-size: 0.62rem;
+            font-weight: 600;
+            opacity: 0.85;
+            line-height: 1.1;
+            text-transform: none;
+        }
     </style>
 </head>
 <body>
@@ -99,7 +134,7 @@
         };
 
         var SUBTITLES = {
-            objects: 'Список объектов с прибылью. Дата — первая рабочая дата в календаре объекта.',
+            objects: 'В колонке «Прибыль»: сверху общая сумма, ниже — с работ и с материалов.',
             days: 'Сумма прибыли по календарным дням (объект учитывается в день начала работ по календарю).',
             months: 'Сумма прибыли по календарным месяцам (месяц — по первой рабочей дате объекта).'
         };
@@ -164,8 +199,9 @@
         }
         function objectTotalExpensesFallback(o) {
             var em = Number(o.estimate_materials) || 0, emp = Number(o.estimate_material_profit) || 0, raw = Number(o.expenses) || 0;
-            var mcogs = Math.max(0, em - emp);
-            var other = (em > 0 && raw + 1e-9 >= em) ? Math.max(0, raw - em) : raw;
+            var emc = Number(o.estimate_material_cost) || Number(o.est_mat_cost) || 0;
+            var mcogs = emc > 0 ? emc : (emp > 0 ? Math.max(0, em - emp) : 0);
+            var other = (em > 0 && raw + 1e-9 >= em) ? Math.max(0, raw - em) : ((emc > 0 && raw + 1e-9 >= emc) ? Math.max(0, raw - emc) : raw);
             return mcogs + other;
         }
         function objectExpenses(o) {
@@ -176,6 +212,54 @@
             var rev = objectTotalRevenue(o);
             var exp = objectExpenses(o);
             return rev - exp - (Number(o.salary) || 0);
+        }
+        function objectMaterialProfit(o) {
+            if (o.profit_material != null && o.profit_material !== '') {
+                var pm = Number(o.profit_material);
+                if (!Number.isNaN(pm)) return pm;
+            }
+            if (o.estimate_material_profit != null && o.estimate_material_profit !== '') {
+                var emp = Number(o.estimate_material_profit);
+                if (!Number.isNaN(emp)) return emp;
+            }
+            if (o.est_mat_profit != null && o.est_mat_profit !== '') {
+                var empLegacy = Number(o.est_mat_profit);
+                if (!Number.isNaN(empLegacy)) return empLegacy;
+            }
+            var em = Number(o.estimate_materials) || Number(o.est_materials) || 0;
+            var emc = Number(o.estimate_material_cost) || Number(o.est_mat_cost) || 0;
+            if (emc > 0 && em > 0) return Math.max(0, em - emc);
+            return 0;
+        }
+        function objectWorkProfit(o) {
+            if (o.profit_work != null && o.profit_work !== '') {
+                var pw = Number(o.profit_work);
+                if (!Number.isNaN(pw)) return pw;
+            }
+            return objectProfit(o) - objectMaterialProfit(o);
+        }
+        function profitCompact(v) {
+            return Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        function profitCellHtml(totalProf, workProf, matProf) {
+            var mainCls = totalProf >= 0 ? 'profit-pos' : 'profit-neg';
+            var workCls = workProf >= 0 ? '' : ' profit-split-neg';
+            var matCls = matProf >= 0 ? '' : ' profit-split-neg';
+            return '<div class="profit-cell">' +
+                '<div class="profit-main ' + mainCls + '" title="Общая прибыль">' + money(totalProf) + '</div>' +
+                '<div class="profit-split">' +
+                '<div class="profit-split-item profit-split-work' + workCls + '">' +
+                '<span class="profit-split-lbl">работы</span>' +
+                '<span class="profit-split-val">' + profitCompact(workProf) + '</span>' +
+                '</div>' +
+                '<div class="profit-split-item profit-split-mat' + matCls + '">' +
+                '<span class="profit-split-lbl">материалы</span>' +
+                '<span class="profit-split-val">' + profitCompact(matProf) + '</span>' +
+                '</div>' +
+                '</div></div>';
+        }
+        function profitColHeaderHtml() {
+            return 'Прибыль<span class="profit-col-hint">↓ работы · материалы</span>';
         }
         function objectSalary(o) {
             return Number(o.salary) || 0;
@@ -200,7 +284,7 @@
             profitRows.forEach(function (o) {
                 var key = keyFn(o);
                 if (!map[key]) {
-                    map[key] = { key: key, objects: 0, revenue: 0, expenses: 0, salary: 0, profit: 0 };
+                    map[key] = { key: key, objects: 0, revenue: 0, expenses: 0, salary: 0, profit: 0, workProfit: 0, matProfit: 0 };
                 }
                 var g = map[key];
                 g.objects += 1;
@@ -208,6 +292,8 @@
                 g.expenses += objectExpenses(o);
                 g.salary += objectSalary(o);
                 g.profit += objectProfit(o);
+                g.workProfit += objectWorkProfit(o);
+                g.matProfit += objectMaterialProfit(o);
             });
             return Object.keys(map).map(function (k) { return map[k]; });
         }
@@ -266,11 +352,11 @@
         function renderTableHead() {
             var head = document.getElementById('tbl-head');
             if (viewMode === 'days') {
-                head.innerHTML = '<tr><th class="no-sort">№</th><th class="sortable" data-sort="date">День</th><th class="no-sort">Объектов</th><th class="sortable" data-sort="revenue">Выручка</th><th class="no-sort">Затраты</th><th class="no-sort">Зарплата</th><th class="sortable" data-sort="profit">Прибыль</th><th class="no-sort">Маржа</th></tr>';
+                head.innerHTML = '<tr><th class="no-sort">№</th><th class="sortable" data-sort="date">День</th><th class="no-sort">Объектов</th><th class="sortable" data-sort="revenue">Выручка</th><th class="no-sort">Затраты</th><th class="no-sort">Зарплата</th><th class="sortable" data-sort="profit">' + profitColHeaderHtml() + '</th><th class="no-sort">Маржа</th></tr>';
             } else if (viewMode === 'months') {
-                head.innerHTML = '<tr><th class="no-sort">№</th><th class="sortable" data-sort="date">Месяц</th><th class="no-sort">Объектов</th><th class="sortable" data-sort="revenue">Выручка</th><th class="no-sort">Затраты</th><th class="no-sort">Зарплата</th><th class="sortable" data-sort="profit">Прибыль</th><th class="no-sort">Маржа</th></tr>';
+                head.innerHTML = '<tr><th class="no-sort">№</th><th class="sortable" data-sort="date">Месяц</th><th class="no-sort">Объектов</th><th class="sortable" data-sort="revenue">Выручка</th><th class="no-sort">Затраты</th><th class="no-sort">Зарплата</th><th class="sortable" data-sort="profit">' + profitColHeaderHtml() + '</th><th class="no-sort">Маржа</th></tr>';
             } else {
-                head.innerHTML = '<tr><th class="no-sort">№</th><th class="sortable" data-sort="date">Дата</th><th class="sortable" data-sort="name">Объект</th><th class="sortable" data-sort="client">Клиент</th><th class="sortable" data-sort="revenue">Выручка</th><th class="no-sort">Затраты</th><th class="no-sort">Зарплата</th><th class="sortable" data-sort="profit">Прибыль</th><th class="no-sort">Маржа</th><th class="no-sort">Долг</th><th class="no-sort">Статус</th></tr>';
+                head.innerHTML = '<tr><th class="no-sort">№</th><th class="sortable" data-sort="date">Дата</th><th class="sortable" data-sort="name">Объект</th><th class="sortable" data-sort="client">Клиент</th><th class="sortable" data-sort="revenue">Выручка</th><th class="no-sort">Затраты</th><th class="no-sort">Зарплата</th><th class="sortable" data-sort="profit">' + profitColHeaderHtml() + '</th><th class="no-sort">Маржа</th><th class="no-sort">Долг</th><th class="no-sort">Статус</th></tr>';
             }
             bindSortHeaders();
         }
@@ -331,7 +417,7 @@
                         '<td>' + money(g.revenue) + '</td>' +
                         '<td>' + money(g.expenses) + '</td>' +
                         '<td>' + money(g.salary) + '</td>' +
-                        '<td class="' + (g.profit >= 0 ? 'profit-pos' : 'profit-neg') + '">' + money(g.profit) + '</td>' +
+                        '<td>' + profitCellHtml(g.profit, g.workProfit, g.matProfit) + '</td>' +
                         '<td>' + marginBarHtml(g.revenue, g.profit) + '</td>';
                     tbl.appendChild(tr);
                 });
@@ -360,6 +446,8 @@
                 var exp = objectExpenses(o);
                 var sal = objectSalary(o);
                 var prof = objectProfit(o);
+                var workProf = objectWorkProfit(o);
+                var matProf = objectMaterialProfit(o);
                 var bal = objectBalance(o);
                 var debt = (bal > 0 && o.status !== 'Ожидает старта' && o.status !== 'Запланирован') ? bal : 0;
                 var tr = document.createElement('tr');
@@ -371,7 +459,7 @@
                     '<td>' + money(rev) + '</td>' +
                     '<td>' + money(exp) + '</td>' +
                     '<td>' + money(sal) + '</td>' +
-                    '<td class="' + (prof >= 0 ? 'profit-pos' : 'profit-neg') + '">' + money(prof) + '</td>' +
+                    '<td>' + profitCellHtml(prof, workProf, matProf) + '</td>' +
                     '<td>' + marginBarHtml(rev, prof) + '</td>' +
                     '<td class="' + (debt > 0 ? 'profit-neg' : '') + '">' + money(debt) + '</td>' +
                     '<td>' + esc(o.status || '') + '</td>';

@@ -739,6 +739,37 @@ def _compute_object_financials(
     return total_revenue, total_expenses, total_profit
 
 
+def _material_profit_from_estimates(em, emp, emc):
+    """Наценка на материалах по смете (для разбивки колонки «Прибыль»)."""
+    try:
+        em = float(em or 0)
+        emp = float(emp or 0)
+        emc = float(emc or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if emp > 0:
+        return emp
+    if emc > 0 and em > 0:
+        return max(0.0, em - emc)
+    return 0.0
+
+
+def _profit_work_material_split(profit_before_tax, profit_after, em, emp, emc):
+    """Разбивка прибыли: работы + материалы = итого (с учётом налога пропорционально)."""
+    pbt = float(profit_before_tax or 0)
+    pa = float(profit_after if profit_after is not None else pbt)
+    mat = _material_profit_from_estimates(em, emp, emc)
+    work = pbt - mat
+    if pbt > 0 and abs(pa - pbt) > 0.004:
+        ratio = pa / pbt
+        mat = round(mat * ratio, 2)
+        work = round(pa - mat, 2)
+    else:
+        mat = round(mat, 2)
+        work = round(work, 2)
+    return work, mat
+
+
 def _float_object_field(obj, *keys):
     """Первое числовое поле из obj по списку ключей (в т.ч. legacy est_* из SQL)."""
     for key in keys:
@@ -903,6 +934,9 @@ def _apply_object_financial_enrichment(obj, user_id):
     obj['tax_rate'] = rate
     obj['tax_amount'] = tax_amt
     obj['total_profit'] = profit_after
+    work_profit, mat_profit = _profit_work_material_split(tp, profit_after, em, emp, emc)
+    obj['profit_work'] = work_profit
+    obj['profit_material'] = mat_profit
     obj['balance'] = round(tr - float(obj.get('advance', 0) or 0), 2)
     st = _norm_settlement_type(obj.get('settlement_type'))
     trg = _norm_tax_regime(obj.get('tax_regime'))

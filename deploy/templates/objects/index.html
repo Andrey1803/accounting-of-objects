@@ -395,7 +395,7 @@
                         <th onclick="sortTable(7)" style="cursor:pointer">Прибыль ↕</th>
                         <th onclick="sortTable(8)" style="cursor:pointer">Прибыль с матер. ↕</th>
                         <th onclick="sortTable(9)" style="cursor:pointer">Маржа ↕</th>
-                        <th onclick="sortTable(10)" style="cursor:pointer">Остаток ↕</th>
+                        <th onclick="sortTable(10)" style="cursor:pointer" title="Сумма по смете минус аванс. Отрицательное значение — переплата">К доплате ↕</th>
                         <th>Действия</th>
                     </tr>
                 </thead>
@@ -404,6 +404,12 @@
         </div>
         <!-- Пагинация -->
         <div id="pagination" style="display:flex;justify-content:center;gap:5px;padding:15px;align-items:center;"></div>
+        <div id="closed-load-more" style="display:none; text-align:center; padding:0 15px 20px;">
+            <button type="button" class="btn" style="background:#607D8B;color:white;" onclick="loadMoreClosedObjects()">
+                Открыть следующие 10
+            </button>
+            <span id="closed-load-more-hint" style="margin-left:10px;font-size:12px;color:#666;"></span>
+        </div>
     </div>
 
     <!-- Карточка объекта (просмотр) -->
@@ -465,8 +471,8 @@
                     <div id="client-phone-hint" class="client-phone-hint" aria-live="polite"></div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group"><label>Сумма работ</label><input type="number" id="sum-work" step="0.01" value="0"></div>
-                    <div class="form-group"><label>Прочие затраты (сводно)</label><input type="number" id="expenses" step="0.01" value="0" title="Сумма вне сметы; доп. строки учитываются отдельно ниже"></div>
+                    <div class="form-group"><label>Сумма работ</label><input type="number" id="sum-work" step="0.01" placeholder="0"></div>
+                    <div class="form-group"><label>Прочие затраты (сводно)</label><input type="number" id="expenses" step="0.01" placeholder="0" title="Сумма вне сметы; доп. строки учитываются отдельно ниже"></div>
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label>Расчёт с заказчиком</label>
@@ -488,7 +494,7 @@
                     <div class="form-group"><label>Статус</label>
                         <select id="status" title="Ожидает старта — ещё не начали. Выполнен — работы сданы. Закрыт — объект финансово закрыт."><option>Ожидает старта</option><option>В работе</option><option>Приостановлен</option><option>Выполнен</option><option>Закрыт</option></select>
                     </div>
-                    <div class="form-group"><label>Аванс</label><input type="number" id="advance" step="0.01" value="0"></div>
+                    <div class="form-group"><label>Аванс</label><input type="number" id="advance" step="0.01" placeholder="0"></div>
                 </div>
                 <div class="form-group"><label>Расчёт «затрат на рабочих»</label>
                     <select id="salary-allocation-mode" title="По умолчанию доля всех активных рабочих на все объекты за день. Исключения — если выезжали сами или на объекте не вся бригада.">
@@ -500,7 +506,7 @@
                 </div>
                 <div class="form-group"><label>Затраты на рабочих</label>
                     <div style="display:flex; gap:8px; align-items:center;">
-                        <input type="number" id="salary" step="0.01" value="0" style="flex:1;" readonly title="Рассчитывается автоматически">
+                        <input type="number" id="salary" step="0.01" placeholder="0" style="flex:1;" readonly title="Рассчитывается автоматически">
                         <button type="button" class="btn" style="background:#9C27B0; color:white; font-size:11px; padding:6px 10px;" onclick="openWorkersModal(editingId)">👷 Рабочие</button>
                         <button type="button" class="btn" style="background:#00796B; color:white; font-size:11px; padding:6px 10px;" onclick="openWellSurveysModal()" title="Опытные замеры и расчёт дебита">🔬 Замеры</button>
                     </div>
@@ -511,7 +517,7 @@
                     <div id="object-expense-list" style="max-height:160px; overflow-y:auto; font-size:13px; margin-bottom:8px;"></div>
                     <div class="form-row" style="margin-bottom:0;">
                         <div class="form-group" style="flex:0 0 110px;"><label style="font-size:12px;">Дата</label><input type="date" id="obj-exp-date"></div>
-                        <div class="form-group" style="flex:0 0 90px;"><label style="font-size:12px;">Сумма</label><input type="number" id="obj-exp-amount" step="0.01" min="0"></div>
+                        <div class="form-group" style="flex:0 0 90px;"><label style="font-size:12px;">Сумма</label><input type="number" id="obj-exp-amount" step="0.01" min="0" placeholder="0"></div>
                         <div class="form-group" style="flex:1;"><label style="font-size:12px;">Категория</label>
                             <select id="obj-exp-category">
                                 <option value="fuel">Топливо</option>
@@ -534,6 +540,10 @@
                     <a id="object-dispatcher-task-anchor" href="#" target="_blank" rel="noopener noreferrer" style="color:#2E75B6;font-weight:600;text-decoration:none;">📋 Открыть задачу в диспетчере</a>
                 </div>
                 <div class="form-group"><label>Примечания</label><textarea id="notes" rows="2" placeholder="Дополнительная информация..."></textarea></div>
+                <details id="object-history-fold" class="object-history-fold" style="display:none;margin:12px 0 0;">
+                    <summary style="cursor:pointer;font-weight:600;color:#2E75B6;">История изменений</summary>
+                    <ul id="object-history-list" class="history-list" style="margin:10px 0 0;padding-left:0;list-style:none;max-height:220px;overflow-y:auto;"></ul>
+                </details>
                 <div class="form-group" style="display:flex; align-items:center; gap:8px;">
                     <input type="checkbox" id="is-regular-to">
                     <label for="is-regular-to" style="margin:0;">Регулярное ТО</label>
@@ -742,7 +752,7 @@
 
     <button class="sync-btn" id="syncBtn" onclick="syncNow()">🔄 Синхронизация</button>
 
-    <script src="/static/js/utils.js?v=5"></script>
+    <script src="/static/js/utils.js?v=6"></script>
     <script src="/static/js/addressParse.js?v=1"></script>
     <script src="/static/js/offline.js?v=3"></script>
     <script src="/static/js/table-pan.js?v=2"></script>
@@ -763,6 +773,81 @@
         let objectWorkDaysEdit = [];
         let currentPage = 1;
         const perPage = 50;
+        const closedPageSize = 10;
+        const closedFetchMax = 500;
+        const SORT_COL_STATUS = 4;
+        let closedVisibleLimit = closedPageSize;
+        let closedTotal = 0;
+        let lastObjectsApiData = null;
+        /** По умолчанию: статус ↑, внутри статуса — свежие даты выше. */
+        let sortCol = SORT_COL_STATUS;
+        let sortAsc = true;
+
+        function isClosedArchivedStatus(status) {
+            var s = String(status || '').trim();
+            return s === 'Закрыт' || s === 'Оплачен';
+        }
+
+        function closedObjectSortKey(obj) {
+            return String(obj.updated_at || obj.date_end || obj.date_start || '') + '\t' + String(obj.id || '');
+        }
+
+        function splitActiveAndClosed(arr) {
+            var active = [];
+            var closed = [];
+            (arr || []).forEach(function(obj) {
+                if (isClosedArchivedStatus(obj.status)) closed.push(obj);
+                else active.push(obj);
+            });
+            closed.sort(function(a, b) {
+                return closedObjectSortKey(b).localeCompare(closedObjectSortKey(a));
+            });
+            return { active: active, closed: closed };
+        }
+
+        /** Сколько закрытых запросить у API (все — для корректной сортировки, в т.ч. «свернутых»). */
+        function closedLimitForFetch() {
+            var want = Math.max(closedVisibleLimit, 100);
+            if (lastObjectsApiData && lastObjectsApiData.closed_total != null) {
+                want = Math.max(want, Number(lastObjectsApiData.closed_total) || 0);
+            }
+            return Math.min(want, closedFetchMax);
+        }
+
+        function countClosedInArray(arr) {
+            return (arr || []).filter(function(o) { return isClosedArchivedStatus(o.status); }).length;
+        }
+
+        /** Активные + закрытые с учётом сортировки и лимита «свернутых». */
+        function objectsVisibleInList(all) {
+            var arr = all || [];
+            // Сортировка не по статусу (дата, имя, …) — показываем все загруженные объекты.
+            if (sortCol >= 0 && sortCol !== SORT_COL_STATUS) {
+                return arr;
+            }
+            // Статус (в т.ч. по умолчанию): порядок общий, но закрытых видно не больше N.
+            var closedShown = 0;
+            return arr.filter(function(obj) {
+                if (!isClosedArchivedStatus(obj.status)) return true;
+                closedShown++;
+                return closedShown <= closedVisibleLimit;
+            });
+        }
+
+        function countClosedForUi(all, apiData) {
+            var total = 0;
+            if (apiData && apiData.closed_total != null) {
+                total = Number(apiData.closed_total) || 0;
+            } else {
+                total = countClosedInArray(all);
+            }
+            var loadedClosed = countClosedInArray(all);
+            var shown = countClosedInArray(objectsVisibleInList(all));
+            if (sortCol >= 0 && sortCol !== SORT_COL_STATUS) {
+                shown = loadedClosed;
+            }
+            return { total: total, shown: shown, loadedClosed: loadedClosed };
+        }
 
         function parseWorkDatesFromObject(obj) {
             if (!obj) return [];
@@ -794,6 +879,14 @@
             return out;
         }
 
+        /** Дата для сортировки и колонки таблицы — последний день выезда (или date_start). */
+        function objectPrimaryWorkDate(obj) {
+            var d = parseWorkDatesFromObject(obj);
+            if (d.length) return d[d.length - 1];
+            var ds = String(obj && obj.date_start || '').trim().slice(0, 10);
+            return /^\d{4}-\d{2}-\d{2}$/.test(ds) ? ds : '';
+        }
+
         function formatWorkDaysCell(obj) {
             var d = parseWorkDatesFromObject(obj);
             if (!d.length) return '-';
@@ -806,6 +899,17 @@
             if (!d.length) return '-';
             if (d.length === 1) return formatDate(d[0]);
             return formatDate(d[d.length - 1]) + ' (+' + (d.length - 1) + ')';
+        }
+
+        function compareWorkDatesForSort(a, b, asc) {
+            var da = objectPrimaryWorkDate(a);
+            var db = objectPrimaryWorkDate(b);
+            if (!da && !db) return (Number(a.id) || 0) - (Number(b.id) || 0);
+            if (!da) return 1;
+            if (!db) return -1;
+            var c = da.localeCompare(db);
+            if (c !== 0) return asc ? c : -c;
+            return (Number(a.id) || 0) - (Number(b.id) || 0);
         }
 
         function renderWorkDaysEditor() {
@@ -866,10 +970,8 @@
             arr.sort(function(a, b) {
                 var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
                 if (pa !== pb) return pa - pb;
-                var da = (parseWorkDatesFromObject(a)[0] || String(a.date_start || ''));
-                var db = (parseWorkDatesFromObject(b)[0] || String(b.date_start || ''));
-                var ds = String(db).localeCompare(String(da));
-                if (ds !== 0) return ds;
+                var dc = compareWorkDatesForSort(a, b, false);
+                if (dc !== 0) return dc;
                 return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
             });
         }
@@ -878,6 +980,50 @@
             document.querySelectorAll('thead th[onclick]').forEach(function(th) {
                 th.textContent = th.textContent.replace(/ [↑↓]/, ' ↕');
             });
+        }
+
+        function compareObjectsForColumn(a, b, colIdx) {
+            var keys = ['id','__work_days__','name','client','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
+            var key = keys[colIdx] || 'name';
+            if (key === '__work_days__') {
+                return compareWorkDatesForSort(a, b, sortAsc);
+            }
+            if (key === 'status') {
+                var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
+                if (pa !== pb) return sortAsc ? pa - pb : pb - pa;
+                var dc = compareWorkDatesForSort(a, b, false);
+                if (dc !== 0) return dc;
+                return String(a.name || '').localeCompare(String(b.name || ''), 'ru');
+            }
+            var va = a[key];
+            var vb = b[key];
+            if (va == null || va === '') va = (key === 'name' || key === 'client') ? '' : 0;
+            if (vb == null || vb === '') vb = (key === 'name' || key === 'client') ? '' : 0;
+            if (typeof va === 'string' || typeof vb === 'string') {
+                var sc = String(va).localeCompare(String(vb), 'ru');
+                return sortAsc ? sc : -sc;
+            }
+            return sortAsc ? (va - vb) : (vb - va);
+        }
+
+        function updateTableSortHeaders(colIdx) {
+            document.querySelectorAll('th').forEach(function(th, i) {
+                if (i === colIdx) th.textContent = th.textContent.replace(' ↕', sortAsc ? ' ↑' : ' ↓');
+                else if (th.onclick) th.textContent = th.textContent.replace(/ [↑↓]/, ' ↕');
+            });
+        }
+
+        /** Применить текущую сортировку к массиву objects (сохраняется при автообновлении). */
+        function applyObjectsSort(updateHeaders) {
+            if (sortCol < 0) {
+                sortObjectsDefaultOrder(objects);
+                if (updateHeaders) resetTableSortHeaders();
+                return;
+            }
+            objects.sort(function(a, b) {
+                return compareObjectsForColumn(a, b, sortCol);
+            });
+            if (updateHeaders) updateTableSortHeaders(sortCol);
         }
 
         /** Маркер для других вкладок: данные по объектам изменились на сервере. */
@@ -916,7 +1062,37 @@
             });
         }
 
-        /** Deep link с диспетчера: /?openObject=123 — открыть модалку объекта после загрузки списка. */
+        function updateClosedLoadMoreUi(data) {
+            const el = document.getElementById('closed-load-more');
+            if (!el) return;
+            const counts = countClosedForUi(objects, data || lastObjectsApiData);
+            closedTotal = counts.total;
+            const shown = counts.shown;
+            const hint = document.getElementById('closed-load-more-hint');
+            var hideLoadMore = sortCol >= 0 && sortCol !== SORT_COL_STATUS;
+            if (!hideLoadMore && closedTotal > shown) {
+                el.style.display = 'block';
+                if (hint) {
+                    hint.textContent = 'Закрытых объектов: показано ' + shown + ' из ' + closedTotal;
+                }
+            } else {
+                el.style.display = 'none';
+                if (hint) hint.textContent = '';
+            }
+        }
+
+        function loadMoreClosedObjects() {
+            closedVisibleLimit += closedPageSize;
+            if (lastObjectsApiData && lastObjectsApiData.closed_total != null) {
+                return loadData(currentPage);
+            }
+            renderTable();
+            updateClosedLoadMoreUi(null);
+        }
+
+        function resetClosedVisibleLimit() {
+            closedVisibleLimit = closedPageSize;
+        }
         function tryOpenObjectFromQuery() {
             try {
                 var params = new URLSearchParams(window.location.search || '');
@@ -939,12 +1115,15 @@
             }
         }
 
-        async function loadData(page = 1) {
+        async function loadData(page = 1, opts) {
             try {
+                if (opts && opts.resetClosed) resetClosedVisibleLimit();
                 console.log('loadData: starting, page =', page);
                 currentPage = page;
                 
                 const params = new URLSearchParams({ page, per_page: perPage });
+                params.set('closed_limit', String(closedLimitForFetch()));
+                params.set('closed_offset', '0');
                 
                 console.log('loadData: fetching objects with params:', params.toString());
                 const objectsPromise = fetch(`/api/objects-with-estimates?${params}`);
@@ -963,7 +1142,9 @@
                 }
                 
                 const data = await res.json();
-                console.log('loadData: received', (data.objects || []).length, 'objects');
+                lastObjectsApiData = data;
+                console.log('loadData: received', (data.objects || []).length, 'objects',
+                    'closed', data.closed_shown, '/', data.closed_total);
                 objects = data.objects || [];
 
                 // Вычисляем маржу для каждого объекта
@@ -972,9 +1153,7 @@
                     const profit = obj.total_profit || 0;
                     obj.margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
                 });
-                sortObjectsDefaultOrder(objects);
-                sortCol = -1;
-                resetTableSortHeaders();
+                applyObjectsSort(true);
 
                 const clientsRes = await clientsPromise;
                 if (clientsRes.ok) {
@@ -992,6 +1171,7 @@
                 renderClients();
                 renderTable();
                 renderPagination(data);
+                updateClosedLoadMoreUi(data);
                 updateOnlineStatus();
                 tryOpenObjectFromQuery();
                 console.log('loadData: finished');
@@ -1028,13 +1208,13 @@
                         var profit = obj.total_profit || 0;
                         obj.margin = revenue > 0 ? ((profit / revenue) * 100) : 0;
                     });
-                    sortObjectsDefaultOrder(objects);
-                    sortCol = -1;
-                    resetTableSortHeaders();
+                    applyObjectsSort(true);
                     renderStats({ total: total, in_progress: inProg, completed: compl });
                     renderClients();
                     renderTable();
                     renderPagination({ total: total, page: 1, per_page: 50, total_pages: 1 });
+                    lastObjectsApiData = null;
+                    updateClosedLoadMoreUi(null);
                     console.log('Loaded from cache:', objects.length, 'objects');
                     updateOnlineStatus();
                     tryOpenObjectFromQuery();
@@ -1366,7 +1546,7 @@
 
         function salaryModeLabel(mode) {
             var labels = {
-                all_workers: 'Все активные рабочие ÷ объекты за день',
+                all_workers: 'Все активные рабочие ÷ объекты с выездом в этот день (включая закрытые по work_dates)',
                 assigned_workers: 'Только рабочие с объекта',
                 manual: 'Вручную'
             };
@@ -1411,13 +1591,14 @@
                 infoDetailRow('Затраты всего', formatMoney(obj.total_expenses != null ? obj.total_expenses : (obj.expenses || 0))) +
                 (obj.extra_expenses ? infoDetailRow('Доп. расходы (журнал)', formatMoney(obj.extra_expenses)) : '') +
                 infoDetailRow('Прочие (поле)', formatMoney(obj.expenses || 0)) +
+                infoDetailRow('Выручка (смета)', formatMoney(revenue)) +
                 infoDetailRow('Аванс', formatMoney(obj.advance || 0)) +
                 infoDetailRow('Затраты на рабочих', formatMoney(obj.salary || 0)) +
                 infoDetailRow('Расчёт зарплаты', salaryModeLabel(obj.salary_allocation_mode)) +
                 (taxHtml || infoDetailRow('Прибыль', formatMoney(profit))) +
                 infoDetailRow('Прибыль с материалов', formatMoney(obj.estimate_material_profit || 0)) +
                 infoDetailRow('Маржа', margin) +
-                infoDetailRow('Остаток', formatMoney(bal)) +
+                infoDetailRow('К доплате', formatMoney(bal) + (bal < -0.01 ? ' <span class="muted">(переплата)</span>' : '')) +
                 infoDetailRow('Дата начала', obj.date_start ? formatDate(obj.date_start) : '') +
                 infoDetailRow('Дата окончания', obj.date_end ? formatDate(obj.date_end) : '') +
                 (obj.is_regular_to
@@ -1652,7 +1833,7 @@
             
             console.log('renderTable: objects count =', objects.length);
             
-            let filtered = objects.filter(obj => {
+            let filtered = objectsVisibleInList(objects).filter(obj => {
                 var nameLc = String(obj.name || '').toLowerCase();
                 if (search && !nameLc.includes(search)) return false;
                 if (statusFilter && obj.status !== statusFilter) return false;
@@ -1760,7 +1941,8 @@
                     td10b.textContent = margin.toFixed(1) + '%';
                 tr.appendChild(td10b);
                 const td11 = document.createElement('td');
-                    td11.className = 'balance-cell ' + (hasDebt ? 'negative' : 'positive');
+                    td11.className = 'balance-cell ' + (balance < -0.01 ? 'positive' : (hasDebt ? 'negative' : 'positive'));
+                    td11.title = balance < -0.01 ? 'Переплата клиента' : (hasDebt ? 'Клиент должен доплатить' : 'Оплачено по смете');
                     td11.textContent = formatMoney(balance);
                 tr.appendChild(td11);
                 const td12 = document.createElement('td');
@@ -1904,6 +2086,57 @@
             } catch (err) { alert('Ошибка: ' + err.message); }
         }
 
+        function formatObjectHistoryAction(item) {
+            if (item.action === 'create') return 'Создан объект';
+            if (item.action === 'delete') return 'Объект удалён';
+            if (item.action === 'update' && item.field_label) {
+                var oldV = (item.old_value || '—').toString();
+                var newV = (item.new_value || '—').toString();
+                if (oldV.length > 80) oldV = oldV.slice(0, 77) + '…';
+                if (newV.length > 80) newV = newV.slice(0, 77) + '…';
+                return item.field_label + ': «' + oldV + '» → «' + newV + '»';
+            }
+            return item.action || 'Изменение';
+        }
+
+        function formatObjectHistorySource(src) {
+            if (src === 'integration') return 'интеграция';
+            if (src === 'ui') return 'интерфейс';
+            return src || '';
+        }
+
+        async function loadObjectHistory(objectId) {
+            var fold = document.getElementById('object-history-fold');
+            var list = document.getElementById('object-history-list');
+            if (!fold || !list || !objectId) return;
+            fold.style.display = 'block';
+            list.innerHTML = '<li style="color:#888;font-size:13px;">Загрузка…</li>';
+            try {
+                var res = await fetch('/api/objects/' + objectId + '/history?limit=80');
+                if (!res.ok) {
+                    list.innerHTML = '<li style="color:#c00;font-size:13px;">Не удалось загрузить историю</li>';
+                    return;
+                }
+                var data = await res.json();
+                var items = data.items || [];
+                if (!items.length) {
+                    list.innerHTML = '<li style="color:#888;font-size:13px;">Пока нет записей (история ведётся с момента обновления)</li>';
+                    return;
+                }
+                list.innerHTML = items.map(function(item) {
+                    var when = item.changed_at ? new Date(item.changed_at).toLocaleString('ru-RU') : '';
+                    var who = item.changed_by_username || (item.source === 'integration' ? 'Диспетчер' : '—');
+                    var src = formatObjectHistorySource(item.source);
+                    return '<li style="border-bottom:1px solid #eee;padding:6px 0;font-size:13px;">' +
+                        '<span style="color:#888;">' + when + '</span> · <strong>' + who + '</strong>' +
+                        (src ? ' <span style="color:#aaa;">(' + src + ')</span>' : '') +
+                        '<br>' + formatObjectHistoryAction(item) + '</li>';
+                }).join('');
+            } catch (err) {
+                list.innerHTML = '<li style="color:#c00;font-size:13px;">Ошибка: ' + err.message + '</li>';
+            }
+        }
+
         function openModal(id = null) {
             editingId = id;
             document.getElementById('modal').classList.add('active');
@@ -1920,8 +2153,8 @@
                 document.getElementById('client').value = clientSelectValueForObject(obj);
                 refreshClientSelectPhoneUi('client', 'client-phone-hint');
                 document.getElementById('status').value = obj.status;
-                document.getElementById('advance').value = obj.advance;
-                document.getElementById('salary').value = obj.salary;
+                document.getElementById('advance').value = numInputDisplay(obj.advance);
+                document.getElementById('salary').value = numInputDisplay(obj.salary);
                 document.getElementById('salary-allocation-mode').value = obj.salary_allocation_mode || 'all_workers';
                 syncSalaryAllocationUi();
                 document.getElementById('notes').value = obj.notes || '';
@@ -1936,17 +2169,26 @@
                 // Автозаполнение из сметы
                 loadEstimateData(obj.id, function(estTotals) {
                     const sumWork = estTotals.total_works || obj.sum_work || 0;
-                    const expenses = estTotals.total_materials || obj.expenses || 0;
-                    document.getElementById('sum-work').value = sumWork;
-                    document.getElementById('expenses').value = expenses;
+                    let expenses = Number(obj.expenses) || 0;
+                    const matRetail = Number(estTotals.total_materials) || 0;
+                    // Раньше сюда подставлялась розница материалов — она уже в выручке по смете
+                    if (matRetail > 0 && Math.abs(expenses - matRetail) < 0.05) {
+                        expenses = 0;
+                    }
+                    document.getElementById('sum-work').value = numInputDisplay(sumWork);
+                    document.getElementById('expenses').value = numInputDisplay(expenses);
                 });
 
                 // Загружаем инфо о рабочих
                 loadSalaryInfo(obj.id);
                 syncObjectDispatcherTaskLink(obj);
+                loadObjectHistory(obj.id);
             } else {
                 syncObjectDispatcherTaskLink(null);
+                var histFold = document.getElementById('object-history-fold');
+                if (histFold) histFold.style.display = 'none';
                 document.getElementById('object-form').reset();
+                clearMoneyInputIds(['sum-work', 'expenses', 'advance', 'salary']);
                 objectWorkDaysEdit = [new Date().toISOString().split('T')[0]];
                 renderWorkDaysEditor();
                 document.getElementById('salary-allocation-mode').value = 'all_workers';
@@ -2041,6 +2283,41 @@
             }
         }
 
+        function parseWorkDatesJsonOnly(obj) {
+            if (!obj) return [];
+            if (obj.work_dates == null || obj.work_dates === '') return [];
+            try {
+                var a = typeof obj.work_dates === 'string' ? JSON.parse(obj.work_dates) : obj.work_dates;
+                if (!Array.isArray(a)) return [];
+                var u = [];
+                a.forEach(function(x) {
+                    var s = String(x).trim().slice(0, 10);
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) u.push(s);
+                });
+                u.sort();
+                return u;
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function objectWorkDaysForSalaryDivisor(obj) {
+            if (!obj) return [];
+            var st = String(obj.status || '').trim();
+            if (st === 'Ожидает старта' || st === 'Запланирован') return [];
+            var explicit = parseWorkDatesJsonOnly(obj);
+            if (explicit.length) return explicit;
+            var ds = String(obj.date_start || '').trim().slice(0, 10);
+            return /^\d{4}-\d{2}-\d{2}$/.test(ds) ? [ds] : [];
+        }
+
+        function salaryCountsForDay(allObjects, dayIso, excludeId) {
+            return allObjects.filter(function(o) {
+                if (excludeId && o.id === excludeId) return false;
+                return objectWorkDaysForSalaryDivisor(o).indexOf(dayIso) >= 0;
+            }).length + 1;
+        }
+
         async function showExpectedSalary() {
             try {
                 var modeEl = document.getElementById('salary-allocation-mode');
@@ -2071,10 +2348,7 @@
                         return;
                     }
                     function countOnDay(dayIso) {
-                        return allObjects.filter(function(o) {
-                            if (editingId && o.id === editingId) return false;
-                            return parseOd(o).indexOf(dayIso) >= 0;
-                        }).length + 1;
+                        return salaryCountsForDay(allObjects, dayIso, editingId);
                     }
                     var estA = 0;
                     myDays.forEach(function(d) {
@@ -2099,10 +2373,7 @@
                     totalDailyRate += w.daily_rate;
                 });
                 function countOnDay2(dayIso) {
-                    return allObjects.filter(function(o) {
-                        if (editingId && o.id === editingId) return false;
-                        return parseOd(o).indexOf(dayIso) >= 0;
-                    }).length + 1;
+                    return salaryCountsForDay(allObjects, dayIso, editingId);
                 }
                 var est = 0;
                 myDays.forEach(function(d) {
@@ -2124,10 +2395,26 @@
                 const ct = res.headers.get('content-type');
                 if (!ct || !ct.includes('application/json')) return;
                 const data = await res.json();
+                const el = document.getElementById('salary-info');
+                if (!el) return;
+                var parts = [];
+                if (data.auto_salary_breakdown && data.auto_salary_breakdown.length) {
+                    var dayLines = data.auto_salary_breakdown.map(function(row) {
+                        return row.date + ': ' + Number(row.share).toFixed(2) + ' руб'
+                            + ' (ставки ' + Number(row.brigade_rate).toFixed(0)
+                            + ' ÷ ' + row.objects_on_day + ' объект.)';
+                    });
+                    parts.push('Авто: ' + Number(data.auto_salary || 0).toFixed(2) + ' руб — ' + dayLines.join('; '));
+                } else if (data.auto_salary != null && Number(data.auto_salary) > 0) {
+                    parts.push('Авто: ' + Number(data.auto_salary).toFixed(2) + ' руб');
+                }
                 const count = (data.assignments || []).length;
                 const total = data.total_salary || 0;
                 if (count > 0) {
-                    document.getElementById('salary-info').textContent = `👷 ${count} рабочих, ${Number(total).toLocaleString('ru-RU', {minimumFractionDigits:2})} руб`;
+                    parts.push('Назначения 👷: ' + count + ' записей, ' + Number(total).toLocaleString('ru-RU', {minimumFractionDigits:2}) + ' руб');
+                }
+                if (parts.length) {
+                    el.textContent = parts.join(' · ');
                 }
             } catch(e) {}
         }
@@ -2135,6 +2422,7 @@
         function closeModal() {
             document.getElementById('modal').classList.remove('active');
             document.getElementById('object-form').reset();
+            clearMoneyInputIds(['sum-work', 'expenses', 'advance', 'salary']);
             objectWorkDaysEdit = [];
             editingId = null;
             objectExpenseEntries = [];
@@ -2824,43 +3112,23 @@
         }
 
         // Сортировка таблицы
-        var sortCol = -1, sortAsc = true;
         function sortTable(colIdx) {
             if (sortCol === colIdx) { sortAsc = !sortAsc; }
             else { sortCol = colIdx; sortAsc = true; }
-
-            // Обновляем заголовки
-            document.querySelectorAll('th').forEach(function(th, i) {
-                if (i === colIdx) th.textContent = th.textContent.replace(' ↕', sortAsc ? ' ↑' : ' ↓');
-                else if (th.onclick) th.textContent = th.textContent.replace(/ [↑↓]/, ' ↕');
-            });
-
-            objects.sort(function(a, b) {
-                var pa = statusPriorityForSort(a.status), pb = statusPriorityForSort(b.status);
-                if (pa !== pb) return pa - pb;
-                var keys = ['id','__work_days__','name','client','status','advance','salary','total_profit','estimate_material_profit','margin','balance'];
-                var key = keys[colIdx] || 'name';
-                var va, vb;
-                if (key === '__work_days__') {
-                    va = (parseWorkDatesFromObject(a)[0] || '');
-                    vb = (parseWorkDatesFromObject(b)[0] || '');
-                } else {
-                    va = a[key] || 0; vb = b[key] || 0;
-                }
-                if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
-                return sortAsc ? (va - vb) : (vb - va);
-            });
+            applyObjectsSort(true);
             renderTable();
         }
         
         // Поиск ТОЛЬКО по кнопке Enter, НЕ по каждому вводу
         document.getElementById('filter-search').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
-                renderTable();
+                resetClosedVisibleLimit();
+                void loadData(1, { resetClosed: true });
             }
         });
         document.getElementById('filter-status').addEventListener('change', function() {
-            renderTable();
+            resetClosedVisibleLimit();
+            void loadData(1, { resetClosed: true });
         });
         document.getElementById('filter-client').addEventListener('change', function() {
             renderTable();
@@ -2889,7 +3157,7 @@
         // === PWA ===
         {% if not service_worker_disabled %}
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/service-worker.js?v=9')
+            navigator.serviceWorker.register('/service-worker.js?v=10')
                 .then(function(reg) { console.log('SW OK:', reg.scope); })
                 .catch(function(err) { console.log('SW err:', err); });
         }
@@ -3114,7 +3382,7 @@
 
                 // Обновляем поле зарплаты в форме объекта
                 const salaryInput = document.getElementById('salary');
-                if (salaryInput) salaryInput.value = Number(data.total_pay).toLocaleString('ru-RU', {minimumFractionDigits:2});
+                if (salaryInput) salaryInput.value = numInputDisplay(data.total_pay);
                 document.getElementById('salary-info').textContent = `👷 ${objectWorkersData.length} рабочих, ${Number(data.total_pay).toLocaleString('ru-RU', {minimumFractionDigits:2})} руб`;
 
                 renderObjectWorkers();
@@ -3140,7 +3408,7 @@
                 objectWorkersData = objectWorkersData.filter(a => a.id !== assignmentId);
 
                 const salaryInput = document.getElementById('salary');
-                if (salaryInput) salaryInput.value = '0.00';
+                if (salaryInput) salaryInput.value = '';
                 document.getElementById('salary-info').textContent = 'Рабочий удалён';
 
                 renderObjectWorkers();
