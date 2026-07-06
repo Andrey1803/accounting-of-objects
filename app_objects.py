@@ -1463,6 +1463,9 @@ def integration_create_object_from_taskmgr():
         task_id = (data.get('task_id') or '').strip()
         if not task_id:
             return jsonify({'error': 'task_id is required'}), 400
+        follow_up_from = (data.get('follow_up_from_task_id') or '').strip()
+        if follow_up_from and follow_up_from == task_id:
+            return jsonify({'error': 'follow_up_from_task_id must differ from task_id'}), 400
         business_client_id = str(data.get('business_client_id') or '').strip()
         reuse_client_card = _integration_should_reuse_client_card(data)
         advance_payload = _integration_parse_money(data.get('advance'))
@@ -1633,6 +1636,8 @@ def integration_create_object_from_taskmgr():
 
         extra_notes = (data.get('notes') or '').strip()
         line = f'Задача диспетчера: {task_id}'
+        if follow_up_from:
+            line += f' (доп. работа от задачи {follow_up_from})'
         notes = f'{extra_notes}\n{line}'.strip() if extra_notes else line
 
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
