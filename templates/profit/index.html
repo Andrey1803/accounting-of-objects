@@ -200,7 +200,8 @@
         function objectTotalExpensesFallback(o) {
             var em = Number(o.estimate_materials) || 0, emp = Number(o.estimate_material_profit) || 0, raw = Number(o.expenses) || 0;
             var emc = Number(o.estimate_material_cost) || Number(o.est_mat_cost) || 0;
-            var mcogs = emc > 0 ? emc : (emp > 0 ? Math.max(0, em - emp) : 0);
+            if (emp <= 0 && em > 0 && emc > 0 && emc + 1e-9 < em) emp = em - emc;
+            var mcogs = (emp > 0 && em > 0) ? Math.max(0, em - emp) : ((emc > 0 && em > 0 && emc + 1e-9 < em) ? emc : 0);
             var other = (em > 0 && raw + 1e-9 >= em) ? Math.max(0, raw - em) : ((emc > 0 && raw + 1e-9 >= emc) ? Math.max(0, raw - emc) : raw);
             return mcogs + other;
         }

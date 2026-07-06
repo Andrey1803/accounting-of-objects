@@ -718,16 +718,7 @@ def _compute_object_financials(
 
     work_rev = _work_revenue_once(sum_work, ew)
     total_revenue = work_rev + em
-    # Наценка (emp) надёжнее закупа из purchase_price: в сметах purchase часто = розница.
-    if emp > 0 and em > 0:
-        mat_cogs = max(0.0, em - emp)
-    elif emc > 0:
-        if em > 0 and emc + 1e-9 >= em:
-            mat_cogs = 0.0
-        else:
-            mat_cogs = min(max(0.0, emc), max(0.0, em)) if em > 0 else max(0.0, emc)
-    else:
-        mat_cogs = 0.0
+    mat_cogs = _effective_material_cogs(em, emp, emc)
     # Поле objects.expenses часто дублирует смету: либо розницу (em), либо закуп (emc), либо «прочее».
     if em > 0 and raw_exp + 1e-9 >= em:
         other_exp = max(0.0, raw_exp - em)
@@ -742,8 +733,11 @@ def _compute_object_financials(
     return total_revenue, total_expenses, total_profit, mat_cogs, other_exp, max(0.0, extra)
 
 
-def _material_profit_from_estimates(em, emp, emc):
-    """Наценка на материалах по смете (для разбивки колонки «Прибыль»)."""
+FINANCIAL_LOGIC_VERSION = 3
+
+
+def _effective_material_profit(em, emp, emc):
+    """Наценка на материалах: из material_profit или розница − закуп."""
     try:
         em = float(em or 0)
         emp = float(emp or 0)
@@ -752,9 +746,29 @@ def _material_profit_from_estimates(em, emp, emc):
         return 0.0
     if emp > 0:
         return emp
-    if emc > 0 and em > 0:
+    if em > 0 and emc > 0 and emc + 1e-9 < em:
         return max(0.0, em - emc)
     return 0.0
+
+
+def _effective_material_cogs(em, emp, emc):
+    """Себестоимость материалов: розница − наценка; не списываем розницу как закуп."""
+    try:
+        em = float(em or 0)
+        emc = float(emc or 0)
+    except (TypeError, ValueError):
+        em = emc = 0.0
+    eff = _effective_material_profit(em, emp, emc)
+    if eff > 0 and em > 0:
+        return max(0.0, em - eff)
+    if emc > 0 and em > 0 and emc + 1e-9 < em:
+        return emc
+    return 0.0
+
+
+def _material_profit_from_estimates(em, emp, emc):
+    """Наценка на материалах по смете (для разбивки колонки «Прибыль»)."""
+    return _effective_material_profit(em, emp, emc)
 
 
 def _profit_work_material_split(
@@ -1307,6 +1321,7 @@ def health_check():
         "timestamp": datetime.now().isoformat(),
         "passport_pdf": pdf_ok,
         "objects_list_version": 2,
+        "financial_logic_version": FINANCIAL_LOGIC_VERSION,
     }), 200
 
 
