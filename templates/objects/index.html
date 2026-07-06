@@ -2169,7 +2169,12 @@
                 // Автозаполнение из сметы
                 loadEstimateData(obj.id, function(estTotals) {
                     const sumWork = estTotals.total_works || obj.sum_work || 0;
-                    const expenses = estTotals.total_materials || obj.expenses || 0;
+                    let expenses = Number(obj.expenses) || 0;
+                    const matRetail = Number(estTotals.total_materials) || 0;
+                    // Раньше сюда подставлялась розница материалов — она уже в выручке по смете
+                    if (matRetail > 0 && Math.abs(expenses - matRetail) < 0.05) {
+                        expenses = 0;
+                    }
                     document.getElementById('sum-work').value = numInputDisplay(sumWork);
                     document.getElementById('expenses').value = numInputDisplay(expenses);
                 });

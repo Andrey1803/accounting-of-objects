@@ -586,17 +586,30 @@ else:
 
 def _sql_objects_estimate_aggregates(as_work, as_mat, as_profit, as_mat_cost='estimate_material_cost'):
     """Общий фрагмент SELECT + JOIN для объектов с агрегатами по сметам."""
+    mat_unit_cost = (
+        "CASE WHEN COALESCE(ei.purchase_price, 0) > 0 THEN ei.purchase_price "
+        "WHEN COALESCE(ei.wholesale_price, 0) > 0 THEN ei.wholesale_price "
+        "ELSE 0 END"
+    )
+    mat_line_cost = (
+        f"CASE WHEN COALESCE(ei.quantity, 0) > 0 AND ({mat_unit_cost}) > 0 "
+        f"THEN ({mat_unit_cost}) * ei.quantity "
+        f"WHEN COALESCE(ei.material_profit, 0) > 0 AND COALESCE(ei.total, 0) > COALESCE(ei.material_profit, 0) "
+        f"THEN COALESCE(ei.total, 0) - COALESCE(ei.material_profit, 0) "
+        f"ELSE 0 END"
+    )
+    mat_line_profit = (
+        f"CASE WHEN COALESCE(ei.material_profit, 0) != 0 THEN ei.material_profit "
+        f"WHEN COALESCE(ei.total, 0) > 0 AND COALESCE(ei.quantity, 0) > 0 AND ({mat_unit_cost}) > 0 "
+        f"THEN COALESCE(ei.total, 0) - ({mat_unit_cost}) * ei.quantity "
+        f"ELSE 0 END"
+    )
     return (
         f"SELECT o.*, "
         f"COALESCE(SUM(CASE WHEN ei.section = 'work' THEN ei.total ELSE 0 END), 0) AS {as_work}, "
         f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN ei.total ELSE 0 END), 0) AS {as_mat}, "
-        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN ei.material_profit ELSE 0 END), 0) AS {as_profit}, "
-        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN "
-        f"CASE WHEN COALESCE(ei.purchase_price, 0) > 0 AND COALESCE(ei.quantity, 0) > 0 "
-        f"THEN ei.purchase_price * ei.quantity "
-        f"ELSE CASE WHEN COALESCE(ei.total, 0) - COALESCE(ei.material_profit, 0) > 0 "
-        f"THEN COALESCE(ei.total, 0) - COALESCE(ei.material_profit, 0) ELSE 0 END "
-        f"END ELSE 0 END), 0) AS {as_mat_cost} "
+        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN {mat_line_profit} ELSE 0 END), 0) AS {as_profit}, "
+        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN {mat_line_cost} ELSE 0 END), 0) AS {as_mat_cost} "
         "FROM objects o "
         "LEFT JOIN estimates e ON e.object_id = o.id AND e.user_id = o.user_id "
         "AND ("
@@ -705,8 +718,13 @@ def _compute_object_financials(
 
     work_rev = _work_revenue_once(sum_work, ew)
     total_revenue = work_rev + em
-    # Для старых смет material_profit часто пустой; тогда считаем себестоимость из purchase_price*qty.
-    mat_cogs = max(0.0, emc) if emc > 0 else max(0.0, em - emp)
+    if emc > 0:
+        mat_cogs = emc
+    elif emp > 0:
+        mat_cogs = max(0.0, em - emp)
+    else:
+        # Без закупа/наценки не списываем всю розницу материалов в себестоимость
+        mat_cogs = 0.0
     # Поле objects.expenses часто дублирует смету: либо розницу (em), либо закуп (emc), либо «прочее».
     if em > 0 and raw_exp + 1e-9 >= em:
         other_exp = max(0.0, raw_exp - em)
