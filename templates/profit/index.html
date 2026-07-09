@@ -136,7 +136,7 @@
         var SUBTITLES = {
             objects: 'В колонке «Прибыль»: сверху общая сумма, ниже — с работ и с материалов.',
             days: 'Сумма прибыли по календарным дням (объект учитывается в день начала работ по календарю).',
-            months: 'Сумма прибыли по календарным месяцам (месяц — по первой рабочей дате объекта).'
+            months: 'Сумма прибыли по календарным месяцам (месяц — по первой рабочей дате объекта; учтены все объекты, как на графике в «Статистике»).'
         };
 
         function money(v) {
@@ -520,7 +520,7 @@
 
         async function load() {
             try {
-                var r = await fetch('/api/objects-with-estimates');
+                var r = await fetch('/api/objects-with-estimates?scope=all');
                 var rc = await fetch('/api/clients').catch(function () { return null; });
                 var d = await r.json();
                 var objs = d.objects || [];

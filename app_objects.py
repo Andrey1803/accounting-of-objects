@@ -1448,6 +1448,7 @@ def delete_account():
 @app.route('/api/objects-with-estimates', methods=['GET'])
 @login_required
 def get_objects_with_estimates():
+    scope = (request.args.get('scope') or '').strip().lower()
     closed_limit = request.args.get('closed_limit', 10, type=int)
     closed_offset = request.args.get('closed_offset', 0, type=int)
     closed_limit = max(1, min(closed_limit, 500))
@@ -1466,24 +1467,29 @@ def get_objects_with_estimates():
         uid, f"AND o.status IN ({archived_ph})", OBJECT_STATUSES_ARCHIVED,
     )
 
-    active_objects = _fetch_objects_with_financials(
-        uid,
-        f"AND o.status NOT IN ({archived_ph}) ",
-        OBJECT_STATUSES_ARCHIVED,
-    )
-    closed_objects = []
-    try:
-        closed_objects = _fetch_objects_with_financials(
+    if scope == 'all':
+        objects = _fetch_objects_with_financials(uid)
+        closed_shown = closed_total
+    else:
+        active_objects = _fetch_objects_with_financials(
             uid,
-            f"AND o.status IN ({archived_ph}) ",
+            f"AND o.status NOT IN ({archived_ph}) ",
             OBJECT_STATUSES_ARCHIVED,
-            order_sql=_SQL_ORDER_CLOSED_RECENT,
-            limit=closed_limit,
-            offset=closed_offset,
         )
-    except Exception as exc:
-        logging.error("closed objects fetch failed: %s", exc)
-    objects = active_objects + closed_objects
+        closed_objects = []
+        try:
+            closed_objects = _fetch_objects_with_financials(
+                uid,
+                f"AND o.status IN ({archived_ph}) ",
+                OBJECT_STATUSES_ARCHIVED,
+                order_sql=_SQL_ORDER_CLOSED_RECENT,
+                limit=closed_limit,
+                offset=closed_offset,
+            )
+        except Exception as exc:
+            logging.error("closed objects fetch failed: %s", exc)
+        objects = active_objects + closed_objects
+        closed_shown = len(closed_objects)
 
     today_str = datetime.now().strftime('%Y-%m-%d')
     today_profit = sum_profit_for_calendar_day(objects, today_str)
@@ -1497,7 +1503,7 @@ def get_objects_with_estimates():
         'closed_total': closed_total,
         'closed_limit': closed_limit,
         'closed_offset': closed_offset,
-        'closed_shown': len(closed_objects),
+        'closed_shown': closed_shown,
         'today_profit': today_profit,
         'today_objects': today_objects,
         'today_date': today_str,
