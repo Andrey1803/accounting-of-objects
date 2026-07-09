@@ -1133,6 +1133,24 @@ def _normalize_phone_digits(phone):
     return ''.join(c for c in str(phone) if c.isdigit())
 
 
+def _phone_is_substantial(phone) -> bool:
+    digits = _normalize_phone_digits(phone)
+    return bool(digits) and len(digits) >= 7
+
+
+def _phones_compatible(incoming_phone, existing_phone) -> bool:
+    """Два номера можно считать одним клиентом; иначе не склеиваем карточки."""
+    incoming = _normalize_phone_digits(incoming_phone)
+    existing = _normalize_phone_digits(existing_phone)
+    if incoming and len(incoming) >= 7 and existing and len(existing) >= 7:
+        return incoming == existing
+    if incoming and len(incoming) >= 7:
+        return not existing
+    if existing and len(existing) >= 7:
+        return not incoming
+    return True
+
+
 def _integration_parse_money(value):
     """Мягкий разбор суммы из строки/числа: '1 234,56' -> 1234.56."""
     if value is None:
@@ -1218,6 +1236,9 @@ def _integration_find_or_create_client(
     if card_name and card_name != '—':
         for r in rows:
             if (r.get('name') or '').strip() == card_name:
+                ex_phone = (r.get('phone') or '').strip()
+                if not _phones_compatible(phone, ex_phone):
+                    continue
                 cid = r['id']
                 ex_phone = (r.get('phone') or '').strip()
                 ex_addr = (r.get('address') or '').strip()
@@ -1638,14 +1659,29 @@ def integration_create_object_from_taskmgr():
                 or (data.get('status') is not None and str(data.get('status') or '').strip())
             )
             contacts_changed = bool(contact_in or company_in or phone or address)
+            ex_client = (existing.get('client') or '').strip()
+            ex_client_id = existing.get('client_id')
             if contacts_changed:
                 card_name = _integration_client_card_name(contact_in, company_in)
                 client_id, client_name = _integration_find_or_create_client(
                     target_user_id, card_name, phone, address, reuse_existing=reuse_client_card
                 )
+                if ex_client_id and client_id != ex_client_id and _phone_is_substantial(phone):
+                    old_client = fetch_one(
+                        'SELECT phone, name FROM clients WHERE id = ? AND user_id = ?',
+                        (ex_client_id, target_user_id),
+                    )
+                    if old_client and not _phones_compatible(phone, old_client.get('phone')):
+                        logging.warning(
+                            "integration: keep client_id=%s for object %s — incoming phone differs from linked client",
+                            ex_client_id,
+                            existing.get('id'),
+                        )
+                        client_id = ex_client_id
+                        client_name = (old_client.get('name') or ex_client or '').strip()
             else:
                 client_id = existing.get('client_id')
-                client_name = (existing.get('client') or '').strip()
+                client_name = ex_client
                 if client_id:
                     row_c = fetch_one(
                         'SELECT name FROM clients WHERE id = ? AND user_id = ?',
@@ -1653,8 +1689,6 @@ def integration_create_object_from_taskmgr():
                     )
                     if row_c and row_c.get('name'):
                         client_name = str(row_c['name']).strip()
-            ex_client = (existing.get('client') or '').strip()
-            ex_client_id = existing.get('client_id')
             mismatch = contacts_changed and (
                 (ex_client_id != client_id) or (ex_client != (client_name or '').strip())
             )

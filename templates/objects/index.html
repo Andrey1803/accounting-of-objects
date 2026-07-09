@@ -1843,7 +1843,10 @@
             var nm = client ? String(client.name || '').trim() : String(clientName || '').trim();
             return objects.filter(function(o) {
                 if (cid != null && o.client_id != null && Number(o.client_id) === Number(cid)) return true;
-                if (nm && String(o.client || '').trim() === nm) return true;
+                // Без client_id — только по тексту (старые записи); не группируем по имени, если уже другая карточка.
+                if (cid == null && nm && (o.client_id == null || o.client_id === '' || Number(o.client_id) === 0)) {
+                    if (String(o.client || '').trim() === nm) return true;
+                }
                 return false;
             }).sort(function(a, b) {
                 return String(b.updated_at || b.date_start || '').localeCompare(String(a.updated_at || a.date_start || ''));
