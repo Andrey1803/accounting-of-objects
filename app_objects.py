@@ -343,6 +343,8 @@ OBJECT_STATUSES_SALARY_FROZEN = (OBJECT_STATUS_CLOSED, 'Оплачен')
 OBJECT_STATUSES_FINISHED = (OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
 # Финансово закрытые объекты — в списке по умолчанию только последние N (см. API objects-with-estimates).
 OBJECT_STATUSES_ARCHIVED = (OBJECT_STATUS_CLOSED, 'Оплачен')
+# Статусы, которые задаются только в учёте — интеграция их не затирает.
+OBJECT_STATUSES_OA_MANUAL = frozenset({'Приостановлен', 'Запланирован', 'Оплачен', 'Завершён'})
 # До миграции БД или в копии дампа без перезапуска могли остаться старые подписи
 OBJECT_STATUSES_NOT_DEBT = (OBJECT_STATUS_WAITING, 'Запланирован')
 # В делитель n (распределение зарплаты за день) не входят — только план, без выезда.
@@ -1173,6 +1175,48 @@ def _integration_parse_money(value):
         return None
 
 
+def _integration_status_rank(status: str) -> int:
+    s = (status or '').strip()
+    return {
+        OBJECT_STATUS_WAITING: 0,
+        'Запланирован': 0,
+        OBJECT_STATUS_ACTIVE: 1,
+        'Приостановлен': 1,
+        OBJECT_STATUS_DONE: 2,
+        'Завершён': 2,
+        OBJECT_STATUS_CLOSED: 3,
+        'Оплачен': 3,
+    }.get(s, -1)
+
+
+def _integration_should_apply_status_sync(data: dict | None) -> bool:
+    data = data or {}
+    if 'sync_status' not in data:
+        return False
+    v = data.get('sync_status')
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    return s in ('1', 'true', 'yes', 'on')
+
+
+def _integration_resolve_status(existing_status, incoming_status, *, apply_sync: bool) -> str:
+    """Статус из диспетчера: только при sync_status; не понижаем и не затираем ручные статусы учёта."""
+    existing = (existing_status or '').strip() or OBJECT_STATUS_WAITING
+    if not apply_sync:
+        return existing
+    incoming = (incoming_status or '').strip()
+    if not incoming:
+        return existing
+    if existing in OBJECT_STATUSES_OA_MANUAL:
+        return existing
+    ex_rank = _integration_status_rank(existing)
+    in_rank = _integration_status_rank(incoming)
+    if ex_rank >= 0 and in_rank >= 0:
+        return incoming if in_rank >= ex_rank else existing
+    return incoming
+
+
 def _integration_client_card_name(contact: str, company: str) -> str:
     """
     Имя карточки клиента для интеграции.
@@ -1722,7 +1766,11 @@ def integration_create_object_from_taskmgr():
                 except (TypeError, ValueError):
                     advance_new = 0.0
             status_in = (data.get('status') or '').strip() if data.get('status') is not None else ''
-            status_new = status_in if status_in else (existing.get('status') or OBJECT_STATUS_WAITING)
+            status_new = _integration_resolve_status(
+                existing.get('status'),
+                status_in,
+                apply_sync=_integration_should_apply_status_sync(data),
+            )
             execute(
                 'UPDATE objects SET name=?, date_start=?, date_end=?, work_dates=?, client=?, client_id=?, advance=?, status=?, updated_at=? WHERE id=? AND user_id=?',
                 (
