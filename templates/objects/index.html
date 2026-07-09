@@ -778,9 +778,15 @@
         let closedVisibleLimit = closedPageSize;
         let closedTotal = 0;
         let lastObjectsApiData = null;
+        let searchLoadsAll = false;
         /** По умолчанию: статус ↑, внутри статуса — свежие даты выше. */
         let sortCol = SORT_COL_STATUS;
         let sortAsc = true;
+
+        function getSearchQuery() {
+            var el = document.getElementById('filter-search');
+            return el ? String(el.value || '').trim().toLowerCase() : '';
+        }
 
         function isClosedArchivedStatus(status) {
             var s = String(status || '').trim();
@@ -1064,6 +1070,12 @@
         function updateClosedLoadMoreUi(data) {
             const el = document.getElementById('closed-load-more');
             if (!el) return;
+            if (getSearchQuery()) {
+                el.style.display = 'none';
+                var hintHidden = document.getElementById('closed-load-more-hint');
+                if (hintHidden) hintHidden.textContent = '';
+                return;
+            }
             const counts = countClosedForUi(objects, data || lastObjectsApiData);
             closedTotal = counts.total;
             const shown = counts.shown;
@@ -1123,6 +1135,13 @@
                 const params = new URLSearchParams({ page, per_page: perPage });
                 params.set('closed_limit', String(closedLimitForFetch()));
                 params.set('closed_offset', '0');
+                const searchQ = getSearchQuery();
+                if (searchQ) {
+                    params.set('scope', 'all');
+                    searchLoadsAll = true;
+                } else {
+                    searchLoadsAll = false;
+                }
                 
                 console.log('loadData: fetching objects with params:', params.toString());
                 const objectsPromise = fetch(`/api/objects-with-estimates?${params}`);
@@ -1824,7 +1843,7 @@
 
         function renderTable() {
             collapseInlineTextExpand();
-            const search = document.getElementById('filter-search').value.toLowerCase();
+            const search = getSearchQuery();
             const statusFilter = document.getElementById('filter-status').value;
             const clientFilter = document.getElementById('filter-client').value;
             const regularToFilter = document.getElementById('filter-regular-to').value;
@@ -1832,7 +1851,8 @@
             
             console.log('renderTable: objects count =', objects.length);
             
-            let filtered = objectsVisibleInList(objects).filter(obj => {
+            const listSource = search ? objects : objectsVisibleInList(objects);
+            let filtered = listSource.filter(obj => {
                 var nameLc = String(obj.name || '').toLowerCase();
                 if (search && !nameLc.includes(search)) return false;
                 if (statusFilter && obj.status !== statusFilter) return false;
@@ -3087,8 +3107,18 @@
             var userEdited = false;
             var debounceTimer = null;
             function applySearchFilter() {
-                resetClosedVisibleLimit();
+                var q = (el.value || '').trim().toLowerCase();
+                if (q && !searchLoadsAll) {
+                    void loadData(1);
+                    return;
+                }
+                if (!q && searchLoadsAll) {
+                    resetClosedVisibleLimit();
+                    void loadData(1);
+                    return;
+                }
                 renderTable();
+                updateClosedLoadMoreUi(lastObjectsApiData);
             }
             el.addEventListener('input', function() {
                 userEdited = true;
