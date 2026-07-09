@@ -1691,6 +1691,58 @@ def _safe_float(value, default=0.0):
         return default
 
 
+def _clamp_discount_percent(value, default=0.0):
+    """Скидка в процентах: 0…100."""
+    v = _safe_float(value, default=default)
+    return max(0.0, min(100.0, v))
+
+
+def compute_estimate_money(est, items):
+    """
+    Итоги сметы: отдельные скидки на материалы и работы, затем наценка / НДС / общая скидка.
+    Возвращает dict с суммами до и после скидок по разделам.
+    """
+    mats_raw = sum(
+        _safe_float(i.get('total'))
+        for i in items
+        if (i.get('section') or 'material') == 'material'
+    )
+    works_raw = sum(
+        _safe_float(i.get('total'))
+        for i in items
+        if i.get('section') == 'work'
+    )
+    mat_disc = _clamp_discount_percent(est.get('material_discount_percent'))
+    work_disc = _clamp_discount_percent(est.get('work_discount_percent'))
+    mats = mats_raw * (1.0 - mat_disc / 100.0)
+    works = works_raw * (1.0 - work_disc / 100.0)
+    sub = mats + works
+    markup = sub * _safe_float(est.get('markup_percent')) / 100.0
+    vat = (sub + markup) * _safe_float(est.get('vat_percent')) / 100.0
+    disc = (sub + markup + vat) * _safe_float(est.get('discount_percent')) / 100.0
+    total = sub + markup + vat - disc
+    mat_profit_raw = sum(
+        _safe_float(i.get('material_profit'))
+        for i in items
+        if (i.get('section') or 'material') == 'material'
+    )
+    mat_profit = mat_profit_raw * (1.0 - mat_disc / 100.0) if mat_disc else mat_profit_raw
+    return {
+        'total_materials_raw': mats_raw,
+        'total_works_raw': works_raw,
+        'total_materials': mats,
+        'total_works': works,
+        'subtotal': sub,
+        'markup': markup,
+        'vat': vat,
+        'discount': disc,
+        'total': total,
+        'material_discount_percent': mat_disc,
+        'work_discount_percent': work_disc,
+        'material_profit': mat_profit,
+    }
+
+
 _QTY_GUESS_FOR_LINE_PURCHASE = (
     2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 40, 50, 100,
 )
@@ -3311,12 +3363,16 @@ def api_create_estimate():
         return bad
 
     eid = execute("""INSERT INTO estimates
-        (user_id, number, date, object_id, object_name, client, status, vat_percent, markup_percent, discount_percent, notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, number, date, object_id, object_name, client, status, vat_percent, markup_percent, discount_percent,
+         material_discount_percent, work_discount_percent, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (current_user.id, number, data.get('date', datetime.now().strftime('%Y-%m-%d')),
          object_id, data.get('object_name', ''), data.get('client', ''),
          data.get('status', 'Черновик'), _safe_float(data.get('vat_percent')), _safe_float(data.get('markup_percent')),
-         _safe_float(data.get('discount_percent')), data.get('notes', ''), now, now), return_id=True)
+         _safe_float(data.get('discount_percent')),
+         _clamp_discount_percent(data.get('material_discount_percent')),
+         _clamp_discount_percent(data.get('work_discount_percent')),
+         data.get('notes', ''), now, now), return_id=True)
     return jsonify({"id": eid, "number": number}), 201
 
 @estimate_bp.route('/api/estimates/<int:est_id>', methods=['GET'])
@@ -3439,11 +3495,15 @@ def api_update_estimate(est_id):
             return bad
     new_status = (data.get('status') or prev_status or 'Черновик').strip()
     n = execute_rowcount("""UPDATE estimates SET date=?, object_name=?, client=?, status=?,
-           vat_percent=?, markup_percent=?, discount_percent=?, notes=?, object_id=?, updated_at=?
+           vat_percent=?, markup_percent=?, discount_percent=?,
+           material_discount_percent=?, work_discount_percent=?, notes=?, object_id=?, updated_at=?
            WHERE id=? AND user_id=?""",
         (data.get('date'), data.get('object_name'), data.get('client'), new_status,
          _safe_float(data.get('vat_percent')), _safe_float(data.get('markup_percent')),
-         _safe_float(data.get('discount_percent')), data.get('notes', ''), object_id, now, est_id, current_user.id))
+         _safe_float(data.get('discount_percent')),
+         _clamp_discount_percent(data.get('material_discount_percent')),
+         _clamp_discount_percent(data.get('work_discount_percent')),
+         data.get('notes', ''), object_id, now, est_id, current_user.id))
     if n == 0:
         return jsonify({"error": "Not found"}), 404
     if new_status != prev_status and new_status in ('Отправлена', 'Утверждена', 'Отказ клиента'):
@@ -3787,17 +3847,17 @@ def api_get_estimates_by_object(object_id):
     result_estimates = []
     for est in estimates:
         items = items_by_est.get(est['id'], [])
-        est_works = sum(i['total'] for i in items if i['section'] == 'work')
-        est_mats = sum(i['total'] for i in items if i['section'] == 'material')
+        money = compute_estimate_money(est, items)
+        est_works = money['total_works_raw']
+        est_mats = money['total_materials_raw']
         est_profit = sum(i.get('material_profit', 0) for i in items if i['section'] == 'material')
         total_works += est_works; total_materials += est_mats; total_mat_profit += est_profit
-        sub = est_works + est_mats
-        markup = sub * _safe_float(est.get('markup_percent')) / 100
-        vat = (sub + markup) * _safe_float(est.get('vat_percent')) / 100
-        disc = (sub + markup + vat) * _safe_float(est.get('discount_percent')) / 100
         result_estimates.append({
             'id': est['id'], 'number': est['number'], 'date': est['date'], 'status': est['status'],
-            'total_works': est_works, 'total_materials': est_mats, 'total': sub + markup + vat - disc
+            'total_works': money['total_works'], 'total_materials': money['total_materials'],
+            'total': money['total'],
+            'material_discount_percent': money['material_discount_percent'],
+            'work_discount_percent': money['work_discount_percent'],
         })
     return jsonify({
         'estimates': result_estimates,
@@ -3895,9 +3955,19 @@ def api_export_excel(est_id):
             total_all += it['total']
             row += 1
 
-    ws.cell(row=row + 1, column=5, value="ИТОГО:").font = Font(bold=True, size=12)
-    ws.cell(row=row + 1, column=6, value=total_all).font = Font(bold=True, size=12)
-    ws.cell(row=row + 1, column=6).number_format = '#,##0.00'
+    money = compute_estimate_money(est, items)
+    summary_row = row + 1
+    if money['material_discount_percent'] > 0:
+        ws.cell(row=summary_row, column=5, value="Материалы (скидка {}%):".format(money['material_discount_percent'])).font = Font(size=11)
+        ws.cell(row=summary_row, column=6, value=money['total_materials']).number_format = '#,##0.00'
+        summary_row += 1
+    if money['work_discount_percent'] > 0:
+        ws.cell(row=summary_row, column=5, value="Работы (скидка {}%):".format(money['work_discount_percent'])).font = Font(size=11)
+        ws.cell(row=summary_row, column=6, value=money['total_works']).number_format = '#,##0.00'
+        summary_row += 1
+    ws.cell(row=summary_row, column=5, value="ИТОГО:").font = Font(bold=True, size=12)
+    ws.cell(row=summary_row, column=6, value=money['total']).font = Font(bold=True, size=12)
+    ws.cell(row=summary_row, column=6).number_format = '#,##0.00'
 
     output = io.BytesIO()
     wb.save(output)

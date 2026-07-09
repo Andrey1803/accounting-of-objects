@@ -538,6 +538,7 @@ def init_db():
                 number TEXT, date TEXT, object_id INTEGER, object_name TEXT, client TEXT,
                 status TEXT DEFAULT 'Черновик', vat_percent REAL DEFAULT 0,
                 markup_percent REAL DEFAULT 0, discount_percent REAL DEFAULT 0,
+                material_discount_percent REAL DEFAULT 0, work_discount_percent REAL DEFAULT 0,
                 notes TEXT, created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW())
             """,
             """
@@ -702,6 +703,7 @@ def init_db():
                 number TEXT, date TEXT, object_id INTEGER, object_name TEXT, client TEXT,
                 status TEXT DEFAULT 'Черновик', vat_percent REAL DEFAULT 0,
                 markup_percent REAL DEFAULT 0, discount_percent REAL DEFAULT 0,
+                material_discount_percent REAL DEFAULT 0, work_discount_percent REAL DEFAULT 0,
                 notes TEXT, created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '');
 
             CREATE TABLE IF NOT EXISTS estimate_items (
@@ -929,6 +931,8 @@ def init_db():
     for col_sql in (
         "ALTER TABLE objects ADD COLUMN settlement_type TEXT DEFAULT 'cash'",
         "ALTER TABLE objects ADD COLUMN tax_regime TEXT DEFAULT 'none'",
+        "ALTER TABLE estimates ADD COLUMN material_discount_percent REAL DEFAULT 0",
+        "ALTER TABLE estimates ADD COLUMN work_discount_percent REAL DEFAULT 0",
     ):
         try:
             if not IS_POSTGRES:

@@ -2679,6 +2679,8 @@
                 vat_percent: est.vat_percent,
                 markup_percent: est.markup_percent,
                 discount_percent: est.discount_percent,
+                material_discount_percent: est.material_discount_percent,
+                work_discount_percent: est.work_discount_percent,
                 notes: est.notes != null ? est.notes : ''
             };
             var items = (est.items || []).map(function(it) {
@@ -2806,7 +2808,9 @@
                 notes: meta.notes || '',
                 vat_percent: meta.vat_percent,
                 markup_percent: meta.markup_percent,
-                discount_percent: meta.discount_percent
+                discount_percent: meta.discount_percent,
+                material_discount_percent: meta.material_discount_percent,
+                work_discount_percent: meta.work_discount_percent
             };
             try {
                 var res = await fetchCsrf('/estimate/api/estimates', {

@@ -70,7 +70,11 @@
                 
                 const mats = (detail.items || []).filter(i => i.section === 'material').reduce((s, i) => s + i.total, 0);
                 const works = (detail.items || []).filter(i => i.section === 'work').reduce((s, i) => s + i.total, 0);
-                const subtotal = mats + works;
+                const matDisc = Math.max(0, Math.min(100, parseFloat(est.material_discount_percent) || 0));
+                const workDisc = Math.max(0, Math.min(100, parseFloat(est.work_discount_percent) || 0));
+                const matsNet = mats * (1 - matDisc / 100);
+                const worksNet = works * (1 - workDisc / 100);
+                const subtotal = matsNet + worksNet;
                 const markup = subtotal * (est.markup_percent || 0) / 100;
                 const vat = (subtotal + markup) * (est.vat_percent || 0) / 100;
                 const discount = (subtotal + markup + vat) * (est.discount_percent || 0) / 100;
@@ -89,8 +93,8 @@
                     span.textContent = est.status;
                     f4.appendChild(span);
                 tr.appendChild(f4);
-                const f5 = document.createElement('td'); f5.textContent = formatMoney(mats); tr.appendChild(f5);
-                const f6 = document.createElement('td'); f6.textContent = formatMoney(works); tr.appendChild(f6);
+                const f5 = document.createElement('td'); f5.textContent = formatMoney(matsNet); tr.appendChild(f5);
+                const f6 = document.createElement('td'); f6.textContent = formatMoney(worksNet); tr.appendChild(f6);
                 const f7 = document.createElement('td');
                     const b2 = document.createElement('b'); b2.textContent = formatMoney(total); f7.appendChild(b2);
                 tr.appendChild(f7);

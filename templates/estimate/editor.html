@@ -207,8 +207,14 @@
         </div>
 
         <div class="totals-card">
+            <div class="info-row" style="margin-bottom:12px;">
+                <div><label>Скидка на материалы, %</label><input type="number" id="mat-discount-pct" min="0" max="100" step="0.1" value="0" oninput="render()"></div>
+                <div><label>Скидка на работы, %</label><input type="number" id="work-discount-pct" min="0" max="100" step="0.1" value="0" oninput="render()"></div>
+            </div>
             <div class="total-row"><span>Материалы:</span><span id="sum-mat">0.00 BYN</span></div>
+            <div class="total-row muted-discount" id="sum-mat-discount-note" style="display:none;font-size:12px;color:#78909c;"></div>
             <div class="total-row"><span>Работы:</span><span id="sum-work">0.00 BYN</span></div>
+            <div class="total-row muted-discount" id="sum-work-discount-note" style="display:none;font-size:12px;color:#78909c;"></div>
             <div class="total-row" style="color:var(--green); font-size:14px;"><span>Прибыль с мат.:</span><span id="sum-profit">0.00 BYN</span></div>
             <div id="margin-alert" style="display:none;margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;background:#ffebee;color:#b71c1c;border:1px solid #ef9a9a;"></div>
             <div class="total-row"><span>ИТОГО:</span><span id="sum-total">0.00 BYN</span></div>
@@ -1042,6 +1048,8 @@
                     document.getElementById('object-name').value = data.object_name || '';
                     document.getElementById('client').value = data.client || '';
                     document.getElementById('status').value = data.status || 'Черновик';
+                    document.getElementById('mat-discount-pct').value = data.material_discount_percent != null ? data.material_discount_percent : 0;
+                    document.getElementById('work-discount-pct').value = data.work_discount_percent != null ? data.work_discount_percent : 0;
                     if (data.object_id) { prefilledObjectId = parseInt(data.object_id, 10) || null; }
                     try { await OfflineDB.put('estimates', data); } catch(e) {}
                     // Сохраняем ID в localStorage
@@ -1057,6 +1065,8 @@
                         document.getElementById('object-name').value = cached.object_name || '';
                         document.getElementById('client').value = cached.client || '';
                         document.getElementById('status').value = cached.status || 'Черновик';
+                        document.getElementById('mat-discount-pct').value = cached.material_discount_percent != null ? cached.material_discount_percent : 0;
+                        document.getElementById('work-discount-pct').value = cached.work_discount_percent != null ? cached.work_discount_percent : 0;
                         if (cached.object_id) { prefilledObjectId = parseInt(cached.object_id, 10) || null; }
                     }
                 }
@@ -1140,6 +1150,22 @@
             });
         }
 
+        function clampDiscountPct(raw) {
+            var v = parseFloat(raw);
+            if (isNaN(v) || v < 0) return 0;
+            if (v > 100) return 100;
+            return v;
+        }
+
+        function getEstimateDiscountPercents() {
+            var matEl = document.getElementById('mat-discount-pct');
+            var workEl = document.getElementById('work-discount-pct');
+            return {
+                material: clampDiscountPct(matEl ? matEl.value : 0),
+                work: clampDiscountPct(workEl ? workEl.value : 0)
+            };
+        }
+
         function render() {
             captureEstimateSelectionFromDom();
             var mats = items.filter(i => i.section === 'material');
@@ -1172,15 +1198,41 @@
             renderList('work-body', 'work-cards', works, 'work');
             restoreEstimateSelectionToDom();
 
-            var sMat = mats.reduce((s, i) => s + (i.total || 0), 0);
-            var sWork = works.reduce((s, i) => s + (i.total || 0), 0);
+            var sMatRaw = mats.reduce((s, i) => s + (i.total || 0), 0);
+            var sWorkRaw = works.reduce((s, i) => s + (i.total || 0), 0);
+            var disc = getEstimateDiscountPercents();
+            var matFactor = 1 - disc.material / 100;
+            var workFactor = 1 - disc.work / 100;
+            var sMat = sMatRaw * matFactor;
+            var sWork = sWorkRaw * workFactor;
             // Прибыль считаем только для новых позиций (добавленных из каталога в этой сессии)
             var sProfit = mats.filter(i => i.material_profit > 0).reduce((s, i) => s + (i.material_profit || 0), 0);
+            if (disc.material > 0) sProfit *= matFactor;
 
             document.getElementById('sum-mat').textContent = sMat.toFixed(2) + ' BYN';
             document.getElementById('sum-work').textContent = sWork.toFixed(2) + ' BYN';
             document.getElementById('sum-profit').textContent = '+' + sProfit.toFixed(2) + ' BYN';
             document.getElementById('sum-total').textContent = (sMat + sWork).toFixed(2) + ' BYN';
+            var matNote = document.getElementById('sum-mat-discount-note');
+            var workNote = document.getElementById('sum-work-discount-note');
+            if (matNote) {
+                if (disc.material > 0) {
+                    matNote.style.display = 'block';
+                    matNote.textContent = 'Было ' + sMatRaw.toFixed(2) + ' BYN, скидка ' + disc.material + '%';
+                } else {
+                    matNote.style.display = 'none';
+                    matNote.textContent = '';
+                }
+            }
+            if (workNote) {
+                if (disc.work > 0) {
+                    workNote.style.display = 'block';
+                    workNote.textContent = 'Было ' + sWorkRaw.toFixed(2) + ' BYN, скидка ' + disc.work + '%';
+                } else {
+                    workNote.style.display = 'none';
+                    workNote.textContent = '';
+                }
+            }
             renderMarginAlert();
         }
 
@@ -2151,7 +2203,9 @@
                 date: document.getElementById('date').value,
                 object_name: document.getElementById('object-name').value,
                 client: document.getElementById('client').value,
-                status: document.getElementById('status').value
+                status: document.getElementById('status').value,
+                material_discount_percent: getEstimateDiscountPercents().material,
+                work_discount_percent: getEstimateDiscountPercents().work
             };
             // Привязка к объекту: при создании и при сохранении существующей сметы
             if (prefilledObjectId) {
