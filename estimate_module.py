@@ -3419,7 +3419,8 @@ def api_get_estimate(est_id):
                        WHERE id=? AND estimate_id=?""",
                     (pu, it['total'], it['material_profit'], it['id'], est_id),
                 )
-    return jsonify({**est, 'items': items})
+    money = compute_estimate_money(est, items)
+    return jsonify({**est, 'items': items, 'totals': money})
 
 def _dispatcher_notify_estimate_status(user_id, object_id, status, estimate_number='', customer_phone=''):
     """Webhook в диспетчер: смета «Отправлена» / «Утверждена» → стадия заявки."""
@@ -3478,8 +3479,7 @@ def api_update_estimate(est_id):
     if err: return err
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     prev = fetch_one(
-        """SELECT e.object_id, e.status AS prev_status, e.number,
-                  o.integration_source, o.client
+        """SELECT e.*, o.integration_source, o.client AS obj_client
            FROM estimates e
            LEFT JOIN objects o ON o.id = e.object_id AND o.user_id = e.user_id
            WHERE e.id = ? AND e.user_id = ?""",
@@ -3488,22 +3488,33 @@ def api_update_estimate(est_id):
     if not prev:
         return jsonify({"error": "Not found"}), 404
     object_id = prev.get('object_id') or 0
-    prev_status = (prev.get('prev_status') or '').strip()
+    prev_status = (prev.get('status') or '').strip()
     if 'object_id' in data:
         object_id, bad = _resolve_object_id_for_user(data.get('object_id'), current_user.id)
         if bad:
             return bad
     new_status = (data.get('status') or prev_status or 'Черновик').strip()
+    mat_disc = (
+        _clamp_discount_percent(data.get('material_discount_percent'))
+        if 'material_discount_percent' in data
+        else _clamp_discount_percent(prev.get('material_discount_percent'))
+    )
+    work_disc = (
+        _clamp_discount_percent(data.get('work_discount_percent'))
+        if 'work_discount_percent' in data
+        else _clamp_discount_percent(prev.get('work_discount_percent'))
+    )
     n = execute_rowcount("""UPDATE estimates SET date=?, object_name=?, client=?, status=?,
            vat_percent=?, markup_percent=?, discount_percent=?,
            material_discount_percent=?, work_discount_percent=?, notes=?, object_id=?, updated_at=?
            WHERE id=? AND user_id=?""",
-        (data.get('date'), data.get('object_name'), data.get('client'), new_status,
-         _safe_float(data.get('vat_percent')), _safe_float(data.get('markup_percent')),
-         _safe_float(data.get('discount_percent')),
-         _clamp_discount_percent(data.get('material_discount_percent')),
-         _clamp_discount_percent(data.get('work_discount_percent')),
-         data.get('notes', ''), object_id, now, est_id, current_user.id))
+        (data.get('date', prev.get('date')), data.get('object_name', prev.get('object_name')),
+         data.get('client', prev.get('client')), new_status,
+         _safe_float(data.get('vat_percent', prev.get('vat_percent'))),
+         _safe_float(data.get('markup_percent', prev.get('markup_percent'))),
+         _safe_float(data.get('discount_percent', prev.get('discount_percent'))),
+         mat_disc, work_disc,
+         data.get('notes', prev.get('notes') or ''), object_id, now, est_id, current_user.id))
     if n == 0:
         return jsonify({"error": "Not found"}), 404
     if new_status != prev_status and new_status in ('Отправлена', 'Утверждена', 'Отказ клиента'):

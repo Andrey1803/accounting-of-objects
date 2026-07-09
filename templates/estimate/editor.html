@@ -208,8 +208,8 @@
 
         <div class="totals-card">
             <div class="info-row" style="margin-bottom:12px;">
-                <div><label>Скидка на материалы, %</label><input type="number" id="mat-discount-pct" min="0" max="100" step="0.1" value="0" oninput="render()"></div>
-                <div><label>Скидка на работы, %</label><input type="number" id="work-discount-pct" min="0" max="100" step="0.1" value="0" oninput="render()"></div>
+                <div><label>Скидка на материалы, %</label><input type="text" inputmode="decimal" id="mat-discount-pct" value="0" oninput="onDiscountInput()"></div>
+                <div><label>Скидка на работы, %</label><input type="text" inputmode="decimal" id="work-discount-pct" value="0" oninput="onDiscountInput()"></div>
             </div>
             <div class="total-row"><span>Материалы:</span><span id="sum-mat">0.00 BYN</span></div>
             <div class="total-row muted-discount" id="sum-mat-discount-note" style="display:none;font-size:12px;color:#78909c;"></div>
@@ -1150,20 +1150,70 @@
             });
         }
 
-        function clampDiscountPct(raw) {
-            var v = parseFloat(raw);
+        function parseDiscountPct(raw) {
+            if (raw == null) return 0;
+            var s = String(raw).trim().replace(',', '.');
+            if (!s) return 0;
+            var v = parseFloat(s);
             if (isNaN(v) || v < 0) return 0;
             if (v > 100) return 100;
             return v;
+        }
+
+        function clampDiscountPct(raw) {
+            return parseDiscountPct(raw);
         }
 
         function getEstimateDiscountPercents() {
             var matEl = document.getElementById('mat-discount-pct');
             var workEl = document.getElementById('work-discount-pct');
             return {
-                material: clampDiscountPct(matEl ? matEl.value : 0),
-                work: clampDiscountPct(workEl ? workEl.value : 0)
+                material: parseDiscountPct(matEl ? matEl.value : 0),
+                work: parseDiscountPct(workEl ? workEl.value : 0)
             };
+        }
+
+        var discountSaveTimer = null;
+        function onDiscountInput() {
+            render();
+            scheduleDiscountSave();
+        }
+
+        function scheduleDiscountSave() {
+            if (!estimateId) return;
+            clearTimeout(discountSaveTimer);
+            discountSaveTimer = setTimeout(function() { void saveEstimateHeaderOnly(); }, 500);
+        }
+
+        async function saveEstimateHeaderOnly() {
+            if (!estimateId || !navigator.onLine) return;
+            var data = {
+                date: document.getElementById('date').value,
+                object_name: document.getElementById('object-name').value,
+                client: document.getElementById('client').value,
+                status: document.getElementById('status').value,
+                material_discount_percent: getEstimateDiscountPercents().material,
+                work_discount_percent: getEstimateDiscountPercents().work
+            };
+            if (prefilledObjectId) data.object_id = prefilledObjectId;
+            try {
+                var res = await fetch('/estimate/api/estimates/' + estimateId, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': getCsrf()
+                    },
+                    body: JSON.stringify(data)
+                });
+                if (!res.ok) return;
+                var cached = await OfflineDB.getById('estimates', estimateId).catch(function() { return null; });
+                if (cached) {
+                    Object.assign(cached, data);
+                    await OfflineDB.put('estimates', cached);
+                }
+            } catch (e) {
+                console.warn('saveEstimateHeaderOnly:', e);
+            }
         }
 
         function render() {
@@ -2159,6 +2209,8 @@
                     object_name: document.getElementById('object-name')?.value || '',
                     client: document.getElementById('client')?.value || '',
                     status: document.getElementById('status')?.value || 'Черновик',
+                    material_discount_percent: getEstimateDiscountPercents().material,
+                    work_discount_percent: getEstimateDiscountPercents().work,
                     items: items.map(it => {
                         const copy = {...it};
                         delete copy._new;

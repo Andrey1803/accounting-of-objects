@@ -421,6 +421,29 @@ def _backfill_objects_work_dates(conn):
         mc.close()
 
 
+def _migrate_estimate_discount_columns(conn):
+    """Скидки по разделам сметы (материалы / работы)."""
+    alters = (
+        "ALTER TABLE estimates ADD COLUMN material_discount_percent REAL DEFAULT 0",
+        "ALTER TABLE estimates ADD COLUMN work_discount_percent REAL DEFAULT 0",
+    )
+    if IS_POSTGRES:
+        alters = (
+            "ALTER TABLE estimates ADD COLUMN IF NOT EXISTS material_discount_percent REAL DEFAULT 0",
+            "ALTER TABLE estimates ADD COLUMN IF NOT EXISTS work_discount_percent REAL DEFAULT 0",
+        )
+    cur = conn.cursor()
+    try:
+        for sql in alters:
+            cur.execute(sql)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logging.warning("Миграция скидок estimates: %s", e)
+    finally:
+        cur.close()
+
+
 def _migrate_object_status_labels(conn):
     """Переименование статусов объектов в существующих строках (этапы работ vs оплата)."""
     mapping = (
@@ -655,6 +678,8 @@ def init_db():
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS work_dates TEXT DEFAULT '[]'",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS settlement_type TEXT DEFAULT 'cash'",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS tax_regime TEXT DEFAULT 'none'",
+            "ALTER TABLE estimates ADD COLUMN IF NOT EXISTS material_discount_percent REAL DEFAULT 0",
+            "ALTER TABLE estimates ADD COLUMN IF NOT EXISTS work_discount_percent REAL DEFAULT 0",
         ):
             try:
                 cur.execute(alter)
@@ -955,6 +980,11 @@ def init_db():
             conn.commit()
     except Exception:
         pass
+
+    try:
+        _migrate_estimate_discount_columns(conn)
+    except Exception as e:
+        logging.warning("Миграция скидок estimates: %s", e)
 
     try:
         _migrate_object_status_labels(conn)
