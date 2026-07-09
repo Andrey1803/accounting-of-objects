@@ -368,8 +368,7 @@
     
     <div class="container">
         <div class="filters" autocomplete="off">
-            <input type="text" id="filter-search" name="filter_search" placeholder="Поиск по наименованию..." autocomplete="off" readonly>
-            <button type="button" class="btn" style="background:#2E75B6; color:white; font-size:12px; padding:6px 12px;" onclick="enableSearch()">🔍</button>
+            <input type="text" id="filter-search" name="filter_search" placeholder="Поиск по наименованию..." autocomplete="off">
             <select id="filter-status" autocomplete="off">
                 <option value="">Все статусы</option>
                 <option>Ожидает старта</option><option>В работе</option><option>Приостановлен</option><option>Выполнен</option><option>Закрыт</option>
@@ -3080,15 +3079,38 @@
             if (e.target.id === 'wellSurveysModal') closeWellSurveysModal();
         });
 
-        // Функция включения поиска
-        function enableSearch() {
-            var input = document.getElementById('filter-search');
-            input.removeAttribute('readonly');
-            input.focus();
-            console.log('Поиск активирован');
-        }
-
-        // Быстрое создание объекта
+        // Поиск по наименованию — фильтрация на клиенте по мере ввода
+        (function initSearchFilter() {
+            var el = document.getElementById('filter-search');
+            if (!el) return;
+            el.value = '';
+            var userEdited = false;
+            var debounceTimer = null;
+            function applySearchFilter() {
+                resetClosedVisibleLimit();
+                renderTable();
+            }
+            el.addEventListener('input', function() {
+                userEdited = true;
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(applySearchFilter, 200);
+            });
+            el.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    userEdited = true;
+                    clearTimeout(debounceTimer);
+                    applySearchFilter();
+                }
+            });
+            // Браузерное автозаполнение может подставить текст до первого ввода
+            setTimeout(function() {
+                if (!userEdited && el.value) {
+                    el.value = '';
+                    applySearchFilter();
+                }
+            }, 300);
+        })();
         async function quickAdd() {
             var name = document.getElementById('quickName').value.trim();
             if (!name) { document.getElementById('quickName').focus(); return; }
@@ -3123,13 +3145,6 @@
             renderTable();
         }
         
-        // Поиск ТОЛЬКО по кнопке Enter, НЕ по каждому вводу
-        document.getElementById('filter-search').addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                resetClosedVisibleLimit();
-                void loadData(1, { resetClosed: true });
-            }
-        });
         document.getElementById('filter-status').addEventListener('change', function() {
             resetClosedVisibleLimit();
             void loadData(1, { resetClosed: true });
@@ -3147,16 +3162,6 @@
         initCompactCellExpand();
         initCompactCellLinks();
         initObjectsLiveAutoRefresh();
-
-        // Принудительно загружаем данные через 2 секунды после автозаполнения
-        setTimeout(function() {
-            var searchInput = document.getElementById('filter-search');
-            if (searchInput && searchInput.value) {
-                console.log('Обнаружено автозаполнение, очищаю:', searchInput.value);
-                searchInput.value = '';
-                renderTable();
-            }
-        }, 2000);
 
         // === PWA ===
         {% if not service_worker_disabled %}
