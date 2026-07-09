@@ -623,6 +623,8 @@ else:
 
 def _sql_objects_estimate_aggregates(as_work, as_mat, as_profit, as_mat_cost='estimate_material_cost'):
     """Общий фрагмент SELECT + JOIN для объектов с агрегатами по сметам."""
+    mat_disc_factor = "(1.0 - COALESCE(e.material_discount_percent, 0) / 100.0)"
+    work_disc_factor = "(1.0 - COALESCE(e.work_discount_percent, 0) / 100.0)"
     mat_unit_cost = (
         "CASE WHEN COALESCE(ei.purchase_price, 0) > 0 THEN ei.purchase_price "
         "WHEN COALESCE(ei.wholesale_price, 0) > 0 THEN ei.wholesale_price "
@@ -643,9 +645,9 @@ def _sql_objects_estimate_aggregates(as_work, as_mat, as_profit, as_mat_cost='es
     )
     return (
         f"SELECT o.*, "
-        f"COALESCE(SUM(CASE WHEN ei.section = 'work' THEN ei.total ELSE 0 END), 0) AS {as_work}, "
-        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN ei.total ELSE 0 END), 0) AS {as_mat}, "
-        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN {mat_line_profit} ELSE 0 END), 0) AS {as_profit}, "
+        f"COALESCE(SUM(CASE WHEN ei.section = 'work' THEN ei.total * {work_disc_factor} ELSE 0 END), 0) AS {as_work}, "
+        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN ei.total * {mat_disc_factor} ELSE 0 END), 0) AS {as_mat}, "
+        f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN ({mat_line_profit}) * {mat_disc_factor} ELSE 0 END), 0) AS {as_profit}, "
         f"COALESCE(SUM(CASE WHEN ei.section = 'material' THEN {mat_line_cost} ELSE 0 END), 0) AS {as_mat_cost} "
         "FROM objects o "
         "LEFT JOIN estimates e ON e.object_id = o.id AND e.user_id = o.user_id "
