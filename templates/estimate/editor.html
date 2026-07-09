@@ -2628,6 +2628,21 @@
             document.getElementById('pdfImportModal').classList.remove('active');
         }
 
+        function finishPdfImportFlow() {
+            closePdfImport();
+            closeSearch();
+            resetPdfDropZones();
+            var statusEl = document.getElementById('pdfDualExportStatus');
+            if (statusEl) statusEl.textContent = '';
+            var retailInput = document.getElementById('pdfDualRetailInput');
+            var wholesaleInput = document.getElementById('pdfDualWholesaleInput');
+            if (retailInput) retailInput.value = '';
+            if (wholesaleInput) wholesaleInput.value = '';
+            window._pdfColumnsConfirmed = false;
+            window._pdfMatchedData = null;
+            window._pdfUnmatchedData = null;
+        }
+
         window._pdfLastFile = null;
         window._pdfReparseTimer = null;
 
@@ -2885,6 +2900,7 @@
                     }
                 } catch (ignore) {}
                 render();
+                finishPdfImportFlow();
             } catch (e) {
                 if (statusEl) statusEl.textContent = '';
                 alert('Ошибка импорта материалов: ' + (e && e.message ? e.message : e));
@@ -3314,14 +3330,10 @@
             }
 
             if (added > 0) {
-                if (importMode === 'retail') {
-                    alert(`Добавлено ${added} позиций в смету №${document.getElementById('estimate-number').textContent}`);
-                } else {
+                if (importMode === 'wholesale') {
                     await saveEstimateToDB();
-                    alert(`Обработано позиций: ${added}. Закуп в каталоге — с НДС 20% от сумм из PDF; розница в каталоге не менялась. Строки без совпадения в смете добавлены с нулевой маржой (розница = закуп из PDF), при необходимости поправьте РРЦ.`);
                 }
-                closePdfImport();
-                resetPdfDropZones();
+                finishPdfImportFlow();
             } else {
                 alert('Не выбрано ни одной позиции для добавления');
             }
@@ -3389,11 +3401,8 @@
                         <input type="file" id="pdfDualWholesaleInput" accept=".pdf" />
                     </label>
                 </div>
-                <button type="button" id="pdfDualImportBtn" class="pdf-import-btn-primary" style="width:100%;padding:14px;font-size:15px;border-radius:10px;border:none;cursor:pointer;" onclick="importDualPdfMaterials()">Импортировать в материалы</button>
+                <button type="button" id="pdfDualImportBtn" class="pdf-import-btn-primary" style="width:100%;padding:14px;font-size:15px;border-radius:10px;border:none;cursor:pointer;" onclick="importDualPdfMaterials()">Применить</button>
                 <div id="pdfDualExportStatus" style="margin-top:12px;font-size:13px;color:#1565c0;min-height:1.2em;line-height:1.45;"></div>
-            </div>
-            <div class="modal-footer pdf-import-footer">
-                <button type="button" onclick="closePdfImport()">Закрыть</button>
             </div>
         </div>
     </div>
@@ -3421,6 +3430,7 @@
         if (e.key !== 'Escape') return;
         if (document.getElementById('catModal').classList.contains('active')) { closeCatManager(); return; }
         if (document.getElementById('createModal').classList.contains('active')) { closeCreate(); return; }
+        if (document.getElementById('pdfImportModal').classList.contains('active')) { closePdfImport(); return; }
         if (document.getElementById('searchModal').classList.contains('active')) closeSearch();
     });
 })();
