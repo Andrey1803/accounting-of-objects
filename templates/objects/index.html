@@ -95,6 +95,76 @@
             flex: 1;
             max-width: 300px;
         }
+        .client-filter-combo {
+            position: relative;
+            flex: 1;
+            max-width: 300px;
+            min-width: 0;
+        }
+        .client-filter-trigger {
+            width: 100%;
+            box-sizing: border-box;
+            text-align: left;
+            padding: clamp(5px, 0.8vw, 10px) clamp(8px, 1vw, 14px);
+            font-size: var(--fs-sm);
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .client-filter-panel {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            z-index: 50;
+            background: #fff;
+            border: 1px solid #cfd8dc;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+            padding: 8px;
+        }
+        .client-filter-panel[hidden] { display: none !important; }
+        .client-filter-panel input {
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0 0 6px;
+            padding: 8px 10px;
+            font-size: var(--fs-sm);
+            border: 1px solid #cfd8dc;
+            border-radius: 6px;
+            max-width: none;
+            flex: none;
+        }
+        .client-filter-list {
+            max-height: min(280px, 45vh);
+            overflow-y: auto;
+        }
+        .client-filter-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 8px 10px;
+            border: none;
+            background: transparent;
+            font-size: var(--fs-sm);
+            cursor: pointer;
+            border-radius: 6px;
+        }
+        .client-filter-item:hover,
+        .client-filter-item.active {
+            background: #e3f2fd;
+        }
+        .client-filter-native {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+        }
 
         table.objects-list-table {
             width: 100%;
@@ -373,7 +443,14 @@
                 <option value="">Все статусы</option>
                 <option>Ожидает старта</option><option>В работе</option><option>Приостановлен</option><option>Выполнен</option><option>Закрыт</option>
             </select>
-            <select id="filter-client" autocomplete="off"><option value="">Все клиенты</option></select>
+            <div class="client-filter-combo" id="filter-client-combo">
+                <button type="button" class="client-filter-trigger" id="filter-client-trigger">Все клиенты</button>
+                <select id="filter-client" autocomplete="off" tabindex="-1" aria-hidden="true" class="client-filter-native"><option value="">Все клиенты</option></select>
+                <div class="client-filter-panel" id="filter-client-panel" hidden>
+                    <input type="text" id="filter-client-search" placeholder="Поиск по имени клиента..." autocomplete="off">
+                    <div class="client-filter-list" id="filter-client-list"></div>
+                </div>
+            </div>
             <select id="filter-regular-to" autocomplete="off">
                 <option value="">Все объекты</option>
                 <option value="regular">Только регулярное ТО</option>
@@ -788,6 +865,15 @@
             return el ? String(el.value || '').trim().toLowerCase() : '';
         }
 
+        function getClientFilterValue() {
+            var el = document.getElementById('filter-client');
+            return el ? String(el.value || '').trim() : '';
+        }
+
+        function shouldLoadAllObjects() {
+            return !!getSearchQuery() || !!getClientFilterValue();
+        }
+
         function isClosedArchivedStatus(status) {
             var s = String(status || '').trim();
             return s === 'Закрыт' || s === 'Оплачен';
@@ -1076,6 +1162,12 @@
                 if (hintHidden) hintHidden.textContent = '';
                 return;
             }
+            if (getClientFilterValue()) {
+                el.style.display = 'none';
+                var hintClient = document.getElementById('closed-load-more-hint');
+                if (hintClient) hintClient.textContent = '';
+                return;
+            }
             const counts = countClosedForUi(objects, data || lastObjectsApiData);
             closedTotal = counts.total;
             const shown = counts.shown;
@@ -1136,7 +1228,7 @@
                 params.set('closed_limit', String(closedLimitForFetch()));
                 params.set('closed_offset', '0');
                 const searchQ = getSearchQuery();
-                if (searchQ) {
+                if (shouldLoadAllObjects()) {
                     params.set('scope', 'all');
                     searchLoadsAll = true;
                 } else {
@@ -1415,6 +1507,7 @@
             const filterSelect = document.getElementById('filter-client');
             const modalOpen = document.getElementById('modal') && document.getElementById('modal').classList.contains('active');
             const prevClientVal = modalOpen && select ? select.value : '';
+            const prevFilterVal = filterSelect ? filterSelect.value : '';
             select.innerHTML = '';
             const emptyOpt = document.createElement('option');
             emptyOpt.value = '';
@@ -1448,7 +1541,105 @@
                 applyClientOptionTitle(opt, c);
                 filterSelect.appendChild(opt);
             });
+            if (prevFilterVal && Array.from(filterSelect.options).some(function(o) { return o.value === prevFilterVal; })) {
+                filterSelect.value = prevFilterVal;
+            }
+            updateClientFilterTrigger();
+            var clientSearchEl = document.getElementById('filter-client-search');
+            var clientPanelEl = document.getElementById('filter-client-panel');
+            if (clientPanelEl && !clientPanelEl.hidden) {
+                renderClientFilterList(clientSearchEl ? clientSearchEl.value : '');
+            }
             refreshClientSelectPhoneUi('client', 'client-phone-hint');
+        }
+
+        function updateClientFilterTrigger() {
+            var sel = document.getElementById('filter-client');
+            var trig = document.getElementById('filter-client-trigger');
+            if (!sel || !trig) return;
+            var opt = sel.options[sel.selectedIndex];
+            trig.textContent = opt && opt.textContent ? opt.textContent : 'Все клиенты';
+        }
+
+        function renderClientFilterList(query) {
+            var list = document.getElementById('filter-client-list');
+            var sel = document.getElementById('filter-client');
+            if (!list || !sel) return;
+            var q = String(query || '').trim().toLowerCase();
+            list.innerHTML = '';
+            var allBtn = document.createElement('button');
+            allBtn.type = 'button';
+            allBtn.className = 'client-filter-item' + (sel.value === '' ? ' active' : '');
+            allBtn.textContent = 'Все клиенты';
+            allBtn.onclick = function() { selectClientFilter(''); };
+            list.appendChild(allBtn);
+            clients.forEach(function(c) {
+                var nameLc = String(c.name || '').toLowerCase();
+                var phoneLc = String(c.phone || '').toLowerCase();
+                if (q && nameLc.indexOf(q) === -1 && phoneLc.indexOf(q) === -1 && String(c.id).indexOf(q) === -1) return;
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'client-filter-item' + (sel.value === String(c.id) ? ' active' : '');
+                btn.textContent = clientLabel(c);
+                btn.title = clientPhoneTitle(c);
+                btn.onclick = function() { selectClientFilter(String(c.id)); };
+                list.appendChild(btn);
+            });
+        }
+
+        function closeClientFilterPanel() {
+            var panel = document.getElementById('filter-client-panel');
+            if (panel) panel.hidden = true;
+        }
+
+        function openClientFilterPanel() {
+            var panel = document.getElementById('filter-client-panel');
+            var search = document.getElementById('filter-client-search');
+            if (!panel) return;
+            panel.hidden = false;
+            renderClientFilterList('');
+            if (search) {
+                search.value = '';
+                setTimeout(function() { search.focus(); }, 0);
+            }
+        }
+
+        function selectClientFilter(val) {
+            var sel = document.getElementById('filter-client');
+            if (!sel) return;
+            sel.value = val;
+            updateClientFilterTrigger();
+            closeClientFilterPanel();
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        function initClientFilterCombo() {
+            var combo = document.getElementById('filter-client-combo');
+            var trigger = document.getElementById('filter-client-trigger');
+            var search = document.getElementById('filter-client-search');
+            if (!combo || !trigger || combo._clientFilterBound) return;
+            combo._clientFilterBound = true;
+            trigger.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var panel = document.getElementById('filter-client-panel');
+                if (panel && panel.hidden) openClientFilterPanel();
+                else closeClientFilterPanel();
+            });
+            if (search) {
+                search.addEventListener('input', function() {
+                    renderClientFilterList(search.value);
+                });
+                search.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeClientFilterPanel();
+                    }
+                });
+            }
+            document.addEventListener('click', function(e) {
+                if (!combo.contains(e.target)) closeClientFilterPanel();
+            });
+            updateClientFilterTrigger();
         }
 
         function bindClientSelectPhoneHover(selectId, hintId) {
@@ -1851,7 +2042,7 @@
             
             console.log('renderTable: objects count =', objects.length);
             
-            const listSource = search ? objects : objectsVisibleInList(objects);
+            const listSource = (search || getClientFilterValue()) ? objects : objectsVisibleInList(objects);
             let filtered = listSource.filter(obj => {
                 var nameLc = String(obj.name || '').toLowerCase();
                 if (search && !nameLc.includes(search)) return false;
@@ -3112,7 +3303,7 @@
                     void loadData(1);
                     return;
                 }
-                if (!q && searchLoadsAll) {
+                if (!q && searchLoadsAll && !shouldLoadAllObjects()) {
                     resetClosedVisibleLimit();
                     void loadData(1);
                     return;
@@ -3180,8 +3371,19 @@
             void loadData(1, { resetClosed: true });
         });
         document.getElementById('filter-client').addEventListener('change', function() {
+            if (shouldLoadAllObjects() && !searchLoadsAll) {
+                void loadData(1);
+                return;
+            }
+            if (!shouldLoadAllObjects() && searchLoadsAll) {
+                resetClosedVisibleLimit();
+                void loadData(1);
+                return;
+            }
             renderTable();
+            updateClosedLoadMoreUi(lastObjectsApiData);
         });
+        initClientFilterCombo();
         document.getElementById('filter-regular-to').addEventListener('change', function() {
             renderTable();
         });
