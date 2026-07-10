@@ -1663,10 +1663,40 @@ def integration_create_object_from_taskmgr():
         advance_payload = _integration_parse_money(data.get('advance'))
         advance_delta_payload = _integration_parse_money(data.get('advance_delta'))
         source_key = f'taskmgr:{task_id}'
-        existing = fetch_one(
-            'SELECT * FROM objects WHERE user_id = ? AND integration_source = ?',
-            (target_user_id, source_key),
-        )
+        existing = None
+        oid_raw = data.get('object_id')
+        if oid_raw is not None and str(oid_raw).strip() != '':
+            try:
+                oid = int(oid_raw)
+            except (TypeError, ValueError):
+                return jsonify({'error': 'object_id must be an integer'}), 400
+            existing = fetch_one(
+                'SELECT * FROM objects WHERE id = ? AND user_id = ?',
+                (oid, target_user_id),
+            )
+            if existing:
+                ex_src = (existing.get('integration_source') or '').strip()
+                if not ex_src:
+                    execute(
+                        'UPDATE objects SET integration_source = ? WHERE id = ? AND user_id = ?',
+                        (source_key, oid, target_user_id),
+                    )
+                    existing = fetch_one(
+                        'SELECT * FROM objects WHERE id = ? AND user_id = ?',
+                        (oid, target_user_id),
+                    )
+                elif ex_src != source_key:
+                    logging.warning(
+                        "integration: object_id=%s has integration_source=%s, request task %s",
+                        oid,
+                        ex_src,
+                        source_key,
+                    )
+        if not existing:
+            existing = fetch_one(
+                'SELECT * FROM objects WHERE user_id = ? AND integration_source = ?',
+                (target_user_id, source_key),
+            )
         if existing and follow_up_from:
             parent_row = fetch_one(
                 'SELECT id FROM objects WHERE user_id = ? AND integration_source = ?',
@@ -1759,7 +1789,13 @@ def integration_create_object_from_taskmgr():
                     base_adv = 0.0
                 advance_new = base_adv + float(advance_delta_payload)
             elif advance_payload is not None:
-                advance_new = advance_payload
+                if float(advance_payload) == 0.0 and advance_delta_payload is None:
+                    try:
+                        advance_new = float(existing.get('advance') or 0)
+                    except (TypeError, ValueError):
+                        advance_new = 0.0
+                else:
+                    advance_new = advance_payload
             else:
                 try:
                     advance_new = float(existing.get('advance') or 0)
