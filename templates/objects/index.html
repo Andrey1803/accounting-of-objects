@@ -2433,19 +2433,33 @@
             if (!editingId) return;
             try {
                 const statusVal = document.getElementById('status').value;
-                await fetchCsrf('/api/objects/' + editingId, {
+                const obj = objects.find(o => o.id === editingId);
+                const payload = { status: statusVal };
+                // Явно передаём дни выезда — чтобы частичный PUT не затирал work_dates.
+                if (objectWorkDaysEdit && objectWorkDaysEdit.length) {
+                    payload.work_dates = objectWorkDaysEdit.slice().sort();
+                } else if (obj) {
+                    var days = parseWorkDatesFromObject(obj);
+                    if (days.length) payload.work_dates = days;
+                }
+                const res = await fetchCsrf('/api/objects/' + editingId, {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ status: statusVal })
+                    body: JSON.stringify(payload)
                 });
-                // Обновляем локальные данные
-                const obj = objects.find(o => o.id === editingId);
-                if (obj) obj.status = statusVal;
-                // Показываем предполагаемую зарплату
+                if (res.ok) {
+                    const saved = await res.json().catch(() => null);
+                    if (saved && obj) {
+                        Object.assign(obj, saved);
+                        if (document.getElementById('salary') && saved.salary != null) {
+                            document.getElementById('salary').value = numInputDisplay(saved.salary);
+                        }
+                    } else if (obj) {
+                        obj.status = statusVal;
+                    }
+                }
                 showExpectedSalary();
-                // Пересчитываем зарплату
                 await loadSalaryInfo(editingId);
-                // Обновляем таблицу
                 refreshObjectsDataAfterMutation(currentPage);
             } catch(e) {
                 console.error('Status change error:', e);

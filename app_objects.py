@@ -487,6 +487,8 @@ def _resolve_work_dates_bounds_for_save(data, existing=None):
     """
     Из тела запроса data и (для PUT) existing: список дней, JSON, date_start, date_end (min/max).
     Если передан work_dates — он главный; иначе разворачиваем date_start/date_end.
+    Частичный PUT без дат (только status/client/…) — сохраняем существующие work_dates как есть,
+    не разворачивая date_start..date_end (иначе «дыры» между выездами заполняются лишними днями).
     """
     existing = existing or {}
     if 'work_dates' in data and data['work_dates'] is not None:
@@ -506,12 +508,49 @@ def _resolve_work_dates_bounds_for_save(data, existing=None):
         days = sorted(set(days))
         if days:
             return days, _serialize_work_dates(days), days[0], days[-1]
+        return [], '[]', None, None
+    # Нет work_dates в запросе и даты не трогали — не пересобирать календарь.
+    if 'date_start' not in data and 'date_end' not in data:
+        days = _work_dates_json_list(existing)
+        raw_wd = existing.get('work_dates')
+        if isinstance(raw_wd, list):
+            work_dates_json = _serialize_work_dates(days) if days else '[]'
+        elif raw_wd is not None and str(raw_wd).strip() not in ('', 'null'):
+            work_dates_json = raw_wd if isinstance(raw_wd, str) else (_serialize_work_dates(days) if days else '[]')
+        elif days:
+            work_dates_json = _serialize_work_dates(days)
+        else:
+            # Legacy: только date_start/date_end без JSON.
+            days = _expand_date_range_inclusive(existing.get('date_start'), existing.get('date_end'))
+            work_dates_json = _serialize_work_dates(days) if days else '[]'
+        return (
+            days,
+            work_dates_json,
+            existing.get('date_start'),
+            existing.get('date_end'),
+        )
     ds = data.get('date_start') if 'date_start' in data else existing.get('date_start')
     de = data.get('date_end') if 'date_end' in data else existing.get('date_end')
     days = _expand_date_range_inclusive(ds, de)
     if days:
         return days, _serialize_work_dates(days), days[0], days[-1]
     return [], '[]', None, None
+
+
+def _object_work_days_for_salary_sum(row):
+    """Дни для начисления objects.salary: те же, что в делителе n (явные work_dates или один date_start).
+
+    Не разворачиваем date_start..date_end — иначе «месяц в карточке» даёт зарплату за каждый день.
+    """
+    if not row:
+        return []
+    days = _work_dates_json_list(row)
+    if days:
+        return days
+    ds = _parse_iso_date_ymd(row.get('date_start'))
+    if ds:
+        return [ds]
+    return []
 
 
 def _build_salary_calendar_counts(uid):
@@ -560,7 +599,7 @@ def _salary_auto_breakdown(uid, obj_row, calendar_counts=None):
     mode = _norm_salary_allocation_mode(obj_row.get('salary_allocation_mode'))
     if mode == SALARY_ALLOCATION_MANUAL:
         return []
-    work_days = object_work_days_from_row(obj_row)
+    work_days = _object_work_days_for_salary_sum(obj_row)
     if not work_days:
         return []
     total_daily_rate = _object_brigade_daily_rate(uid, obj_row['id'], mode)
@@ -1845,8 +1884,13 @@ def integration_create_object_from_taskmgr():
                 )
             try:
                 _recalc_salaries_for_user_id(target_user_id)
+                _recalc_frozen_salaries(target_user_id)
             except Exception:
-                pass
+                logging.exception(
+                    "integration: salary recalc failed for user %s object %s",
+                    target_user_id,
+                    existing.get('id'),
+                )
             obj = fetch_one('SELECT * FROM objects WHERE id=? AND user_id=?', (existing['id'], target_user_id))
             if obj:
                 try:
@@ -1929,8 +1973,13 @@ def integration_create_object_from_taskmgr():
         )
         try:
             _recalc_salaries_for_user_id(target_user_id)
+            _recalc_frozen_salaries(target_user_id)
         except Exception:
-            pass
+            logging.exception(
+                "integration: salary recalc failed after create for user %s object %s",
+                target_user_id,
+                oid,
+            )
         obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
         if obj:
             try:
@@ -2015,9 +2064,13 @@ def update_object(obj_id):
          pick('next_to_note'),
          mode_out, settlement_out, tax_out, now, obj_id, current_user.id))
 
-    if any(k in data for k in ('status', 'date_start', 'date_end', 'work_dates', 'salary_allocation_mode')):
+    # Всегда пересчитываем: делитель n зависит от статусов/дат соседей;
+    # частичные PUT (только status) раньше могли не дойти до актуальной доли.
+    try:
         _recalc_salaries_for_user_id(current_user.id)
         _recalc_frozen_salaries(current_user.id)
+    except Exception:
+        logging.exception("update_object: salary recalc failed for user %s object %s", current_user.id, obj_id)
 
     row = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id))
     if row:
@@ -2906,7 +2959,7 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None, include_fro
         if frozen and not include_frozen:
             return
 
-        work_days = object_work_days_from_row(obj)
+        work_days = _object_work_days_for_salary_sum(obj)
         if not work_days:
             if not frozen:
                 execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
