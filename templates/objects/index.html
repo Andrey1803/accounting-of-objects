@@ -1960,8 +1960,22 @@
 
         function compactCellIsOverflow(td) {
             var inner = td.querySelector('.cell-compact-text');
-            if (!inner) return false;
-            return inner.scrollWidth > td.clientWidth + 1;
+            if (!inner || !td) return false;
+            // CSS ellipsis: scrollWidth иногда совпадает с clientWidth — измеряем полный текст отдельно.
+            if (inner.scrollWidth > inner.clientWidth + 1) return true;
+            if (inner.scrollWidth > td.clientWidth + 1) return true;
+            var full = td.getAttribute('data-full') || inner.textContent || '';
+            if (!full.trim()) return false;
+            var probe = document.createElement('span');
+            var cs = window.getComputedStyle(inner);
+            probe.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden;white-space:nowrap;';
+            probe.style.font = cs.font;
+            probe.style.letterSpacing = cs.letterSpacing;
+            probe.textContent = full;
+            document.body.appendChild(probe);
+            var w = probe.offsetWidth;
+            document.body.removeChild(probe);
+            return w > td.clientWidth + 1;
         }
 
         function collapseInlineTextExpand() {
@@ -2030,7 +2044,20 @@
                 if (!span || !tbody.contains(span) || span === compactHoverSpan) return;
                 compactHoverSpan = span;
                 span.classList.add('is-text-hover');
-                expandInlineText(span);
+                var td = span.closest('td.cell-compact');
+                // Проверяем обрезку в момент наведения — ширины колонок уже финальные.
+                if (td && (span.classList.contains('has-overflow') || compactCellIsOverflow(td))) {
+                    span.classList.add('has-overflow');
+                    var full = td.getAttribute('data-full') || '';
+                    if (full.trim()) {
+                        var tip = full.trim();
+                        if (td.classList.contains('cell-link-name')) tip += ' — открыть карточку объекта';
+                        else if (td.classList.contains('cell-link-client')) tip += ' — открыть данные клиента';
+                        td.title = tip;
+                        span.title = tip;
+                    }
+                    expandInlineText(span);
+                }
             });
             tbody.addEventListener('mouseout', function(e) {
                 var span = e.target.closest('.cell-compact-text');
@@ -2200,6 +2227,10 @@
                 tbody.appendChild(tr);
             });
             markCompactCellsOverflow();
+            // После раскладки таблицы ширины колонок окончательные — перепроверить обрезку.
+            requestAnimationFrame(function() {
+                markCompactCellsOverflow();
+            });
         }
 
         function formatDate(dateStr) { if (!dateStr) return '-'; const parts = dateStr.split('-'); return `${parts[2]}.${parts[1]}.${parts[0]}`; }
