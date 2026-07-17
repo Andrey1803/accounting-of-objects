@@ -1682,8 +1682,14 @@
             }
             td.className = cls;
             td.setAttribute('data-full', full);
-            td.title = (linkMeta && linkMeta.type === 'object') ? 'Открыть карточку объекта'
-                : (linkMeta && linkMeta.type === 'client') ? 'Открыть данные клиента' : '';
+            // title = полный текст (обрезанный в ячейке); для ссылок — плюс подсказка действия.
+            var tip = full.trim();
+            if (linkMeta && linkMeta.type === 'object') {
+                tip = tip ? (tip + ' — открыть карточку объекта') : 'Открыть карточку объекта';
+            } else if (linkMeta && linkMeta.type === 'client') {
+                tip = tip ? (tip + ' — открыть данные клиента') : 'Открыть данные клиента';
+            }
+            td.title = tip;
             if (linkMeta && linkMeta.type === 'object' && linkMeta.id != null) {
                 td.dataset.objectId = String(linkMeta.id);
             }
@@ -1694,6 +1700,7 @@
             var span = document.createElement('span');
             span.className = 'cell-compact-text';
             span.textContent = t;
+            if (tip) span.title = tip;
             td.appendChild(span);
         }
 
@@ -1981,6 +1988,14 @@
                 span.classList.remove('has-overflow');
                 if (full.length > short.length || compactCellIsOverflow(td)) {
                     span.classList.add('has-overflow');
+                    // Гарантируем title с полным текстом (на случай если раньше был только «открыть…»).
+                    if (full.trim() && !(td.title || '').startsWith(full.trim())) {
+                        var tip = full.trim();
+                        if (td.classList.contains('cell-link-name')) tip += ' — открыть карточку объекта';
+                        else if (td.classList.contains('cell-link-client')) tip += ' — открыть данные клиента';
+                        td.title = tip;
+                        span.title = tip;
+                    }
                 }
             });
         }
@@ -2114,6 +2129,7 @@
                     span.className = 'status status-' + st.replace(/ /g, '-');
                     span.textContent = st;
                     td7.appendChild(span);
+                    var statusTip = st;
                     if (obj.is_regular_to) {
                         const toMeta = document.createElement('div');
                         toMeta.style.marginTop = '4px';
@@ -2124,13 +2140,19 @@
                         const isOverdueTo = !!nextDateRaw && nextDateRaw < todayIso;
                         toMeta.style.color = isOverdueTo ? '#C62828' : '#0D47A1';
                         const nextDate = obj.next_to_date ? formatDate(obj.next_to_date) : '';
-                        toMeta.textContent = nextDate
+                        var toLine = nextDate
                             ? ((isOverdueTo ? '⛔ Просрочено ТО: ' : '🔁 ТО: ') + nextDate)
                             : '🔁 Регулярное ТО';
+                        toMeta.textContent = toLine;
+                        statusTip = st + ' · ' + toLine.replace(/^[⛔🔁]\s*/, '');
                         const note = String(obj.next_to_note || '').trim();
-                        if (note) toMeta.title = 'Заметка на следующее ТО: ' + note;
+                        if (note) {
+                            toMeta.title = 'Заметка на следующее ТО: ' + note;
+                            statusTip += ' · ' + note;
+                        }
                         td7.appendChild(toMeta);
                     }
+                    td7.title = statusTip;
                 tr.appendChild(td7);
                 const td8 = document.createElement('td'); td8.textContent = formatMoney(obj.advance); tr.appendChild(td8);
                 const td9 = document.createElement('td'); td9.textContent = formatMoney(obj.salary); tr.appendChild(td9);
