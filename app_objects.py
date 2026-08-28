@@ -386,11 +386,27 @@ def _phone_digits_integration(phone):
 
 def _find_or_create_worker_for_dispatcher_member(user_id, member):
     """Найти или создать workers по id участника группы / телефону из диспетчера."""
+    wid = _upsert_worker_for_dispatcher_member(user_id, member)
+    return wid
+
+
+def _member_is_active_flag(member):
+    raw = member.get('is_active') if isinstance(member, dict) else None
+    if raw is None:
+        return 1
+    if isinstance(raw, bool):
+        return 1 if raw else 0
+    return 0 if str(raw).strip().lower() in ('0', 'false', 'no', 'off') else 1
+
+
+def _upsert_worker_for_dispatcher_member(user_id, member):
+    """Upsert workers по участнику диспетчера (имя, телефон, активность)."""
     if not isinstance(member, dict):
         return None
     gid = str(member.get('group_member_id') or '').strip()
     name = str(member.get('display_name') or '').strip() or 'Сотрудник'
     phone = str(member.get('phone') or '').strip()
+    active = _member_is_active_flag(member)
 
     if gid:
         row = fetch_one(
@@ -398,37 +414,68 @@ def _find_or_create_worker_for_dispatcher_member(user_id, member):
             (user_id, gid),
         )
         if row:
-            if name and name != 'Сотрудник':
-                execute(
-                    'UPDATE workers SET full_name = ? WHERE id = ? AND user_id = ?',
-                    (name, row['id'], user_id),
-                )
+            execute(
+                """UPDATE workers SET full_name = ?, phone = ?, is_active = ?
+                   WHERE id = ? AND user_id = ?""",
+                (name, phone, active, row['id'], user_id),
+            )
             return int(row['id'])
 
     digits = _phone_digits_integration(phone)
     if len(digits) >= 6:
         for r in fetch_all('SELECT id, phone FROM workers WHERE user_id = ?', (user_id,)):
             if _phone_digits_integration(r.get('phone')) == digits:
-                if gid:
-                    execute(
-                        'UPDATE workers SET dispatcher_group_member_id = ? WHERE id = ? AND user_id = ?',
-                        (gid, r['id'], user_id),
-                    )
-                if name:
-                    execute(
-                        'UPDATE workers SET full_name = ? WHERE id = ? AND user_id = ?',
-                        (name, r['id'], user_id),
-                    )
+                execute(
+                    """UPDATE workers SET dispatcher_group_member_id = ?, full_name = ?, phone = ?, is_active = ?
+                       WHERE id = ? AND user_id = ?""",
+                    (gid or r.get('dispatcher_group_member_id') or '', name, phone, active, r['id'], user_id),
+                )
                 return int(r['id'])
+
+    if not active:
+        return None
 
     wid = execute(
         """INSERT INTO workers
            (user_id, full_name, phone, daily_rate, notes, is_active, dispatcher_group_member_id)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (user_id, name, phone, 300, 'Авто из диспетчера', 1, gid or ''),
+        (user_id, name, phone, 300, 'Авто из диспетчера', active, gid or ''),
         return_id=True,
     )
     return int(wid) if wid else None
+
+
+def _integration_sync_workers_roster(user_id, members, deactivate_missing=True):
+    """Справочник workers из состава группы диспетчера."""
+    if not isinstance(members, list):
+        return 0, 0
+    active_gids = set()
+    upserted = 0
+    for m in members:
+        if not isinstance(m, dict):
+            continue
+        gid = str(m.get('group_member_id') or '').strip()
+        wid = _upsert_worker_for_dispatcher_member(user_id, m)
+        if wid:
+            upserted += 1
+            if gid and _member_is_active_flag(m):
+                active_gids.add(gid)
+
+    deactivated = 0
+    if deactivate_missing:
+        for row in fetch_all(
+            """SELECT id, dispatcher_group_member_id FROM workers
+               WHERE user_id = ? AND TRIM(COALESCE(dispatcher_group_member_id, '')) != ''""",
+            (user_id,),
+        ):
+            gid = str(row.get('dispatcher_group_member_id') or '').strip()
+            if gid and gid not in active_gids:
+                execute(
+                    'UPDATE workers SET is_active = 0 WHERE id = ? AND user_id = ?',
+                    (row['id'], user_id),
+                )
+                deactivated += 1
+    return upserted, deactivated
 
 
 def _object_work_dates_for_crew_sync(obj, fallback_dates):
@@ -2321,6 +2368,51 @@ def delete_object(obj_id):
 def get_workers():
     return jsonify(fetch_all("SELECT * FROM workers WHERE user_id = ? ORDER BY full_name", (current_user.id,)))
 
+
+@app.route('/api/workers/sync-from-dispatcher', methods=['POST'])
+@login_required
+@require_csrf
+def sync_workers_from_dispatcher():
+    """Подтянуть справочник рабочих из диспетчера (кнопка в UI)."""
+    client_id = (os.environ.get('DISPATCHER_BUSINESS_CLIENT_ID') or '').strip()
+    base = _dispatcher_api_base_url()
+    key = (os.environ.get('INTEGRATION_API_KEY') or '').strip()
+    if not base or not key or not client_id:
+        return jsonify({'error': 'Интеграция с диспетчером не настроена (URL, ключ, DISPATCHER_BUSINESS_CLIENT_ID)'}), 503
+    url = (
+        f"{base}/v1/integration/object-accounting/clients/"
+        f"{urllib.parse.quote(client_id, safe='')}/sync-workers-roster"
+    )
+    req = urllib.request.Request(
+        url=url,
+        data=b'{}',
+        headers={
+            'Authorization': f'Bearer {key}',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        },
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            body = resp.read().decode('utf-8', errors='replace')
+            data = json.loads(body) if body else {}
+            if resp.status >= 400:
+                err = data.get('error') if isinstance(data, dict) else body
+                return jsonify({'error': err or f'HTTP {resp.status}'}), 502
+            return jsonify(data), 200
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode('utf-8', errors='replace')
+            err_data = json.loads(err_body) if err_body else {}
+            err = err_data.get('error') if isinstance(err_data, dict) else err_body
+        except Exception:
+            err = str(e)
+        return jsonify({'error': err or f'HTTP {e.code}'}), 502
+    except Exception as e:
+        logging.exception('workers sync-from-dispatcher failed')
+        return jsonify({'error': str(e)}), 502
+
 @app.route('/api/workers', methods=['POST'])
 @login_required
 @require_csrf
@@ -3202,6 +3294,50 @@ def integration_sync_worker_assignments_from_taskmgr():
         }), 200
     except Exception as e:
         logging.exception('integration: unhandled error in /api/integration/from-taskmgr/worker-assignments')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/integration/from-taskmgr/workers-roster', methods=['POST'])
+def integration_sync_workers_roster_from_taskmgr():
+    """
+    Справочник рабочих из диспетчера → таблица workers.
+    Bearer = INTEGRATION_API_KEY.
+
+    Тело: members[{group_member_id, display_name, phone, is_active}], deactivate_missing (bool, default true).
+    Участники, которых нет в списке, с привязкой dispatcher_group_member_id → is_active=0.
+    """
+    try:
+        if not _integration_api_key_matches():
+            return jsonify({'error': 'Unauthorized'}), 401
+        uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
+        if not uid_raw:
+            return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
+        try:
+            target_user_id = int(uid_raw)
+        except ValueError:
+            return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
+        if not fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,)):
+            return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
+
+        data = request.json or {}
+        members = data.get('members')
+        if not isinstance(members, list):
+            return jsonify({'error': 'members must be an array'}), 400
+
+        deactivate_raw = data.get('deactivate_missing')
+        if deactivate_raw is None:
+            deactivate_missing = True
+        elif isinstance(deactivate_raw, bool):
+            deactivate_missing = deactivate_raw
+        else:
+            deactivate_missing = str(deactivate_raw).strip().lower() not in ('0', 'false', 'no', 'off')
+
+        upserted, deactivated = _integration_sync_workers_roster(
+            target_user_id, members, deactivate_missing=deactivate_missing,
+        )
+        return jsonify({'ok': True, 'upserted': upserted, 'deactivated': deactivated}), 200
+    except Exception as e:
+        logging.exception('integration: unhandled error in /api/integration/from-taskmgr/workers-roster')
         return jsonify({'error': str(e)}), 500
 
 

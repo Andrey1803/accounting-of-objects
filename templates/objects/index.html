@@ -674,10 +674,13 @@
             <h2>👷 Рабочие на объекте</h2>
             <p style="color:#666; margin:5px 0 15px; font-size:13px;">Добавьте рабочих и укажите количество дней. Зарплата рассчитается автоматически.</p>
             
-            <div style="display:flex; gap:10px; margin-bottom:15px; align-items:flex-end;">
-                <div style="flex:2;">
+            <div style="display:flex; gap:10px; margin-bottom:15px; align-items:flex-end; flex-wrap:wrap;">
+                <div style="flex:2; min-width:180px;">
                     <label style="font-size:12px; font-weight:600; display:block; margin-bottom:3px;">Рабочий</label>
                     <select id="ow-worker" style="width:100%; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:13px;"></select>
+                </div>
+                <div style="flex:0 0 auto; padding-bottom:2px;">
+                    <button type="button" class="btn" style="background:#2196F3; color:white; padding:8px 10px; font-size:12px;" onclick="syncWorkersFromDispatcher()" title="Подтянуть список из диспетчера">↻ Из диспетчера</button>
                 </div>
                 <div style="flex:1;">
                     <label style="font-size:12px; font-weight:600; display:block; margin-bottom:3px;">Дата начала</label>
@@ -3555,6 +3558,29 @@
 
         function closeWorkersModal() {
             document.getElementById('objectWorkersModal').classList.remove('active');
+        }
+
+        async function syncWorkersFromDispatcher() {
+            const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+            const csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+            try {
+                const res = await fetch('/api/workers/sync-from-dispatcher', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    alert(data.error || 'Не удалось синхронизировать с диспетчером');
+                    return;
+                }
+                const upserted = data.upserted != null ? data.upserted : 0;
+                const deactivated = data.deactivated != null ? data.deactivated : 0;
+                await loadWorkersForObject();
+                alert(`Список обновлён: добавлено/обновлено ${upserted}, скрыто уволенных ${deactivated}`);
+            } catch (e) {
+                console.error(e);
+                alert('Ошибка синхронизации с диспетчером');
+            }
         }
 
         async function loadWorkersForObject() {
