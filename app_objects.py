@@ -29,13 +29,21 @@ import logging
 import secrets
 import threading
 from datetime import datetime, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None  # type: ignore[misc, assignment]
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_file
 from flask_login import LoginManager, login_required, current_user, logout_user
 
 # Импорт ядра базы данных и модулей
 from database import init_db, fetch_all, fetch_one, execute, execute_rowcount, execute_many, IS_POSTGRES, close_all_connections
 from auth import auth_bp, User, hash_pw, check_pw
-from estimate_module import estimate_bp
+from estimate_module import (
+    estimate_bp,
+    auto_approve_object_estimates,
+    auto_approve_estimates_for_finished_objects,
+)
 from extensions import limiter
 from io import BytesIO
 
@@ -220,6 +228,7 @@ def ensure_db_initialized():
             return
         init_db()
         _backfill_object_client_links_once()
+        _backfill_auto_approve_estimates_once()
         _db_init_state["ready"] = True
         _start_startup_recalc_if_enabled()
         _log_integration_env_once()
@@ -361,6 +370,149 @@ OBJECT_STATUSES_SALARY_DIVISOR_SKIP = OBJECT_STATUSES_NOT_DEBT
 SALARY_ALLOCATION_ALL_WORKERS = 'all_workers'
 SALARY_ALLOCATION_ASSIGNED_WORKERS = 'assigned_workers'
 SALARY_ALLOCATION_MANUAL = 'manual'
+
+TASKMGR_AUTO_ASSIGN_SOURCE = 'taskmgr-auto'
+
+
+def _minsk_today_ymd():
+    if ZoneInfo is not None:
+        return datetime.now(ZoneInfo('Europe/Minsk')).strftime('%Y-%m-%d')
+    return datetime.utcnow().strftime('%Y-%m-%d')
+
+
+def _phone_digits_integration(phone):
+    return re.sub(r'\D', '', str(phone or ''))
+
+
+def _find_or_create_worker_for_dispatcher_member(user_id, member):
+    """Найти или создать workers по id участника группы / телефону из диспетчера."""
+    if not isinstance(member, dict):
+        return None
+    gid = str(member.get('group_member_id') or '').strip()
+    name = str(member.get('display_name') or '').strip() or 'Сотрудник'
+    phone = str(member.get('phone') or '').strip()
+
+    if gid:
+        row = fetch_one(
+            'SELECT id FROM workers WHERE user_id = ? AND dispatcher_group_member_id = ?',
+            (user_id, gid),
+        )
+        if row:
+            if name and name != 'Сотрудник':
+                execute(
+                    'UPDATE workers SET full_name = ? WHERE id = ? AND user_id = ?',
+                    (name, row['id'], user_id),
+                )
+            return int(row['id'])
+
+    digits = _phone_digits_integration(phone)
+    if len(digits) >= 6:
+        for r in fetch_all('SELECT id, phone FROM workers WHERE user_id = ?', (user_id,)):
+            if _phone_digits_integration(r.get('phone')) == digits:
+                if gid:
+                    execute(
+                        'UPDATE workers SET dispatcher_group_member_id = ? WHERE id = ? AND user_id = ?',
+                        (gid, r['id'], user_id),
+                    )
+                if name:
+                    execute(
+                        'UPDATE workers SET full_name = ? WHERE id = ? AND user_id = ?',
+                        (name, r['id'], user_id),
+                    )
+                return int(r['id'])
+
+    wid = execute(
+        """INSERT INTO workers
+           (user_id, full_name, phone, daily_rate, notes, is_active, dispatcher_group_member_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, name, phone, 300, 'Авто из диспетчера', 1, gid or ''),
+        return_id=True,
+    )
+    return int(wid) if wid else None
+
+
+def _object_work_dates_for_crew_sync(obj, fallback_dates):
+    """Даты выезда объекта для назначения бригады."""
+    if fallback_dates:
+        out = [_parse_iso_date_ymd(d) for d in fallback_dates]
+        out = [d for d in out if d]
+        if out:
+            return out
+    raw = obj.get('work_dates') if obj else None
+    if raw:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                days = [_parse_iso_date_ymd(x) for x in parsed]
+                days = [d for d in days if d]
+                if days:
+                    return days
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    ds = _parse_iso_date_ymd(obj.get('date_start') if obj else None)
+    if ds:
+        return [ds]
+    return [_minsk_today_ymd()]
+
+
+def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assigned_mode=True):
+    """Заменить авто-назначения taskmgr-auto на бригаду из диспетчера."""
+    dates = work_dates or [_minsk_today_ymd()]
+    if not crew:
+        for wd in dates:
+            wd_norm = _parse_iso_date_ymd(wd)
+            if not wd_norm:
+                continue
+            execute(
+                """DELETE FROM worker_assignments
+                   WHERE user_id = ? AND object_id = ? AND work_date = ? AND integration_source = ?""",
+                (user_id, object_id, wd_norm, TASKMGR_AUTO_ASSIGN_SOURCE),
+            )
+        return 0
+
+    worker_ids = []
+    for m in crew:
+        wid = _find_or_create_worker_for_dispatcher_member(user_id, m)
+        if wid:
+            worker_ids.append(wid)
+    if not worker_ids:
+        for wd in dates:
+            wd_norm = _parse_iso_date_ymd(wd)
+            if not wd_norm:
+                continue
+            execute(
+                """DELETE FROM worker_assignments
+                   WHERE user_id = ? AND object_id = ? AND work_date = ? AND integration_source = ?""",
+                (user_id, object_id, wd_norm, TASKMGR_AUTO_ASSIGN_SOURCE),
+            )
+        return 0
+
+    for wd in dates:
+        wd_norm = _parse_iso_date_ymd(wd)
+        if not wd_norm:
+            continue
+        execute(
+            """DELETE FROM worker_assignments
+               WHERE user_id = ? AND object_id = ? AND work_date = ? AND integration_source = ?""",
+            (user_id, object_id, wd_norm, TASKMGR_AUTO_ASSIGN_SOURCE),
+        )
+        for wid in worker_ids:
+            w = fetch_one('SELECT daily_rate FROM workers WHERE id = ? AND user_id = ?', (wid, user_id))
+            rate = float(w['daily_rate'] or 0) if w else 0.0
+            execute(
+                """INSERT INTO worker_assignments
+                   (user_id, worker_id, object_id, work_date, days_worked, total_pay, integration_source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, wid, object_id, wd_norm, 1, rate, TASKMGR_AUTO_ASSIGN_SOURCE),
+            )
+
+    if set_assigned_mode:
+        execute(
+            'UPDATE objects SET salary_allocation_mode = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+            (SALARY_ALLOCATION_ASSIGNED_WORKERS, datetime.utcnow().isoformat(), object_id, user_id),
+        )
+    _recalc_salaries_for_user_id(user_id)
+    return len(worker_ids)
 
 
 def _norm_salary_allocation_mode(raw, fallback=SALARY_ALLOCATION_ALL_WORKERS):
@@ -1175,6 +1327,22 @@ def _backfill_object_client_links_once():
         logging.exception("object-client backfill failed")
 
 
+def _backfill_auto_approve_estimates_once():
+    """Один раз при старте: черновики смет у закрытых объектов → «Утверждена»."""
+    if getattr(app, "_estimate_auto_approve_backfill_done", False):
+        return
+    app._estimate_auto_approve_backfill_done = True
+    try:
+        result = auto_approve_estimates_for_finished_objects(notify_dispatcher=False)
+        logging.info(
+            "estimate auto-approve backfill: objects=%s approved=%s",
+            result.get('objects_checked'),
+            result.get('estimates_approved'),
+        )
+    except Exception:
+        logging.exception("estimate auto-approve backfill failed")
+
+
 def _normalize_phone_digits(phone):
     if not phone:
         return ''
@@ -1871,6 +2039,19 @@ def integration_create_object_from_taskmgr():
                     target_user_id,
                 ),
             )
+            try:
+                old_st = (existing.get('status') or '').strip()
+                if status_new in OBJECT_STATUSES_FINISHED:
+                    auto_approve_object_estimates(
+                        target_user_id,
+                        existing['id'],
+                        notify_dispatcher=(status_new != old_st),
+                    )
+            except Exception:
+                logging.exception(
+                    "integration: estimate auto-approve failed for object %s",
+                    existing.get('id'),
+                )
             if business_client_id and phone:
                 _dispatcher_upsert_profile(
                     business_client_id,
@@ -2071,6 +2252,20 @@ def update_object(obj_id):
         _recalc_frozen_salaries(current_user.id)
     except Exception:
         logging.exception("update_object: salary recalc failed for user %s object %s", current_user.id, obj_id)
+
+    try:
+        new_status = (pick('status') or '').strip()
+        old_status = (ex.get('status') or '').strip()
+        if new_status in OBJECT_STATUSES_FINISHED and new_status != old_status:
+            auto_approve_object_estimates(
+                current_user.id, obj_id, notify_dispatcher=True,
+            )
+        elif new_status in OBJECT_STATUSES_FINISHED:
+            auto_approve_object_estimates(
+                current_user.id, obj_id, notify_dispatcher=False,
+            )
+    except Exception:
+        logging.exception("update_object: estimate auto-approve failed for object %s", obj_id)
 
     row = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id))
     if row:
@@ -2904,6 +3099,192 @@ def integration_add_well_survey_from_taskmgr():
         return jsonify({'ok': True, 'survey': _well_survey_public(row)}), 201
     except Exception as exc:
         logging.exception('integration: unhandled error in /api/integration/from-taskmgr/well-survey')
+        return jsonify({'error': 'Internal error', 'detail': str(exc)}), 500
+
+
+def _integration_pick_most_profitable_object_id(target_user_id, candidates):
+    """
+    candidates: list of dicts with optional object_id / task_id.
+    Returns (object_id, task_id_used, error).
+    """
+    best_oid = None
+    best_profit = None
+    best_task = ''
+    seen = set()
+    for raw in candidates or []:
+        if not isinstance(raw, dict):
+            continue
+        oid, err = _integration_resolve_object_for_survey(target_user_id, raw)
+        if err or not oid or oid in seen:
+            continue
+        seen.add(oid)
+        obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
+        if not obj:
+            continue
+        obj = dict(obj)
+        _apply_object_financial_enrichment(obj, target_user_id)
+        profit = float(obj.get('total_profit') or 0)
+        if best_oid is None or profit > best_profit:
+            best_oid = oid
+            best_profit = profit
+            best_task = str(raw.get('task_id') or '').strip()
+    if best_oid is None:
+        return None, '', 'no matching objects among candidates'
+    return best_oid, best_task, None
+
+
+@app.route('/api/integration/from-taskmgr/worker-assignments', methods=['POST'])
+def integration_sync_worker_assignments_from_taskmgr():
+    """
+    Бригада из диспетчера → рабочие на объект (worker_assignments).
+    Bearer = INTEGRATION_API_KEY. Объект ищется по task_id (integration_source taskmgr:...).
+
+    Тело: task_id, crew[{group_member_id, display_name, phone}], work_dates[] (YYYY-MM-DD, опционально),
+    set_assigned_workers_mode (bool, по умолчанию true — режим «только назначенные» для зарплаты).
+    """
+    try:
+        if not _integration_api_key_matches():
+            return jsonify({'error': 'Unauthorized'}), 401
+        uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
+        if not uid_raw:
+            return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
+        try:
+            target_user_id = int(uid_raw)
+        except ValueError:
+            return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
+        if not fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,)):
+            return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
+
+        data = request.json or {}
+        task_id = str(data.get('task_id') or '').strip()
+        if not task_id:
+            return jsonify({'error': 'task_id is required'}), 400
+        crew = data.get('crew')
+        if not isinstance(crew, list):
+            return jsonify({'error': 'crew must be an array'}), 400
+
+        source_key = f'taskmgr:{task_id}'
+        obj = fetch_one(
+            'SELECT * FROM objects WHERE user_id = ? AND integration_source = ?',
+            (target_user_id, source_key),
+        )
+        if not obj:
+            return jsonify({'ok': True, 'skipped': True, 'reason': 'object not found for task_id'}), 200
+
+        work_dates_in = data.get('work_dates')
+        fallback = None
+        if isinstance(work_dates_in, list):
+            fallback = [str(x).strip() for x in work_dates_in if str(x).strip()]
+        elif isinstance(data.get('work_date'), str) and data.get('work_date').strip():
+            fallback = [data.get('work_date').strip()]
+        work_dates = _object_work_dates_for_crew_sync(obj, fallback)
+
+        set_mode = data.get('set_assigned_workers_mode')
+        if set_mode is None:
+            set_assigned = True
+        elif isinstance(set_mode, bool):
+            set_assigned = set_mode
+        else:
+            set_assigned = str(set_mode).strip().lower() not in ('0', 'false', 'no', 'off')
+
+        n_workers = _integration_sync_object_crew(
+            target_user_id,
+            int(obj['id']),
+            work_dates,
+            crew,
+            set_assigned_mode=set_assigned,
+        )
+        return jsonify({
+            'ok': True,
+            'object_id': int(obj['id']),
+            'work_dates': work_dates,
+            'workers_synced': n_workers,
+        }), 200
+    except Exception as e:
+        logging.exception('integration: unhandled error in /api/integration/from-taskmgr/worker-assignments')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/integration/from-taskmgr/expense-entry', methods=['POST'])
+def integration_add_expense_entry_from_taskmgr():
+    """
+    Доп. расход на объект из диспетчера (топливо / еда / прочее).
+    Bearer / X-Integration-Key = INTEGRATION_API_KEY.
+
+    Тело:
+      amount (обязательно), category (fuel|other|...), title, note, entry_date (YYYY-MM-DD),
+      external_key (идемпотентность, например dispatcher-accrual:...),
+      object_id или task_id — один объект,
+      либо candidates: [{object_id|task_id}, ...] — выбрать самый прибыльный.
+    """
+    try:
+        if not _integration_api_key_matches():
+            return jsonify({'error': 'Unauthorized'}), 401
+        uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
+        if not uid_raw:
+            return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
+        try:
+            target_user_id = int(uid_raw)
+        except ValueError:
+            return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
+        if not fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,)):
+            return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
+
+        data = request.json or {}
+        try:
+            amount = float(data.get('amount'))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'amount is required'}), 400
+        if amount <= 0:
+            return jsonify({'error': 'amount must be > 0'}), 400
+
+        category = (data.get('category') or 'other').strip()
+        if category not in OBJECT_EXPENSE_CATEGORIES:
+            category = 'other'
+        entry_date = (data.get('entry_date') or '').strip() or datetime.now().strftime('%Y-%m-%d')
+        title = (data.get('title') or '').strip()[:500]
+        note = (data.get('note') or '').strip()[:2000]
+        external_key = (data.get('external_key') or '').strip()[:200]
+        source = f'taskmgr-expense:{external_key}' if external_key else 'taskmgr-expense'
+
+        if external_key:
+            existing = fetch_one(
+                'SELECT id, object_id, entry_date, amount, category, title, note, source, created_at '
+                'FROM object_expense_entries WHERE user_id = ? AND source = ?',
+                (target_user_id, source),
+            )
+            if existing:
+                return jsonify({'ok': True, 'idempotent': True, 'entry': dict(existing), 'objectId': existing['object_id']})
+
+        candidates = data.get('candidates')
+        task_id_used = (data.get('task_id') or '').strip()
+        if isinstance(candidates, list) and len(candidates) > 0:
+            obj_id, task_id_used, err = _integration_pick_most_profitable_object_id(target_user_id, candidates)
+            if err:
+                return jsonify({'error': err}), 400
+        else:
+            obj_id, err = _integration_resolve_object_for_survey(target_user_id, data)
+            if err:
+                return jsonify({'error': err}), 400
+
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if task_id_used and 'task_id=' not in note:
+            note = (note + f'\n[dispatcher task_id={task_id_used}]').strip()
+        eid = execute(
+            """INSERT INTO object_expense_entries
+            (user_id, object_id, entry_date, amount, category, title, note, source, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (target_user_id, obj_id, entry_date, amount, category, title, note, source, now),
+            return_id=True,
+        )
+        row = fetch_one(
+            'SELECT id, object_id, entry_date, amount, category, title, note, source, created_at '
+            'FROM object_expense_entries WHERE id = ? AND user_id = ?',
+            (eid, target_user_id),
+        )
+        return jsonify({'ok': True, 'entry': dict(row), 'objectId': obj_id}), 201
+    except Exception as exc:
+        logging.exception('integration: unhandled error in /api/integration/from-taskmgr/expense-entry')
         return jsonify({'error': 'Internal error', 'detail': str(exc)}), 500
 
 

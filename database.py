@@ -512,6 +512,32 @@ def _ensure_object_change_log_table(conn):
         cur.close()
 
 
+def _migrate_dispatcher_worker_integration(conn):
+    """Связь рабочих с участниками диспетчера + метка авто-назначений."""
+    cur = conn.cursor()
+    try:
+        if IS_POSTGRES:
+            cur.execute(
+                "ALTER TABLE workers ADD COLUMN IF NOT EXISTS dispatcher_group_member_id TEXT DEFAULT ''"
+            )
+            cur.execute(
+                "ALTER TABLE worker_assignments ADD COLUMN IF NOT EXISTS integration_source TEXT DEFAULT ''"
+            )
+        else:
+            cols_w = {r[1] for r in cur.execute('PRAGMA table_info(workers)').fetchall()}
+            if 'dispatcher_group_member_id' not in cols_w:
+                cur.execute("ALTER TABLE workers ADD COLUMN dispatcher_group_member_id TEXT DEFAULT ''")
+            cols_a = {r[1] for r in cur.execute('PRAGMA table_info(worker_assignments)').fetchall()}
+            if 'integration_source' not in cols_a:
+                cur.execute("ALTER TABLE worker_assignments ADD COLUMN integration_source TEXT DEFAULT ''")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+
+
 def init_db():
     """Создать таблицы если не существуют. Не удаляет файл БД и не DROP TABLE — только CREATE/ALTER при необходимости."""
     conn = get_connection()
@@ -1000,6 +1026,11 @@ def init_db():
         _ensure_object_change_log_table(conn)
     except Exception as e:
         logging.warning("Миграция object_change_log: %s", e)
+
+    try:
+        _migrate_dispatcher_worker_integration(conn)
+    except Exception as e:
+        logging.warning("Миграция dispatcher worker integration: %s", e)
 
     cur.close()
     _ensure_indexes()
