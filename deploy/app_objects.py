@@ -2719,6 +2719,120 @@ def integration_add_well_survey_from_taskmgr():
         return jsonify({'error': 'Internal error', 'detail': str(exc)}), 500
 
 
+def _integration_pick_most_profitable_object_id(target_user_id, candidates):
+    """
+    candidates: list of dicts with optional object_id / task_id.
+    Returns (object_id, task_id_used, error).
+    """
+    best_oid = None
+    best_profit = None
+    best_task = ''
+    seen = set()
+    for raw in candidates or []:
+        if not isinstance(raw, dict):
+            continue
+        oid, err = _integration_resolve_object_for_survey(target_user_id, raw)
+        if err or not oid or oid in seen:
+            continue
+        seen.add(oid)
+        obj = fetch_one('SELECT * FROM objects WHERE id = ? AND user_id = ?', (oid, target_user_id))
+        if not obj:
+            continue
+        obj = dict(obj)
+        _apply_object_financial_enrichment(obj, target_user_id)
+        profit = float(obj.get('total_profit') or 0)
+        if best_oid is None or profit > best_profit:
+            best_oid = oid
+            best_profit = profit
+            best_task = str(raw.get('task_id') or '').strip()
+    if best_oid is None:
+        return None, '', 'no matching objects among candidates'
+    return best_oid, best_task, None
+
+
+@app.route('/api/integration/from-taskmgr/expense-entry', methods=['POST'])
+def integration_add_expense_entry_from_taskmgr():
+    """
+    Extra expense on object from dispatcher (fuel / food / other).
+    Bearer / X-Integration-Key = INTEGRATION_API_KEY.
+
+    Body:
+      amount (required), category (fuel|other|...), title, note, entry_date (YYYY-MM-DD),
+      external_key (idempotency, e.g. dispatcher-accrual:...),
+      object_id or task_id — single object,
+      or candidates: [{object_id|task_id}, ...] — pick most profitable.
+    """
+    try:
+        if not _integration_api_key_matches():
+            return jsonify({'error': 'Unauthorized'}), 401
+        uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
+        if not uid_raw:
+            return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
+        try:
+            target_user_id = int(uid_raw)
+        except ValueError:
+            return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
+        if not fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,)):
+            return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
+
+        data = request.json or {}
+        try:
+            amount = float(data.get('amount'))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'amount is required'}), 400
+        if amount <= 0:
+            return jsonify({'error': 'amount must be > 0'}), 400
+
+        category = (data.get('category') or 'other').strip()
+        if category not in OBJECT_EXPENSE_CATEGORIES:
+            category = 'other'
+        entry_date = (data.get('entry_date') or '').strip() or datetime.now().strftime('%Y-%m-%d')
+        title = (data.get('title') or '').strip()[:500]
+        note = (data.get('note') or '').strip()[:2000]
+        external_key = (data.get('external_key') or '').strip()[:200]
+        source = f'taskmgr-expense:{external_key}' if external_key else 'taskmgr-expense'
+
+        if external_key:
+            existing = fetch_one(
+                'SELECT id, object_id, entry_date, amount, category, title, note, source, created_at '
+                'FROM object_expense_entries WHERE user_id = ? AND source = ?',
+                (target_user_id, source),
+            )
+            if existing:
+                return jsonify({'ok': True, 'idempotent': True, 'entry': dict(existing), 'objectId': existing['object_id']})
+
+        candidates = data.get('candidates')
+        task_id_used = (data.get('task_id') or '').strip()
+        if isinstance(candidates, list) and len(candidates) > 0:
+            obj_id, task_id_used, err = _integration_pick_most_profitable_object_id(target_user_id, candidates)
+            if err:
+                return jsonify({'error': err}), 400
+        else:
+            obj_id, err = _integration_resolve_object_for_survey(target_user_id, data)
+            if err:
+                return jsonify({'error': err}), 400
+
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if task_id_used and 'task_id=' not in note:
+            note = (note + f'\n[dispatcher task_id={task_id_used}]').strip()
+        eid = execute(
+            """INSERT INTO object_expense_entries
+            (user_id, object_id, entry_date, amount, category, title, note, source, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (target_user_id, obj_id, entry_date, amount, category, title, note, source, now),
+            return_id=True,
+        )
+        row = fetch_one(
+            'SELECT id, object_id, entry_date, amount, category, title, note, source, created_at '
+            'FROM object_expense_entries WHERE id = ? AND user_id = ?',
+            (eid, target_user_id),
+        )
+        return jsonify({'ok': True, 'entry': dict(row), 'objectId': obj_id}), 201
+    except Exception as exc:
+        logging.exception('integration: unhandled error in /api/integration/from-taskmgr/expense-entry')
+        return jsonify({'error': 'Internal error', 'detail': str(exc)}), 500
+
+
 @app.route('/api/objects/recalc-all-salaries', methods=['POST'])
 @login_required
 @require_csrf

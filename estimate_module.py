@@ -3349,6 +3349,19 @@ def api_get_estimates():
     estimates = fetch_all("SELECT * FROM estimates WHERE user_id = ? ORDER BY date DESC", (current_user.id,))
     return jsonify(estimates)
 
+
+@estimate_bp.route('/api/estimates/auto-approve-finished', methods=['POST'])
+@login_required
+@_require_csrf
+def api_auto_approve_finished_estimates():
+    """Утвердить черновики смет у объектов со статусом Выполнен/Закрыт/Оплачен."""
+    data = request.json if request.is_json else {}
+    notify = bool((data or {}).get('notify_dispatcher'))
+    result = auto_approve_estimates_for_finished_objects(
+        current_user.id, notify_dispatcher=notify,
+    )
+    return jsonify({"ok": True, **result})
+
 @estimate_bp.route('/api/estimates', methods=['POST'])
 @login_required
 @_require_csrf
@@ -3362,18 +3375,21 @@ def api_create_estimate():
     if bad:
         return bad
 
+    status = resolve_estimate_status_for_object(
+        current_user.id, object_id, data.get('status', 'Черновик'),
+    )
     eid = execute("""INSERT INTO estimates
         (user_id, number, date, object_id, object_name, client, status, vat_percent, markup_percent, discount_percent,
          material_discount_percent, work_discount_percent, notes, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (current_user.id, number, data.get('date', datetime.now().strftime('%Y-%m-%d')),
          object_id, data.get('object_name', ''), data.get('client', ''),
-         data.get('status', 'Черновик'), _safe_float(data.get('vat_percent')), _safe_float(data.get('markup_percent')),
+         status, _safe_float(data.get('vat_percent')), _safe_float(data.get('markup_percent')),
          _safe_float(data.get('discount_percent')),
          _clamp_discount_percent(data.get('material_discount_percent')),
          _clamp_discount_percent(data.get('work_discount_percent')),
          data.get('notes', ''), now, now), return_id=True)
-    return jsonify({"id": eid, "number": number}), 201
+    return jsonify({"id": eid, "number": number, "status": status}), 201
 
 @estimate_bp.route('/api/estimates/<int:est_id>', methods=['GET'])
 @login_required
@@ -3421,6 +3437,132 @@ def api_get_estimate(est_id):
                 )
     money = compute_estimate_money(est, items)
     return jsonify({**est, 'items': items, 'totals': money})
+
+# Статусы объекта, при которых смета считается фактически принятой (работы сделаны).
+_OBJECT_STATUSES_AUTO_APPROVE_ESTIMATE = frozenset({
+    'Выполнен', 'Закрыт', 'Завершён', 'Оплачен',
+})
+_ESTIMATE_STATUSES_AUTO_APPROVABLE = frozenset({'Черновик', 'Отправлена'})
+ESTIMATE_STATUS_APPROVED = 'Утверждена'
+
+
+def _object_status_triggers_estimate_auto_approve(status) -> bool:
+    return (status or '').strip() in _OBJECT_STATUSES_AUTO_APPROVE_ESTIMATE
+
+
+def auto_approve_object_estimates(user_id, object_id, *, notify_dispatcher: bool = False) -> int:
+    """
+    Переводит смету объекта из «Черновик»/«Отправлена» в «Утверждена»,
+    если объект уже выполнен/закрыт и утверждённой сметы ещё нет.
+
+    Берётся одна последняя смета (по updated_at), чтобы не задвоить суммы в отчётах.
+    Возвращает число обновлённых смет (0 или 1).
+    """
+    try:
+        oid = int(object_id or 0)
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return 0
+    if oid <= 0 or uid <= 0:
+        return 0
+
+    obj = fetch_one(
+        "SELECT id, status, client FROM objects WHERE id = ? AND user_id = ?",
+        (oid, uid),
+    )
+    if not obj or not _object_status_triggers_estimate_auto_approve(obj.get('status')):
+        return 0
+
+    already = fetch_one(
+        "SELECT id FROM estimates WHERE object_id = ? AND user_id = ? AND status = ? LIMIT 1",
+        (oid, uid, ESTIMATE_STATUS_APPROVED),
+    )
+    if already:
+        return 0
+
+    candidate = fetch_one(
+        """SELECT id, number, status, client FROM estimates
+           WHERE object_id = ? AND user_id = ? AND status IN ('Черновик', 'Отправлена')
+           ORDER BY updated_at DESC, id DESC LIMIT 1""",
+        (oid, uid),
+    )
+    if not candidate:
+        return 0
+
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    n = execute_rowcount(
+        "UPDATE estimates SET status = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status IN ('Черновик', 'Отправлена')",
+        (ESTIMATE_STATUS_APPROVED, now, candidate['id'], uid),
+    )
+    if n <= 0:
+        return 0
+
+    logger.info(
+        "auto-approve estimate id=%s number=%s object_id=%s user_id=%s (was %s)",
+        candidate['id'],
+        candidate.get('number'),
+        oid,
+        uid,
+        candidate.get('status'),
+    )
+    if notify_dispatcher:
+        _dispatcher_notify_estimate_status(
+            uid,
+            oid,
+            ESTIMATE_STATUS_APPROVED,
+            estimate_number=candidate.get('number') or '',
+            customer_phone=candidate.get('client') or obj.get('client') or '',
+        )
+    return int(n)
+
+
+def auto_approve_estimates_for_finished_objects(user_id=None, *, notify_dispatcher: bool = False) -> dict:
+    """Массово утверждает черновики/отправленные сметы у завершённых объектов."""
+    params = list(_OBJECT_STATUSES_AUTO_APPROVE_ESTIMATE)
+    sql = (
+        "SELECT DISTINCT e.user_id, e.object_id FROM estimates e "
+        "JOIN objects o ON o.id = e.object_id AND o.user_id = e.user_id "
+        "WHERE e.object_id IS NOT NULL AND e.status IN ('Черновик', 'Отправлена') "
+        f"AND o.status IN ({','.join(['?'] * len(params))})"
+    )
+    if user_id is not None:
+        sql += " AND e.user_id = ?"
+        params = list(params) + [int(user_id)]
+    rows = fetch_all(sql, tuple(params)) or []
+    approved = 0
+    for row in rows:
+        approved += auto_approve_object_estimates(
+            row['user_id'],
+            row['object_id'],
+            notify_dispatcher=notify_dispatcher,
+        )
+    return {'objects_checked': len(rows), 'estimates_approved': approved}
+
+
+def resolve_estimate_status_for_object(user_id, object_id, requested_status: str) -> str:
+    """
+    Если смета привязана к завершённому объекту и статус не «Отказ клиента»,
+    поднимаем до «Утверждена» (не нужно вручную кликать статус).
+    """
+    status = (requested_status or 'Черновик').strip() or 'Черновик'
+    if status == 'Отказ клиента' or status == ESTIMATE_STATUS_APPROVED:
+        return status
+    if status not in _ESTIMATE_STATUSES_AUTO_APPROVABLE:
+        return status
+    try:
+        oid = int(object_id or 0)
+    except (TypeError, ValueError):
+        return status
+    if oid <= 0:
+        return status
+    obj = fetch_one(
+        "SELECT status FROM objects WHERE id = ? AND user_id = ?",
+        (oid, user_id),
+    )
+    if obj and _object_status_triggers_estimate_auto_approve(obj.get('status')):
+        return ESTIMATE_STATUS_APPROVED
+    return status
+
 
 def _dispatcher_notify_estimate_status(user_id, object_id, status, estimate_number='', customer_phone=''):
     """Webhook в диспетчер: смета «Отправлена» / «Утверждена» → стадия заявки."""
@@ -3493,7 +3635,8 @@ def api_update_estimate(est_id):
         object_id, bad = _resolve_object_id_for_user(data.get('object_id'), current_user.id)
         if bad:
             return bad
-    new_status = (data.get('status') or prev_status or 'Черновик').strip()
+    requested_status = (data.get('status') if 'status' in data else prev_status) or 'Черновик'
+    new_status = resolve_estimate_status_for_object(current_user.id, object_id, requested_status)
     mat_disc = (
         _clamp_discount_percent(data.get('material_discount_percent'))
         if 'material_discount_percent' in data
@@ -3525,7 +3668,7 @@ def api_update_estimate(est_id):
             estimate_number=prev.get('number') or '',
             customer_phone=(data.get('client') or prev.get('client') or ''),
         )
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "status": new_status})
 
 @estimate_bp.route('/api/estimates/<int:est_id>', methods=['DELETE'])
 @login_required
