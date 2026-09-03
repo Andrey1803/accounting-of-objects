@@ -355,7 +355,7 @@ SALARY_ALLOCATION_ASSIGNED_WORKERS = 'assigned_workers'
 SALARY_ALLOCATION_MANUAL = 'manual'
 
 
-def _norm_salary_allocation_mode(raw, fallback=SALARY_ALLOCATION_ALL_WORKERS):
+def _norm_salary_allocation_mode(raw, fallback=SALARY_ALLOCATION_ASSIGNED_WORKERS):
     if raw is None or (isinstance(raw, str) and not str(raw).strip()):
         return fallback
     s = str(raw).strip().lower()
@@ -564,20 +564,34 @@ def _build_salary_calendar_counts(uid):
     return cnt
 
 
-def _object_brigade_daily_rate(uid, obj_id, mode):
-    """Сумма дневных ставок для расчёта objects.salary (по режиму распределения)."""
+def _assigned_brigade_rate_on_day(uid, obj_id, work_date):
+    """Σ daily_rate рабочих, назначенных на объект в конкретный день (из диспетчера / вручную)."""
+    day = _parse_iso_date_ymd(work_date)
+    if not day:
+        return 0.0
+    rows = fetch_all(
+        """
+        SELECT w.id AS worker_id, MAX(w.daily_rate) AS daily_rate
+        FROM worker_assignments wa
+        JOIN workers w ON w.id = wa.worker_id AND w.user_id = wa.user_id
+        WHERE wa.object_id = ? AND wa.user_id = ? AND wa.work_date = ? AND w.is_active = 1
+        GROUP BY w.id
+        """,
+        (obj_id, uid, day),
+    )
+    return sum(float(r['daily_rate'] or 0) for r in rows)
+
+
+def _object_brigade_daily_rate(uid, obj_id, mode, work_date=None):
+    """Сумма дневных ставок за день work_date (по режиму распределения)."""
+    if mode == SALARY_ALLOCATION_MANUAL:
+        return 0.0
+    day_rate = _assigned_brigade_rate_on_day(uid, obj_id, work_date) if work_date else 0.0
     if mode == SALARY_ALLOCATION_ASSIGNED_WORKERS:
-        rows = fetch_all(
-            """
-            SELECT w.id AS worker_id, MAX(w.daily_rate) AS daily_rate
-            FROM worker_assignments wa
-            JOIN workers w ON w.id = wa.worker_id AND w.user_id = wa.user_id
-            WHERE wa.object_id = ? AND wa.user_id = ? AND w.is_active = 1
-            GROUP BY w.id
-            """,
-            (obj_id, uid),
-        )
-        return sum(float(r['daily_rate'] or 0) for r in rows)
+        return day_rate
+    # all_workers: если за день есть бригада из диспетчера — берём её, иначе всех активных.
+    if day_rate > 0:
+        return day_rate
     all_workers = fetch_all(
         "SELECT daily_rate FROM workers WHERE user_id = ? AND is_active = 1",
         (uid,),
@@ -595,19 +609,19 @@ def _salary_auto_breakdown(uid, obj_row, calendar_counts=None):
     work_days = _object_work_days_for_salary_sum(obj_row)
     if not work_days:
         return []
-    total_daily_rate = _object_brigade_daily_rate(uid, obj_row['id'], mode)
-    if total_daily_rate <= 0:
-        return []
     lines = []
     for d in work_days:
+        brigade = _object_brigade_daily_rate(uid, obj_row['id'], mode, d)
+        if brigade <= 0:
+            continue
         n = int(calendar_counts.get(d, 0))
         if n <= 0:
             n = 1
         lines.append({
             'date': d,
             'objects_on_day': n,
-            'brigade_rate': round(total_daily_rate, 2),
-            'share': round(total_daily_rate / n, 2),
+            'brigade_rate': round(brigade, 2),
+            'share': round(brigade / n, 2),
         })
     return lines
 
@@ -2922,8 +2936,8 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None, include_fro
     """Пересчитать поле objects.salary: сумма по каждому дню из work_dates (доля бригады на этот день).
 
     Режим salary_allocation_mode:
-      all_workers — для каждого дня выезда: (Σ daily_rate всех активных рабочих) / число объектов с выездом в этот день;
-      assigned_workers — то же, но Σ только по рабочим с назначением на объект;
+      assigned_workers — за каждый день: (Σ daily_rate рабочих, назначенных на этот день из диспетчера) / n объектов;
+      all_workers — то же, если за день есть назначения; иначе Σ всех активных рабочих / n;
       manual — не менять salary.
 
     include_frozen: пересчитать закрытые/оплаченные (иначе salary зафиксирована после закрытия).
@@ -2971,21 +2985,21 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None, include_fro
         if calendar_counts is None:
             calendar_counts = _build_salary_calendar_counts(uid)
 
-        total_daily_rate = _object_brigade_daily_rate(uid, obj_id, mode)
-        if total_daily_rate <= 0:
-            execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
-            return
-
         total_salary = 0.0
+        any_rate = False
         for d in work_days:
+            brigade = _object_brigade_daily_rate(uid, obj_id, mode, d)
+            if brigade <= 0:
+                continue
+            any_rate = True
             n = int(calendar_counts.get(d, 0))
             if n <= 0:
                 n = 1
-            total_salary += total_daily_rate / n
+            total_salary += brigade / n
 
         execute(
             "UPDATE objects SET salary = ? WHERE id = ? AND user_id = ?",
-            (round(total_salary, 2), obj_id, uid),
+            (round(total_salary, 2) if any_rate else 0.0, obj_id, uid),
         )
     except Exception as e:
         import logging

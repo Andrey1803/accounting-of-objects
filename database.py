@@ -571,7 +571,7 @@ def init_db():
                 next_to_date TEXT,
                 next_to_note TEXT,
                 integration_source TEXT,
-                salary_allocation_mode TEXT DEFAULT 'all_workers',
+                salary_allocation_mode TEXT DEFAULT 'assigned_workers',
                 settlement_type TEXT DEFAULT 'cash',
                 tax_regime TEXT DEFAULT 'none',
                 created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW())
@@ -697,7 +697,7 @@ def init_db():
             "ALTER TABLE estimate_items ADD COLUMN IF NOT EXISTS wholesale_price REAL DEFAULT 0",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS client_id INTEGER",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS integration_source TEXT",
-            "ALTER TABLE objects ADD COLUMN IF NOT EXISTS salary_allocation_mode TEXT DEFAULT 'all_workers'",
+            "ALTER TABLE objects ADD COLUMN IF NOT EXISTS salary_allocation_mode TEXT DEFAULT 'assigned_workers'",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS is_regular_to INTEGER DEFAULT 0",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS next_to_date TEXT",
             "ALTER TABLE objects ADD COLUMN IF NOT EXISTS next_to_note TEXT",
@@ -740,7 +740,7 @@ def init_db():
                 next_to_date TEXT,
                 next_to_note TEXT,
                 integration_source TEXT,
-                salary_allocation_mode TEXT DEFAULT 'all_workers',
+                salary_allocation_mode TEXT DEFAULT 'assigned_workers',
                 settlement_type TEXT DEFAULT 'cash',
                 tax_regime TEXT DEFAULT 'none',
                 created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '');
@@ -924,7 +924,7 @@ def init_db():
     try:
         if not IS_POSTGRES:
             conn.execute(
-                "ALTER TABLE objects ADD COLUMN salary_allocation_mode TEXT DEFAULT 'all_workers'"
+                "ALTER TABLE objects ADD COLUMN salary_allocation_mode TEXT DEFAULT 'assigned_workers'"
             )
             conn.commit()
     except Exception:

@@ -95,6 +95,76 @@
             flex: 1;
             max-width: 300px;
         }
+        .client-filter-combo {
+            position: relative;
+            flex: 1;
+            max-width: 300px;
+            min-width: 0;
+        }
+        .client-filter-trigger {
+            width: 100%;
+            box-sizing: border-box;
+            text-align: left;
+            padding: clamp(5px, 0.8vw, 10px) clamp(8px, 1vw, 14px);
+            font-size: var(--fs-sm);
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .client-filter-panel {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            z-index: 50;
+            background: #fff;
+            border: 1px solid #cfd8dc;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+            padding: 8px;
+        }
+        .client-filter-panel[hidden] { display: none !important; }
+        .client-filter-panel input {
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0 0 6px;
+            padding: 8px 10px;
+            font-size: var(--fs-sm);
+            border: 1px solid #cfd8dc;
+            border-radius: 6px;
+            max-width: none;
+            flex: none;
+        }
+        .client-filter-list {
+            max-height: min(280px, 45vh);
+            overflow-y: auto;
+        }
+        .client-filter-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 8px 10px;
+            border: none;
+            background: transparent;
+            font-size: var(--fs-sm);
+            cursor: pointer;
+            border-radius: 6px;
+        }
+        .client-filter-item:hover,
+        .client-filter-item.active {
+            background: #e3f2fd;
+        }
+        .client-filter-native {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+        }
 
         table.objects-list-table {
             width: 100%;
@@ -368,13 +438,19 @@
     
     <div class="container">
         <div class="filters" autocomplete="off">
-            <input type="text" id="filter-search" name="filter_search" placeholder="Поиск по наименованию..." autocomplete="off" readonly>
-            <button type="button" class="btn" style="background:#2E75B6; color:white; font-size:12px; padding:6px 12px;" onclick="enableSearch()">🔍</button>
+            <input type="text" id="filter-search" name="filter_search" placeholder="Поиск по наименованию..." autocomplete="off">
             <select id="filter-status" autocomplete="off">
                 <option value="">Все статусы</option>
                 <option>Ожидает старта</option><option>В работе</option><option>Приостановлен</option><option>Выполнен</option><option>Закрыт</option>
             </select>
-            <select id="filter-client" autocomplete="off"><option value="">Все клиенты</option></select>
+            <div class="client-filter-combo" id="filter-client-combo">
+                <button type="button" class="client-filter-trigger" id="filter-client-trigger">Все клиенты</button>
+                <select id="filter-client" autocomplete="off" tabindex="-1" aria-hidden="true" class="client-filter-native"><option value="">Все клиенты</option></select>
+                <div class="client-filter-panel" id="filter-client-panel" hidden>
+                    <input type="text" id="filter-client-search" placeholder="Поиск по имени клиента..." autocomplete="off">
+                    <div class="client-filter-list" id="filter-client-list"></div>
+                </div>
+            </div>
             <select id="filter-regular-to" autocomplete="off">
                 <option value="">Все объекты</option>
                 <option value="regular">Только регулярное ТО</option>
@@ -497,9 +573,9 @@
                     <div class="form-group"><label>Аванс</label><input type="number" id="advance" step="0.01" placeholder="0"></div>
                 </div>
                 <div class="form-group"><label>Расчёт «затрат на рабочих»</label>
-                    <select id="salary-allocation-mode" title="По умолчанию доля всех активных рабочих на все объекты за день. Исключения — если выезжали сами или на объекте не вся бригада.">
-                        <option value="all_workers">Все активные рабочие ÷ объекты за день (как раньше)</option>
-                        <option value="assigned_workers">Только рабочие из списка на этом объекте</option>
+                    <select id="salary-allocation-mode" title="По умолчанию: исполнители задачи из диспетчера за каждый день выезда. «Все активные» — запасной вариант без назначений.">
+                        <option value="assigned_workers">С диспетчера за день выезда ÷ объекты за день</option>
+                        <option value="all_workers">Все активные рабочие ÷ объекты за день (если нет назначений)</option>
                         <option value="manual">Вручную (поле ниже не пересчитывается)</option>
                     </select>
                     <small style="color:#666;display:block;margin-top:4px;font-size:12px;">При «только с объекта» учитываются уникальные ставки тех, кого добавили в «👷 Рабочие». При «вручную» введите сумму сами.</small>
@@ -598,10 +674,13 @@
             <h2>👷 Рабочие на объекте</h2>
             <p style="color:#666; margin:5px 0 15px; font-size:13px;">Добавьте рабочих и укажите количество дней. Зарплата рассчитается автоматически.</p>
             
-            <div style="display:flex; gap:10px; margin-bottom:15px; align-items:flex-end;">
-                <div style="flex:2;">
+            <div style="display:flex; gap:10px; margin-bottom:15px; align-items:flex-end; flex-wrap:wrap;">
+                <div style="flex:2; min-width:180px;">
                     <label style="font-size:12px; font-weight:600; display:block; margin-bottom:3px;">Рабочий</label>
                     <select id="ow-worker" style="width:100%; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:13px;"></select>
+                </div>
+                <div style="flex:0 0 auto; padding-bottom:2px;">
+                    <button type="button" class="btn" style="background:#2196F3; color:white; padding:8px 10px; font-size:12px;" onclick="syncWorkersFromDispatcher()" title="Подтянуть список из диспетчера">↻ Из диспетчера</button>
                 </div>
                 <div style="flex:1;">
                     <label style="font-size:12px; font-weight:600; display:block; margin-bottom:3px;">Дата начала</label>
@@ -617,7 +696,7 @@
             <div id="object-workers-list" style="max-height:300px; overflow-y:auto;"></div>
             
             <div style="text-align:center; margin-top:15px; padding:10px; background:#e3f2fd; border-radius:5px;">
-                <small style="color:#666;">💡 В карточке объекта можно выбрать: все рабочие на все объекты за день, только назначенные на этот объект или сумму вручную</small>
+                <small style="color:#666;">💡 Зарплата по дням: кто назначен в диспетчере на этот день (или вручную в «Рабочие»), либо все активные / сумма вручную</small>
             </div>
             
             <div class="modal-actions" style="display:flex; gap:10px; margin-top:15px; justify-content:flex-end;">
@@ -779,9 +858,24 @@
         let closedVisibleLimit = closedPageSize;
         let closedTotal = 0;
         let lastObjectsApiData = null;
+        let searchLoadsAll = false;
         /** По умолчанию: статус ↑, внутри статуса — свежие даты выше. */
         let sortCol = SORT_COL_STATUS;
         let sortAsc = true;
+
+        function getSearchQuery() {
+            var el = document.getElementById('filter-search');
+            return el ? String(el.value || '').trim().toLowerCase() : '';
+        }
+
+        function getClientFilterValue() {
+            var el = document.getElementById('filter-client');
+            return el ? String(el.value || '').trim() : '';
+        }
+
+        function shouldLoadAllObjects() {
+            return !!getSearchQuery() || !!getClientFilterValue();
+        }
 
         function isClosedArchivedStatus(status) {
             var s = String(status || '').trim();
@@ -1065,6 +1159,18 @@
         function updateClosedLoadMoreUi(data) {
             const el = document.getElementById('closed-load-more');
             if (!el) return;
+            if (getSearchQuery()) {
+                el.style.display = 'none';
+                var hintHidden = document.getElementById('closed-load-more-hint');
+                if (hintHidden) hintHidden.textContent = '';
+                return;
+            }
+            if (getClientFilterValue()) {
+                el.style.display = 'none';
+                var hintClient = document.getElementById('closed-load-more-hint');
+                if (hintClient) hintClient.textContent = '';
+                return;
+            }
             const counts = countClosedForUi(objects, data || lastObjectsApiData);
             closedTotal = counts.total;
             const shown = counts.shown;
@@ -1124,6 +1230,13 @@
                 const params = new URLSearchParams({ page, per_page: perPage });
                 params.set('closed_limit', String(closedLimitForFetch()));
                 params.set('closed_offset', '0');
+                const searchQ = getSearchQuery();
+                if (shouldLoadAllObjects()) {
+                    params.set('scope', 'all');
+                    searchLoadsAll = true;
+                } else {
+                    searchLoadsAll = false;
+                }
                 
                 console.log('loadData: fetching objects with params:', params.toString());
                 const objectsPromise = fetch(`/api/objects-with-estimates?${params}`);
@@ -1397,6 +1510,7 @@
             const filterSelect = document.getElementById('filter-client');
             const modalOpen = document.getElementById('modal') && document.getElementById('modal').classList.contains('active');
             const prevClientVal = modalOpen && select ? select.value : '';
+            const prevFilterVal = filterSelect ? filterSelect.value : '';
             select.innerHTML = '';
             const emptyOpt = document.createElement('option');
             emptyOpt.value = '';
@@ -1430,7 +1544,105 @@
                 applyClientOptionTitle(opt, c);
                 filterSelect.appendChild(opt);
             });
+            if (prevFilterVal && Array.from(filterSelect.options).some(function(o) { return o.value === prevFilterVal; })) {
+                filterSelect.value = prevFilterVal;
+            }
+            updateClientFilterTrigger();
+            var clientSearchEl = document.getElementById('filter-client-search');
+            var clientPanelEl = document.getElementById('filter-client-panel');
+            if (clientPanelEl && !clientPanelEl.hidden) {
+                renderClientFilterList(clientSearchEl ? clientSearchEl.value : '');
+            }
             refreshClientSelectPhoneUi('client', 'client-phone-hint');
+        }
+
+        function updateClientFilterTrigger() {
+            var sel = document.getElementById('filter-client');
+            var trig = document.getElementById('filter-client-trigger');
+            if (!sel || !trig) return;
+            var opt = sel.options[sel.selectedIndex];
+            trig.textContent = opt && opt.textContent ? opt.textContent : 'Все клиенты';
+        }
+
+        function renderClientFilterList(query) {
+            var list = document.getElementById('filter-client-list');
+            var sel = document.getElementById('filter-client');
+            if (!list || !sel) return;
+            var q = String(query || '').trim().toLowerCase();
+            list.innerHTML = '';
+            var allBtn = document.createElement('button');
+            allBtn.type = 'button';
+            allBtn.className = 'client-filter-item' + (sel.value === '' ? ' active' : '');
+            allBtn.textContent = 'Все клиенты';
+            allBtn.onclick = function() { selectClientFilter(''); };
+            list.appendChild(allBtn);
+            clients.forEach(function(c) {
+                var nameLc = String(c.name || '').toLowerCase();
+                var phoneLc = String(c.phone || '').toLowerCase();
+                if (q && nameLc.indexOf(q) === -1 && phoneLc.indexOf(q) === -1 && String(c.id).indexOf(q) === -1) return;
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'client-filter-item' + (sel.value === String(c.id) ? ' active' : '');
+                btn.textContent = clientLabel(c);
+                btn.title = clientPhoneTitle(c);
+                btn.onclick = function() { selectClientFilter(String(c.id)); };
+                list.appendChild(btn);
+            });
+        }
+
+        function closeClientFilterPanel() {
+            var panel = document.getElementById('filter-client-panel');
+            if (panel) panel.hidden = true;
+        }
+
+        function openClientFilterPanel() {
+            var panel = document.getElementById('filter-client-panel');
+            var search = document.getElementById('filter-client-search');
+            if (!panel) return;
+            panel.hidden = false;
+            renderClientFilterList('');
+            if (search) {
+                search.value = '';
+                setTimeout(function() { search.focus(); }, 0);
+            }
+        }
+
+        function selectClientFilter(val) {
+            var sel = document.getElementById('filter-client');
+            if (!sel) return;
+            sel.value = val;
+            updateClientFilterTrigger();
+            closeClientFilterPanel();
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        function initClientFilterCombo() {
+            var combo = document.getElementById('filter-client-combo');
+            var trigger = document.getElementById('filter-client-trigger');
+            var search = document.getElementById('filter-client-search');
+            if (!combo || !trigger || combo._clientFilterBound) return;
+            combo._clientFilterBound = true;
+            trigger.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var panel = document.getElementById('filter-client-panel');
+                if (panel && panel.hidden) openClientFilterPanel();
+                else closeClientFilterPanel();
+            });
+            if (search) {
+                search.addEventListener('input', function() {
+                    renderClientFilterList(search.value);
+                });
+                search.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeClientFilterPanel();
+                    }
+                });
+            }
+            document.addEventListener('click', function(e) {
+                if (!combo.contains(e.target)) closeClientFilterPanel();
+            });
+            updateClientFilterTrigger();
         }
 
         function bindClientSelectPhoneHover(selectId, hintId) {
@@ -1473,8 +1685,14 @@
             }
             td.className = cls;
             td.setAttribute('data-full', full);
-            td.title = (linkMeta && linkMeta.type === 'object') ? 'Открыть карточку объекта'
-                : (linkMeta && linkMeta.type === 'client') ? 'Открыть данные клиента' : '';
+            // title = полный текст (обрезанный в ячейке); для ссылок — плюс подсказка действия.
+            var tip = full.trim();
+            if (linkMeta && linkMeta.type === 'object') {
+                tip = tip ? (tip + ' — открыть карточку объекта') : 'Открыть карточку объекта';
+            } else if (linkMeta && linkMeta.type === 'client') {
+                tip = tip ? (tip + ' — открыть данные клиента') : 'Открыть данные клиента';
+            }
+            td.title = tip;
             if (linkMeta && linkMeta.type === 'object' && linkMeta.id != null) {
                 td.dataset.objectId = String(linkMeta.id);
             }
@@ -1485,6 +1703,7 @@
             var span = document.createElement('span');
             span.className = 'cell-compact-text';
             span.textContent = t;
+            if (tip) span.title = tip;
             td.appendChild(span);
         }
 
@@ -1546,8 +1765,8 @@
 
         function salaryModeLabel(mode) {
             var labels = {
-                all_workers: 'Все активные рабочие ÷ объекты с выездом в этот день (включая закрытые по work_dates)',
-                assigned_workers: 'Только рабочие с объекта',
+                all_workers: 'Все активные ÷ объекты за день (если за день нет бригады из диспетчера)',
+                assigned_workers: 'Рабочие из диспетчера за каждый день выезда',
                 manual: 'Вручную'
             };
             return labels[mode] || mode || '—';
@@ -1634,7 +1853,10 @@
             var nm = client ? String(client.name || '').trim() : String(clientName || '').trim();
             return objects.filter(function(o) {
                 if (cid != null && o.client_id != null && Number(o.client_id) === Number(cid)) return true;
-                if (nm && String(o.client || '').trim() === nm) return true;
+                // Без client_id — только по тексту (старые записи); не группируем по имени, если уже другая карточка.
+                if (cid == null && nm && (o.client_id == null || o.client_id === '' || Number(o.client_id) === 0)) {
+                    if (String(o.client || '').trim() === nm) return true;
+                }
                 return false;
             }).sort(function(a, b) {
                 return String(b.updated_at || b.date_start || '').localeCompare(String(a.updated_at || a.date_start || ''));
@@ -1783,6 +2005,14 @@
                 span.classList.remove('has-overflow');
                 if (full.length > short.length || compactCellIsOverflow(td)) {
                     span.classList.add('has-overflow');
+                    // Гарантируем title с полным текстом (на случай если раньше был только «открыть…»).
+                    if (full.trim() && !(td.title || '').startsWith(full.trim())) {
+                        var tip = full.trim();
+                        if (td.classList.contains('cell-link-name')) tip += ' — открыть карточку объекта';
+                        else if (td.classList.contains('cell-link-client')) tip += ' — открыть данные клиента';
+                        td.title = tip;
+                        span.title = tip;
+                    }
                 }
             });
         }
@@ -1852,7 +2082,7 @@
 
         function renderTable() {
             collapseInlineTextExpand();
-            const search = document.getElementById('filter-search').value.toLowerCase();
+            const search = getSearchQuery();
             const statusFilter = document.getElementById('filter-status').value;
             const clientFilter = document.getElementById('filter-client').value;
             const regularToFilter = document.getElementById('filter-regular-to').value;
@@ -1860,7 +2090,8 @@
             
             console.log('renderTable: objects count =', objects.length);
             
-            let filtered = objectsVisibleInList(objects).filter(obj => {
+            const listSource = (search || getClientFilterValue()) ? objects : objectsVisibleInList(objects);
+            let filtered = listSource.filter(obj => {
                 var nameLc = String(obj.name || '').toLowerCase();
                 if (search && !nameLc.includes(search)) return false;
                 if (statusFilter && obj.status !== statusFilter) return false;
@@ -1928,6 +2159,7 @@
                     span.className = 'status status-' + st.replace(/ /g, '-');
                     span.textContent = st;
                     td7.appendChild(span);
+                    var statusTip = st;
                     if (obj.is_regular_to) {
                         const toMeta = document.createElement('div');
                         toMeta.style.marginTop = '4px';
@@ -1938,13 +2170,19 @@
                         const isOverdueTo = !!nextDateRaw && nextDateRaw < todayIso;
                         toMeta.style.color = isOverdueTo ? '#C62828' : '#0D47A1';
                         const nextDate = obj.next_to_date ? formatDate(obj.next_to_date) : '';
-                        toMeta.textContent = nextDate
+                        var toLine = nextDate
                             ? ((isOverdueTo ? '⛔ Просрочено ТО: ' : '🔁 ТО: ') + nextDate)
                             : '🔁 Регулярное ТО';
+                        toMeta.textContent = toLine;
+                        statusTip = st + ' · ' + toLine.replace(/^[⛔🔁]\s*/, '');
                         const note = String(obj.next_to_note || '').trim();
-                        if (note) toMeta.title = 'Заметка на следующее ТО: ' + note;
+                        if (note) {
+                            toMeta.title = 'Заметка на следующее ТО: ' + note;
+                            statusTip += ' · ' + note;
+                        }
                         td7.appendChild(toMeta);
                     }
+                    td7.title = statusTip;
                 tr.appendChild(td7);
                 const td8 = document.createElement('td'); td8.textContent = formatMoney(obj.advance); tr.appendChild(td8);
                 const td9 = document.createElement('td'); td9.textContent = formatMoney(obj.salary); tr.appendChild(td9);
@@ -2186,7 +2424,7 @@
                 document.getElementById('status').value = obj.status;
                 document.getElementById('advance').value = numInputDisplay(obj.advance);
                 document.getElementById('salary').value = numInputDisplay(obj.salary);
-                document.getElementById('salary-allocation-mode').value = obj.salary_allocation_mode || 'all_workers';
+                document.getElementById('salary-allocation-mode').value = obj.salary_allocation_mode || 'assigned_workers';
                 syncSalaryAllocationUi();
                 document.getElementById('notes').value = obj.notes || '';
                 document.getElementById('is-regular-to').checked = !!obj.is_regular_to;
@@ -2222,7 +2460,7 @@
                 clearMoneyInputIds(['sum-work', 'expenses', 'advance', 'salary']);
                 objectWorkDaysEdit = [new Date().toISOString().split('T')[0]];
                 renderWorkDaysEditor();
-                document.getElementById('salary-allocation-mode').value = 'all_workers';
+                document.getElementById('salary-allocation-mode').value = 'assigned_workers';
                 syncSalaryAllocationUi();
                 document.getElementById('settlement-type').value = 'cash';
                 document.getElementById('tax-regime').value = 'none';
@@ -2251,19 +2489,33 @@
             if (!editingId) return;
             try {
                 const statusVal = document.getElementById('status').value;
-                await fetchCsrf('/api/objects/' + editingId, {
+                const obj = objects.find(o => o.id === editingId);
+                const payload = { status: statusVal };
+                // Явно передаём дни выезда — чтобы частичный PUT не затирал work_dates.
+                if (objectWorkDaysEdit && objectWorkDaysEdit.length) {
+                    payload.work_dates = objectWorkDaysEdit.slice().sort();
+                } else if (obj) {
+                    var days = parseWorkDatesFromObject(obj);
+                    if (days.length) payload.work_dates = days;
+                }
+                const res = await fetchCsrf('/api/objects/' + editingId, {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ status: statusVal })
+                    body: JSON.stringify(payload)
                 });
-                // Обновляем локальные данные
-                const obj = objects.find(o => o.id === editingId);
-                if (obj) obj.status = statusVal;
-                // Показываем предполагаемую зарплату
+                if (res.ok) {
+                    const saved = await res.json().catch(() => null);
+                    if (saved && obj) {
+                        Object.assign(obj, saved);
+                        if (document.getElementById('salary') && saved.salary != null) {
+                            document.getElementById('salary').value = numInputDisplay(saved.salary);
+                        }
+                    } else if (obj) {
+                        obj.status = statusVal;
+                    }
+                }
                 showExpectedSalary();
-                // Пересчитываем зарплату
                 await loadSalaryInfo(editingId);
-                // Обновляем таблицу
                 refreshObjectsDataAfterMutation(currentPage);
             } catch(e) {
                 console.error('Status change error:', e);
@@ -2352,7 +2604,7 @@
         async function showExpectedSalary() {
             try {
                 var modeEl = document.getElementById('salary-allocation-mode');
-                var mode = modeEl ? modeEl.value : 'all_workers';
+                var mode = modeEl ? modeEl.value : 'assigned_workers';
                 var statusEl = document.getElementById('status');
                 var statusNow = statusEl ? String(statusEl.value || '').trim() : '';
                 if (statusNow === 'Закрыт' || statusNow === 'Оплачен') {
@@ -2380,30 +2632,39 @@
 
                 if (mode === 'assigned_workers') {
                     if (!editingId) {
-                        document.getElementById('salary-info').textContent = 'Только с объекта: сохраните объект и добавьте рабочих в «👷 Рабочие».';
+                        document.getElementById('salary-info').textContent = 'С диспетчера за день: сохраните объект (бригада подтянется при назначении в диспетчере) или добавьте в «👷 Рабочие».';
                         return;
                     }
                     const owRes = await fetch('/api/objects/' + editingId + '/workers');
                     if (!owRes.ok) return;
                     const owData = await owRes.json();
                     const asg = owData.assignments || [];
-                    var byW = {};
-                    asg.forEach(function(a) { byW[a.worker_id] = Number(a.daily_rate) || 0; });
-                    var assignedRateSum = Object.keys(byW).reduce(function(s, k) { return s + byW[k]; }, 0);
-                    if (assignedRateSum <= 0) {
-                        document.getElementById('salary-info').textContent = '⚠️ Нет назначенных рабочих на объект (или ставки 0)';
-                        return;
+                    function rateOnDay(dayIso) {
+                        var byW = {};
+                        asg.forEach(function(a) {
+                            var wd = (a.work_date || '').toString().slice(0, 10);
+                            if (wd === dayIso) byW[a.worker_id] = Number(a.daily_rate) || 0;
+                        });
+                        return Object.keys(byW).reduce(function(s, k) { return s + byW[k]; }, 0);
                     }
                     function countOnDay(dayIso) {
                         return salaryCountsForDay(allObjects, dayIso, editingId);
                     }
                     var estA = 0;
+                    var anyDay = false;
                     myDays.forEach(function(d) {
+                        var dayRate = rateOnDay(d);
+                        if (dayRate <= 0) return;
+                        anyDay = true;
                         var n = Math.max(countOnDay(d), 1);
-                        estA += assignedRateSum / n;
+                        estA += dayRate / n;
                     });
+                    if (!anyDay) {
+                        document.getElementById('salary-info').textContent = '⚠️ Нет рабочих из диспетчера за дни выезда (или ставки 0)';
+                        return;
+                    }
                     document.getElementById('salary-info').textContent =
-                        'Назначенные: по дням выезда ≈ ' + estA.toFixed(2) + ' руб (Σ ' + assignedRateSum + ' руб/день; см. сохранённый объект)';
+                        'С диспетчера по дням ≈ ' + estA.toFixed(2) + ' руб (ставка бригады за каждый день выезда)';
                     return;
                 }
 
@@ -2419,16 +2680,36 @@
                 activeWorkers.forEach(function(w) {
                     totalDailyRate += w.daily_rate;
                 });
+                var dayAssignRates = {};
+                if (editingId) {
+                    try {
+                        const owRes2 = await fetch('/api/objects/' + editingId + '/workers');
+                        if (owRes2.ok) {
+                            const owData2 = await owRes2.json();
+                            (owData2.assignments || []).forEach(function(a) {
+                                var wd = (a.work_date || '').toString().slice(0, 10);
+                                if (!wd) return;
+                                if (!dayAssignRates[wd]) dayAssignRates[wd] = {};
+                                dayAssignRates[wd][a.worker_id] = Number(a.daily_rate) || 0;
+                            });
+                        }
+                    } catch (e2) {}
+                }
                 function countOnDay2(dayIso) {
                     return salaryCountsForDay(allObjects, dayIso, editingId);
                 }
                 var est = 0;
                 myDays.forEach(function(d) {
                     var n = Math.max(countOnDay2(d), 1);
-                    est += totalDailyRate / n;
+                    var byW = dayAssignRates[d];
+                    var dayRate = byW
+                        ? Object.keys(byW).reduce(function(s, k) { return s + byW[k]; }, 0)
+                        : 0;
+                    if (dayRate <= 0) dayRate = totalDailyRate;
+                    est += dayRate / n;
                 });
                 document.getElementById('salary-info').textContent =
-                    `👷 ${activeWorkers.length} рабочих (${totalDailyRate} руб/день), выбрано дней: ${myDays.length} — оценка затрат ≈ ${est.toFixed(2)} руб`;
+                    `👷 ${activeWorkers.length} активных (${totalDailyRate} руб/день), выбрано дней: ${myDays.length} — оценка ≈ ${est.toFixed(2)} руб (за день с назначениями — бригада диспетчера)`;
             } catch(e) {}
         }
 
@@ -2495,7 +2776,7 @@
                 status: 'Ожидает старта',
                 advance: obj.advance || 0,
                 salary: obj.salary || 0,
-                salary_allocation_mode: obj.salary_allocation_mode || 'all_workers',
+                salary_allocation_mode: obj.salary_allocation_mode || 'assigned_workers',
                 notes: obj.notes || '',
                 is_regular_to: !!obj.is_regular_to,
                 next_to_date: obj.next_to_date || '',
@@ -2726,6 +3007,8 @@
                 vat_percent: est.vat_percent,
                 markup_percent: est.markup_percent,
                 discount_percent: est.discount_percent,
+                material_discount_percent: est.material_discount_percent,
+                work_discount_percent: est.work_discount_percent,
                 notes: est.notes != null ? est.notes : ''
             };
             var items = (est.items || []).map(function(it) {
@@ -2853,7 +3136,9 @@
                 notes: meta.notes || '',
                 vat_percent: meta.vat_percent,
                 markup_percent: meta.markup_percent,
-                discount_percent: meta.discount_percent
+                discount_percent: meta.discount_percent,
+                material_discount_percent: meta.material_discount_percent,
+                work_discount_percent: meta.work_discount_percent
             };
             try {
                 var res = await fetchCsrf('/estimate/api/estimates', {
@@ -3123,15 +3408,48 @@
             if (e.target.id === 'wellSurveysModal') closeWellSurveysModal();
         });
 
-        // Функция включения поиска
-        function enableSearch() {
-            var input = document.getElementById('filter-search');
-            input.removeAttribute('readonly');
-            input.focus();
-            console.log('Поиск активирован');
-        }
-
-        // Быстрое создание объекта
+        // Поиск по наименованию — фильтрация на клиенте по мере ввода
+        (function initSearchFilter() {
+            var el = document.getElementById('filter-search');
+            if (!el) return;
+            el.value = '';
+            var userEdited = false;
+            var debounceTimer = null;
+            function applySearchFilter() {
+                var q = (el.value || '').trim().toLowerCase();
+                if (q && !searchLoadsAll) {
+                    void loadData(1);
+                    return;
+                }
+                if (!q && searchLoadsAll && !shouldLoadAllObjects()) {
+                    resetClosedVisibleLimit();
+                    void loadData(1);
+                    return;
+                }
+                renderTable();
+                updateClosedLoadMoreUi(lastObjectsApiData);
+            }
+            el.addEventListener('input', function() {
+                userEdited = true;
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(applySearchFilter, 200);
+            });
+            el.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    userEdited = true;
+                    clearTimeout(debounceTimer);
+                    applySearchFilter();
+                }
+            });
+            // Браузерное автозаполнение может подставить текст до первого ввода
+            setTimeout(function() {
+                if (!userEdited && el.value) {
+                    el.value = '';
+                    applySearchFilter();
+                }
+            }, 300);
+        })();
         async function quickAdd() {
             var name = document.getElementById('quickName').value.trim();
             if (!name) { document.getElementById('quickName').focus(); return; }
@@ -3166,20 +3484,24 @@
             renderTable();
         }
         
-        // Поиск ТОЛЬКО по кнопке Enter, НЕ по каждому вводу
-        document.getElementById('filter-search').addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                resetClosedVisibleLimit();
-                void loadData(1, { resetClosed: true });
-            }
-        });
         document.getElementById('filter-status').addEventListener('change', function() {
             resetClosedVisibleLimit();
             void loadData(1, { resetClosed: true });
         });
         document.getElementById('filter-client').addEventListener('change', function() {
+            if (shouldLoadAllObjects() && !searchLoadsAll) {
+                void loadData(1);
+                return;
+            }
+            if (!shouldLoadAllObjects() && searchLoadsAll) {
+                resetClosedVisibleLimit();
+                void loadData(1);
+                return;
+            }
             renderTable();
+            updateClosedLoadMoreUi(lastObjectsApiData);
         });
+        initClientFilterCombo();
         document.getElementById('filter-regular-to').addEventListener('change', function() {
             renderTable();
         });
@@ -3190,16 +3512,6 @@
         initCompactCellExpand();
         initCompactCellLinks();
         initObjectsLiveAutoRefresh();
-
-        // Принудительно загружаем данные через 2 секунды после автозаполнения
-        setTimeout(function() {
-            var searchInput = document.getElementById('filter-search');
-            if (searchInput && searchInput.value) {
-                console.log('Обнаружено автозаполнение, очищаю:', searchInput.value);
-                searchInput.value = '';
-                renderTable();
-            }
-        }, 2000);
 
         // === PWA ===
         {% if not service_worker_disabled %}
@@ -3291,6 +3603,29 @@
 
         function closeWorkersModal() {
             document.getElementById('objectWorkersModal').classList.remove('active');
+        }
+
+        async function syncWorkersFromDispatcher() {
+            const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+            const csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+            try {
+                const res = await fetch('/api/workers/sync-from-dispatcher', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    alert(data.error || 'Не удалось синхронизировать с диспетчером');
+                    return;
+                }
+                const upserted = data.upserted != null ? data.upserted : 0;
+                const deactivated = data.deactivated != null ? data.deactivated : 0;
+                await loadWorkersForObject();
+                alert(`Список обновлён: добавлено/обновлено ${upserted}, скрыто уволенных ${deactivated}`);
+            } catch (e) {
+                console.error(e);
+                alert('Ошибка синхронизации с диспетчером');
+            }
         }
 
         async function loadWorkersForObject() {
