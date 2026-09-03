@@ -562,7 +562,8 @@ def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assi
             'UPDATE objects SET salary_allocation_mode = ?, updated_at = ? WHERE id = ? AND user_id = ?',
             (SALARY_ALLOCATION_ASSIGNED_WORKERS, datetime.utcnow().isoformat(), object_id, user_id),
         )
-    _recalc_salaries_for_user_id(user_id)
+    # Пересчёт этого объекта, в т.ч. закрытого: бригада с диспетчера должна обновить salary.
+    recalc_object_salary(object_id, user_id, include_frozen=True)
     return len(worker_ids)
 
 
