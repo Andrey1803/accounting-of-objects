@@ -506,7 +506,7 @@ def _object_work_dates_for_crew_sync(obj, fallback_dates):
     return [_minsk_today_ymd()]
 
 
-def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assigned_mode=True):
+def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assigned_mode=True, recalc=True):
     """Заменить авто-назначения taskmgr-auto на бригаду из диспетчера."""
     dates = work_dates or [_minsk_today_ymd()]
     if not crew:
@@ -519,6 +519,13 @@ def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assi
                    WHERE user_id = ? AND object_id = ? AND work_date = ? AND integration_source = ?""",
                 (user_id, object_id, wd_norm, TASKMGR_AUTO_ASSIGN_SOURCE),
             )
+        if set_assigned_mode:
+            execute(
+                'UPDATE objects SET salary_allocation_mode = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+                (SALARY_ALLOCATION_ASSIGNED_WORKERS, datetime.utcnow().isoformat(), object_id, user_id),
+            )
+        if recalc:
+            recalc_object_salary(object_id, user_id, include_frozen=True)
         return 0
 
     worker_ids = []
@@ -536,6 +543,13 @@ def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assi
                    WHERE user_id = ? AND object_id = ? AND work_date = ? AND integration_source = ?""",
                 (user_id, object_id, wd_norm, TASKMGR_AUTO_ASSIGN_SOURCE),
             )
+        if set_assigned_mode:
+            execute(
+                'UPDATE objects SET salary_allocation_mode = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+                (SALARY_ALLOCATION_ASSIGNED_WORKERS, datetime.utcnow().isoformat(), object_id, user_id),
+            )
+        if recalc:
+            recalc_object_salary(object_id, user_id, include_frozen=True)
         return 0
 
     for wd in dates:
@@ -563,7 +577,8 @@ def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assi
             (SALARY_ALLOCATION_ASSIGNED_WORKERS, datetime.utcnow().isoformat(), object_id, user_id),
         )
     # Пересчёт этого объекта, в т.ч. закрытого: бригада с диспетчера должна обновить salary.
-    recalc_object_salary(object_id, user_id, include_frozen=True)
+    if recalc:
+        recalc_object_salary(object_id, user_id, include_frozen=True)
     return len(worker_ids)
 
 
@@ -3372,6 +3387,117 @@ def integration_sync_worker_assignments_from_taskmgr():
         }), 200
     except Exception as e:
         logging.exception('integration: unhandled error in /api/integration/from-taskmgr/worker-assignments')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/integration/from-taskmgr/worker-assignments-batch', methods=['POST'])
+def integration_sync_worker_assignments_batch_from_taskmgr():
+    """
+    Пакет: несколько бригад за один запрос.
+    Тело: items[{task_id, crew, work_dates?}], set_assigned_workers_mode (bool, default true).
+    Зарплаты пересчитываются один раз в конце (включая закрытые).
+    """
+    try:
+        if not _integration_api_key_matches():
+            return jsonify({'error': 'Unauthorized'}), 401
+        uid_raw = (os.environ.get('INTEGRATION_USER_ID') or '').strip()
+        if not uid_raw:
+            return jsonify({'error': 'INTEGRATION_USER_ID is not configured'}), 503
+        try:
+            target_user_id = int(uid_raw)
+        except ValueError:
+            return jsonify({'error': 'INTEGRATION_USER_ID must be an integer'}), 503
+        if not fetch_one('SELECT id FROM users WHERE id = ?', (target_user_id,)):
+            return jsonify({'error': 'User for INTEGRATION_USER_ID not found'}), 503
+
+        data = request.json or {}
+        items = data.get('items')
+        if not isinstance(items, list):
+            return jsonify({'error': 'items must be an array'}), 400
+        if len(items) > 500:
+            return jsonify({'error': 'items limit is 500'}), 400
+
+        set_mode = data.get('set_assigned_workers_mode')
+        if set_mode is None:
+            set_assigned = True
+        elif isinstance(set_mode, bool):
+            set_assigned = set_mode
+        else:
+            set_assigned = str(set_mode).strip().lower() not in ('0', 'false', 'no', 'off')
+
+        results = []
+        touched_ids = set()
+        synced = 0
+        skipped = 0
+        for raw in items:
+            if not isinstance(raw, dict):
+                results.append({'ok': False, 'error': 'item must be object'})
+                continue
+            task_id = str(raw.get('task_id') or '').strip()
+            if not task_id:
+                results.append({'ok': False, 'error': 'task_id is required'})
+                continue
+            crew = raw.get('crew')
+            if not isinstance(crew, list):
+                results.append({'task_id': task_id, 'ok': False, 'error': 'crew must be an array'})
+                continue
+
+            source_key = f'taskmgr:{task_id}'
+            obj = fetch_one(
+                'SELECT * FROM objects WHERE user_id = ? AND integration_source = ?',
+                (target_user_id, source_key),
+            )
+            if not obj:
+                skipped += 1
+                results.append({
+                    'task_id': task_id,
+                    'ok': True,
+                    'skipped': True,
+                    'reason': 'object not found for task_id',
+                })
+                continue
+
+            work_dates_in = raw.get('work_dates')
+            fallback = None
+            if isinstance(work_dates_in, list):
+                fallback = [str(x).strip() for x in work_dates_in if str(x).strip()]
+            elif isinstance(raw.get('work_date'), str) and raw.get('work_date').strip():
+                fallback = [raw.get('work_date').strip()]
+            work_dates = _object_work_dates_for_crew_sync(obj, fallback)
+            oid = int(obj['id'])
+            n_workers = _integration_sync_object_crew(
+                target_user_id,
+                oid,
+                work_dates,
+                crew,
+                set_assigned_mode=set_assigned,
+                recalc=False,
+            )
+            touched_ids.add(oid)
+            synced += 1
+            results.append({
+                'task_id': task_id,
+                'ok': True,
+                'object_id': oid,
+                'work_dates': work_dates,
+                'workers_synced': n_workers,
+            })
+
+        if touched_ids:
+            counts = _build_salary_calendar_counts(target_user_id)
+            for oid in touched_ids:
+                recalc_object_salary(oid, target_user_id, calendar_counts=counts, include_frozen=True)
+
+        return jsonify({
+            'ok': True,
+            'processed': len(items),
+            'synced': synced,
+            'skipped': skipped,
+            'objects_recalc': len(touched_ids),
+            'results': results,
+        }), 200
+    except Exception as e:
+        logging.exception('integration: unhandled error in /api/integration/from-taskmgr/worker-assignments-batch')
         return jsonify({'error': str(e)}), 500
 
 
