@@ -123,8 +123,9 @@
             if (!ym || ym.length < 7) return ym || '—';
             var p = ym.split('-');
             var y = Number(p[0]), m = Number(p[1]);
-            if (!y || !m) return ym;
-            return new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+            if (!y || !m || m < 1 || m > 12) return ym;
+            var months = ['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+            return months[m - 1] + ' ' + y;
         }
         function parseWorkDatesFromObject(o) {
             var raw = o.work_dates;
