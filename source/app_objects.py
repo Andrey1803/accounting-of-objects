@@ -292,10 +292,13 @@ OBJECT_STATUS_WAITING = 'Ожидает старта'
 OBJECT_STATUS_ACTIVE = 'В работе'
 OBJECT_STATUS_DONE = 'Выполнен'
 OBJECT_STATUS_CLOSED = 'Закрыт'
+OBJECT_STATUS_PAUSED = 'Приостановлен'
 OBJECT_STATUSES_SALARY = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
+OBJECT_STATUSES_SALARY_AUTO = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, 'Завершён')
 OBJECT_STATUSES_FINISHED = (OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
 # До миграции БД или в копии дампа без перезапуска могли остаться старые подписи
 OBJECT_STATUSES_NOT_DEBT = (OBJECT_STATUS_WAITING, 'Запланирован')
+OBJECT_STATUSES_SALARY_DIVISOR_SKIP = (*OBJECT_STATUSES_NOT_DEBT, OBJECT_STATUS_PAUSED)
 
 # Распределение «затраты на рабочих» по объекту (поле objects.salary_allocation_mode)
 SALARY_ALLOCATION_ALL_WORKERS = 'all_workers'
@@ -379,6 +382,29 @@ def object_work_days_from_row(row):
     return _expand_date_range_inclusive(row.get('date_start'), row.get('date_end'))
 
 
+def _object_has_work_on_or_before_today(obj, today_ymd=None):
+    """Есть ли у объекта хотя бы один день работ сегодня или в прошлом (Europe/Minsk)."""
+    today = today_ymd or _minsk_today_ymd()
+    days = object_work_days_from_row(obj)
+    if not days:
+        ds = _parse_iso_date_ymd(obj.get('date_start') if obj else None)
+        if ds:
+            return ds <= today
+        return True
+    return any(d <= today for d in days)
+
+
+def _object_balance_counts_as_debt(obj):
+    """Положительный balance учитывается в задолженности, кроме плановых и только будущих выездов."""
+    if obj.get('status') in OBJECT_STATUSES_NOT_DEBT:
+        return False
+    if float(obj.get('balance') or 0) <= 0:
+        return False
+    if not _object_has_work_on_or_before_today(obj):
+        return False
+    return True
+
+
 def _serialize_work_dates(days):
     return json.dumps(sorted(set(days)), ensure_ascii=False)
 
@@ -414,8 +440,44 @@ def _resolve_work_dates_bounds_for_save(data, existing=None):
     return [], '[]', None, None
 
 
+def _work_dates_json_list(row):
+    """Только явный JSON work_dates (без разворота date_start..date_end)."""
+    if not row:
+        return []
+    raw = row.get('work_dates')
+    if raw is None or str(raw).strip() in ('', '[]', 'null'):
+        return []
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(parsed, list):
+            return []
+        days = []
+        for x in parsed:
+            d = _parse_iso_date_ymd(x)
+            if d:
+                days.append(d)
+        return sorted(set(days))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+
+
+def _object_work_days_for_salary(row):
+    """Дни для автозарплаты: work_dates или один legacy date_start (без разворота диапазона)."""
+    if not row:
+        return []
+    if row.get('status') in OBJECT_STATUSES_SALARY_DIVISOR_SKIP:
+        return []
+    days = _work_dates_json_list(row)
+    if days:
+        return days
+    ds = _parse_iso_date_ymd(row.get('date_start'))
+    if ds:
+        return [ds]
+    return []
+
+
 def _build_salary_calendar_counts(uid):
-    """Для каждой календарной даты — сколько объектов (со статусами из OBJECT_STATUSES_SALARY) в эту день."""
+    """Для каждой календарной даты — сколько объектов делят бригаду в этот день."""
     from collections import defaultdict
 
     rows = fetch_all(
@@ -424,9 +486,7 @@ def _build_salary_calendar_counts(uid):
     )
     cnt = defaultdict(int)
     for r in rows:
-        if r.get('status') not in OBJECT_STATUSES_SALARY:
-            continue
-        for d in object_work_days_from_row(r):
+        for d in _object_work_days_for_salary(r):
             cnt[d] += 1
     return cnt
 
@@ -666,7 +726,7 @@ def _portfolio_financial_totals(objects):
         )
         total_salary += float(obj.get('salary') or 0)
         bal = float(obj.get('balance') or 0)
-        if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+        if _object_balance_counts_as_debt(obj):
             total_debt += bal
             debt_objects += 1
     return {
@@ -747,6 +807,7 @@ def _apply_object_financial_enrichment(obj, user_id):
     obj['tax_amount'] = tax_amt
     obj['total_profit'] = profit_after
     obj['balance'] = round(tr - float(obj.get('advance', 0) or 0), 2)
+    obj['counts_as_debt'] = _object_balance_counts_as_debt(obj)
     st = _norm_settlement_type(obj.get('settlement_type'))
     trg = _norm_tax_regime(obj.get('tax_regime'))
     obj['settlement_type'] = st
@@ -2363,14 +2424,21 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
         if not obj:
             return
 
-        work_days = object_work_days_from_row(obj)
+        status = (obj.get('status') or '').strip()
+        if status == OBJECT_STATUS_PAUSED:
+            return
+
+        work_days = _work_dates_json_list(obj)
+        if not work_days:
+            ds = _parse_iso_date_ymd(obj.get('date_start'))
+            work_days = [ds] if ds else []
         if not work_days:
             execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
-        valid_statuses = OBJECT_STATUSES_SALARY
-        if obj.get('status') not in valid_statuses:
-            execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
+        if status not in OBJECT_STATUSES_SALARY_AUTO:
+            if status not in (OBJECT_STATUS_CLOSED, 'Оплачен'):
+                execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
         mode = _norm_salary_allocation_mode(obj.get('salary_allocation_mode'))
@@ -2383,10 +2451,11 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
         if mode == SALARY_ALLOCATION_ASSIGNED_WORKERS:
             rows = fetch_all(
                 """
-                SELECT DISTINCT w.daily_rate
+                SELECT w.id AS worker_id, MAX(w.daily_rate) AS daily_rate
                 FROM worker_assignments wa
                 JOIN workers w ON w.id = wa.worker_id AND w.user_id = wa.user_id
                 WHERE wa.object_id = ? AND wa.user_id = ? AND w.is_active = 1
+                GROUP BY w.id
                 """,
                 (obj_id, uid),
             )
@@ -2409,7 +2478,7 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None):
         for d in work_days:
             n = int(calendar_counts.get(d, 0))
             if n <= 0:
-                continue
+                n = 1
             total_salary += total_daily_rate / n
 
         execute(
@@ -2607,7 +2676,7 @@ def get_detailed_stats():
         clients_stat[gkey]['profit'] += prof
         clients_stat[gkey]['mat_profit'] += emp
 
-        if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+        if _object_balance_counts_as_debt(obj):
             if gkey not in debtors:
                 debtors[gkey] = {'name': clabel, 'debt': 0, 'objects': 0}
             debtors[gkey]['debt'] += bal
@@ -2634,7 +2703,7 @@ def get_detailed_stats():
             months[m]['material_profit'] += emp
             months[m]['advance'] += adv
             months[m]['objects'] += 1
-            if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+            if _object_balance_counts_as_debt(obj):
                 months[m]['debt'] += bal
 
     for row in clients_stat.values():
@@ -2689,7 +2758,7 @@ def get_detailed_stats():
         month_expenses += float(obj.get('total_expenses') or 0)
         month_advance += float(obj.get('advance') or 0)
         bal = float(obj.get('balance') or 0)
-        if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+        if _object_balance_counts_as_debt(obj):
             month_debt += bal
 
     total_revenue = portfolio['total_revenue']
@@ -2753,13 +2822,11 @@ def get_debts():
 
     debts = {}
     for obj in objects:
-        if obj.get('status') in OBJECT_STATUSES_NOT_DEBT:
+        if not _object_balance_counts_as_debt(obj):
             continue
         revenue = float(obj.get('total_revenue') or 0)
         advance = float(obj.get('advance') or 0)
         debt = float(obj.get('balance') or 0)
-        if debt <= 0:
-            continue
 
         client = obj.get('client', 'Без клиента')
         if client not in debts:

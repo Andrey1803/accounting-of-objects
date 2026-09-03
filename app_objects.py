@@ -345,6 +345,7 @@ OBJECT_STATUS_WAITING = 'Ожидает старта'
 OBJECT_STATUS_ACTIVE = 'В работе'
 OBJECT_STATUS_DONE = 'Выполнен'
 OBJECT_STATUS_CLOSED = 'Закрыт'
+OBJECT_STATUS_PAUSED = 'Приостановлен'
 OBJECT_STATUSES_SALARY = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Завершён', 'Оплачен')
 # Автопересчёт objects.salary — только для «живых» статусов.
 OBJECT_STATUSES_SALARY_AUTO = (OBJECT_STATUS_ACTIVE, OBJECT_STATUS_DONE, 'Завершён')
@@ -353,7 +354,7 @@ OBJECT_STATUSES_FINISHED = (OBJECT_STATUS_DONE, OBJECT_STATUS_CLOSED, 'Заве�
 # Финансово закрытые объекты — в списке по умолчанию только последние N (см. API objects-with-estimates).
 OBJECT_STATUSES_ARCHIVED = (OBJECT_STATUS_CLOSED, 'Оплачен')
 # Статусы, которые задаются только в учёте — интеграция их не затирает.
-OBJECT_STATUSES_OA_MANUAL = frozenset({'Приостановлен', 'Запланирован', 'Оплачен', 'Завершён'})
+OBJECT_STATUSES_OA_MANUAL = frozenset({OBJECT_STATUS_PAUSED, 'Запланирован', 'Оплачен', 'Завершён'})
 # Статусы, которыми управляет диспетчер (зеркалируем 1:1 при sync_status).
 OBJECT_STATUSES_DISPATCHER_SYNC = frozenset({
     OBJECT_STATUS_WAITING,
@@ -363,8 +364,8 @@ OBJECT_STATUSES_DISPATCHER_SYNC = frozenset({
 })
 # До миграции БД или в копии дампа без перезапуска могли остаться старые подписи
 OBJECT_STATUSES_NOT_DEBT = (OBJECT_STATUS_WAITING, 'Запланирован')
-# В делитель n (распределение зарплаты за день) не входят — только план, без выезда.
-OBJECT_STATUSES_SALARY_DIVISOR_SKIP = OBJECT_STATUSES_NOT_DEBT
+# В делитель n не входят: план и приостановка (на паузе зарплату не обнуляем и не делим бригаду).
+OBJECT_STATUSES_SALARY_DIVISOR_SKIP = (*OBJECT_STATUSES_NOT_DEBT, OBJECT_STATUS_PAUSED)
 
 # Распределение «затраты на рабочих» по объекту (поле objects.salary_allocation_mode)
 SALARY_ALLOCATION_ALL_WORKERS = 'all_workers'
@@ -638,6 +639,29 @@ def object_work_days_from_row(row):
     return _expand_date_range_inclusive(row.get('date_start'), row.get('date_end'))
 
 
+def _object_has_work_on_or_before_today(obj, today_ymd=None):
+    """Есть ли у объекта хотя бы один день работ сегодня или в прошлом (Europe/Minsk)."""
+    today = today_ymd or _minsk_today_ymd()
+    days = object_work_days_from_row(obj)
+    if not days:
+        ds = _parse_iso_date_ymd(obj.get('date_start') if obj else None)
+        if ds:
+            return ds <= today
+        return True
+    return any(d <= today for d in days)
+
+
+def _object_balance_counts_as_debt(obj):
+    """Положительный balance учитывается в задолженности, кроме плановых и только будущих выездов."""
+    if obj.get('status') in OBJECT_STATUSES_NOT_DEBT:
+        return False
+    if float(obj.get('balance') or 0) <= 0:
+        return False
+    if not _object_has_work_on_or_before_today(obj):
+        return False
+    return True
+
+
 def _work_dates_json_list(row):
     """Только явный JSON work_dates, без fallback на date_start..date_end."""
     if not row:
@@ -774,12 +798,14 @@ def _build_salary_calendar_counts(uid):
 def _object_brigade_daily_rate(uid, obj_id, mode):
     """Сумма дневных ставок для расчёта objects.salary (по режиму распределения)."""
     if mode == SALARY_ALLOCATION_ASSIGNED_WORKERS:
+        # По одному разу на рабочего: DISTINCT по ставке схлопывал двух с одинаковой ставкой в одного.
         rows = fetch_all(
             """
-            SELECT DISTINCT w.daily_rate
+            SELECT w.id AS worker_id, MAX(w.daily_rate) AS daily_rate
             FROM worker_assignments wa
             JOIN workers w ON w.id = wa.worker_id AND w.user_id = wa.user_id
             WHERE wa.object_id = ? AND wa.user_id = ? AND w.is_active = 1
+            GROUP BY w.id
             """,
             (obj_id, uid),
         )
@@ -1166,7 +1192,7 @@ def _portfolio_financial_totals(objects):
         )
         total_salary += float(obj.get('salary') or 0)
         bal = float(obj.get('balance') or 0)
-        if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+        if _object_balance_counts_as_debt(obj):
             total_debt += bal
             debt_objects += 1
     return {
@@ -1252,6 +1278,7 @@ def _apply_object_financial_enrichment(obj, user_id):
     obj['profit_work'] = work_profit
     obj['profit_material'] = mat_profit
     obj['balance'] = round(tr - float(obj.get('advance', 0) or 0), 2)
+    obj['counts_as_debt'] = _object_balance_counts_as_debt(obj)
     st = _norm_settlement_type(obj.get('settlement_type'))
     trg = _norm_tax_regime(obj.get('tax_regime'))
     obj['settlement_type'] = st
@@ -2695,8 +2722,20 @@ def get_object_workers(obj_id):
         )
         counts = _build_salary_calendar_counts(current_user.id)
         breakdown = _salary_auto_breakdown(current_user.id, obj_row, counts) if obj_row else []
-        auto_salary = float(obj_row['salary'] or 0) if obj_row else 0.0
-        
+        mode = _norm_salary_allocation_mode(obj_row.get('salary_allocation_mode')) if obj_row else SALARY_ALLOCATION_MANUAL
+        if breakdown and mode != SALARY_ALLOCATION_MANUAL:
+            # Живой расчёт по формуле (не устаревшее поле objects.salary).
+            auto_salary = round(sum(float(x.get('share') or 0) for x in breakdown), 2)
+            stored = round(float(obj_row.get('salary') or 0), 2)
+            status = (obj_row.get('status') or '').strip()
+            if status in OBJECT_STATUSES_SALARY_AUTO and abs(stored - auto_salary) >= 0.01:
+                execute(
+                    "UPDATE objects SET salary = ? WHERE id = ? AND user_id = ?",
+                    (auto_salary, obj_id, current_user.id),
+                )
+        else:
+            auto_salary = float(obj_row['salary'] or 0) if obj_row else 0.0
+
         total_salary = sum(a['total_pay'] for a in assignments) if assignments else 0
         return jsonify({
             'assignments': assignments,
@@ -3472,7 +3511,12 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None, include_fro
         if not obj:
             return
 
-        frozen = obj.get('status') in OBJECT_STATUSES_SALARY_FROZEN
+        status = (obj.get('status') or '').strip()
+        # На паузе не обнуляем и не пересчитываем — оставляем последнюю автосумму до возобновления.
+        if status == OBJECT_STATUS_PAUSED:
+            return
+
+        frozen = status in OBJECT_STATUSES_SALARY_FROZEN
         if frozen and not include_frozen:
             return
 
@@ -3482,7 +3526,7 @@ def recalc_object_salary(obj_id, user_id=None, calendar_counts=None, include_fro
                 execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
-        if not frozen and obj.get('status') not in OBJECT_STATUSES_SALARY_AUTO:
+        if not frozen and status not in OBJECT_STATUSES_SALARY_AUTO:
             execute("UPDATE objects SET salary = 0 WHERE id = ? AND user_id = ?", (obj_id, uid))
             return
 
@@ -3700,7 +3744,7 @@ def get_detailed_stats():
         clients_stat[gkey]['profit'] += prof
         clients_stat[gkey]['mat_profit'] += emp
 
-        if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+        if _object_balance_counts_as_debt(obj):
             if gkey not in debtors:
                 debtors[gkey] = {'name': clabel, 'debt': 0, 'objects': 0}
             debtors[gkey]['debt'] += bal
@@ -3727,7 +3771,7 @@ def get_detailed_stats():
             months[m]['material_profit'] += emp
             months[m]['advance'] += adv
             months[m]['objects'] += 1
-            if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+            if _object_balance_counts_as_debt(obj):
                 months[m]['debt'] += bal
 
     for row in clients_stat.values():
@@ -3782,7 +3826,7 @@ def get_detailed_stats():
         month_expenses += float(obj.get('total_expenses') or 0)
         month_advance += float(obj.get('advance') or 0)
         bal = float(obj.get('balance') or 0)
-        if bal > 0 and obj.get('status') not in OBJECT_STATUSES_NOT_DEBT:
+        if _object_balance_counts_as_debt(obj):
             month_debt += bal
 
     total_revenue = portfolio['total_revenue']
@@ -3846,13 +3890,11 @@ def get_debts():
 
     debts = {}
     for obj in objects:
-        if obj.get('status') in OBJECT_STATUSES_NOT_DEBT:
+        if not _object_balance_counts_as_debt(obj):
             continue
         revenue = float(obj.get('total_revenue') or 0)
         advance = float(obj.get('advance') or 0)
         debt = float(obj.get('balance') or 0)
-        if debt <= 0:
-            continue
 
         client = obj.get('client', 'Без клиента')
         if client not in debts:
