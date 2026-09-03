@@ -2126,7 +2126,7 @@
             
             filtered.forEach((obj, idx) => {
                 const balance = Math.abs(obj.balance || 0) < 0.005 ? 0 : (obj.balance || 0);
-                const hasDebt = obj.status !== 'Ожидает старта' && obj.status !== 'Запланирован' && balance > 0.01;
+                const hasDebt = obj.counts_as_debt != null ? !!obj.counts_as_debt : (obj.status !== 'Ожидает старта' && obj.status !== 'Запланирован' && balance > 0.01);
                 const tr = document.createElement('tr');
                 if (hasDebt) tr.className = 'debt-row';
                 else if (obj.status === 'Выполнен' || obj.status === 'Завершён') tr.style.background = '#f0f0f0';
@@ -2587,7 +2587,7 @@
         function objectWorkDaysForSalaryDivisor(obj) {
             if (!obj) return [];
             var st = String(obj.status || '').trim();
-            if (st === 'Ожидает старта' || st === 'Запланирован') return [];
+            if (st === 'Ожидает старта' || st === 'Запланирован' || st === 'Приостановлен') return [];
             var explicit = parseWorkDatesJsonOnly(obj);
             if (explicit.length) return explicit;
             var ds = String(obj.date_start || '').trim().slice(0, 10);
@@ -2605,6 +2605,22 @@
             try {
                 var modeEl = document.getElementById('salary-allocation-mode');
                 var mode = modeEl ? modeEl.value : 'all_workers';
+                var statusEl = document.getElementById('status');
+                var statusNow = statusEl ? String(statusEl.value || '').trim() : '';
+                if (statusNow === 'Закрыт' || statusNow === 'Оплачен') {
+                    var salEl = document.getElementById('salary');
+                    var frozen = salEl ? Number(salEl.value || 0) : 0;
+                    document.getElementById('salary-info').textContent =
+                        'Закрыт: затраты на рабочих зафиксированы (' + frozen.toFixed(2) + ' руб). Не меняются при правках других объектов.';
+                    return;
+                }
+                if (statusNow === 'Приостановлен') {
+                    var salP = document.getElementById('salary');
+                    var paused = salP ? Number(salP.value || 0) : 0;
+                    document.getElementById('salary-info').textContent =
+                        'На паузе: сумма сохранена (' + paused.toFixed(2) + ' руб), в делитель дня не входит.';
+                    return;
+                }
                 if (mode === 'manual') {
                     document.getElementById('salary-info').textContent = 'Ручной режим: введите «Затраты на рабочих» сами и сохраните.';
                     return;

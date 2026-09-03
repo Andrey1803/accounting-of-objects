@@ -1923,8 +1923,20 @@ def update_object(obj_id):
          mode_out, settlement_out, tax_out, now, obj_id, current_user.id))
 
     if any(k in data for k in ('status', 'date_start', 'date_end', 'work_dates', 'salary_allocation_mode')):
-        _recalc_salaries_for_user_id(current_user.id)
-        _recalc_frozen_salaries(current_user.id)
+        try:
+            _recalc_salaries_for_user_id(current_user.id)
+            new_status = (pick('status') or '').strip()
+            old_status = (ex.get('status') or '').strip()
+            became_frozen = (
+                new_status in OBJECT_STATUSES_SALARY_FROZEN
+                and old_status not in OBJECT_STATUSES_SALARY_FROZEN
+            )
+            stays_frozen = new_status in OBJECT_STATUSES_SALARY_FROZEN
+            if became_frozen or stays_frozen:
+                counts = _build_salary_calendar_counts(current_user.id)
+                recalc_object_salary(obj_id, current_user.id, calendar_counts=counts, include_frozen=True)
+        except Exception:
+            logging.exception("update_object: salary recalc failed for user %s object %s", current_user.id, obj_id)
 
     row = fetch_one("SELECT * FROM objects WHERE id = ? AND user_id = ?", (obj_id, current_user.id))
     if row:

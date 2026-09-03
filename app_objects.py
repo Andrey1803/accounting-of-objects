@@ -2139,7 +2139,17 @@ def integration_create_object_from_taskmgr():
                 )
             try:
                 _recalc_salaries_for_user_id(target_user_id)
-                _recalc_frozen_salaries(target_user_id)
+                old_st = (existing.get('status') or '').strip()
+                became_frozen = (
+                    status_new in OBJECT_STATUSES_SALARY_FROZEN
+                    and old_st not in OBJECT_STATUSES_SALARY_FROZEN
+                )
+                stays_frozen = status_new in OBJECT_STATUSES_SALARY_FROZEN
+                if became_frozen or stays_frozen:
+                    counts = _build_salary_calendar_counts(target_user_id)
+                    recalc_object_salary(
+                        existing['id'], target_user_id, calendar_counts=counts, include_frozen=True,
+                    )
             except Exception:
                 logging.exception(
                     "integration: salary recalc failed for user %s object %s",
@@ -2228,7 +2238,6 @@ def integration_create_object_from_taskmgr():
         )
         try:
             _recalc_salaries_for_user_id(target_user_id)
-            _recalc_frozen_salaries(target_user_id)
         except Exception:
             logging.exception(
                 "integration: salary recalc failed after create for user %s object %s",
@@ -2319,11 +2328,24 @@ def update_object(obj_id):
          pick('next_to_note'),
          mode_out, settlement_out, tax_out, now, obj_id, current_user.id))
 
-    # Всегда пересчитываем: делитель n зависит от статусов/дат соседей;
-    # частичные PUT (только status) раньше могли не дойти до актуальной доли.
+    # Пересчёт «живых» объектов. Закрытые/оплаченные не трогаем пачкой —
+    # иначе сумма «Затраты на рабочих» у уже закрытых плавает при правках соседей.
     try:
         _recalc_salaries_for_user_id(current_user.id)
-        _recalc_frozen_salaries(current_user.id)
+        new_status = (pick('status') or '').strip()
+        old_status = (ex.get('status') or '').strip()
+        became_frozen = (
+            new_status in OBJECT_STATUSES_SALARY_FROZEN
+            and old_status not in OBJECT_STATUSES_SALARY_FROZEN
+        )
+        stays_frozen = new_status in OBJECT_STATUSES_SALARY_FROZEN
+        salary_inputs_changed = any(
+            k in data for k in ('work_dates', 'date_start', 'date_end', 'status', 'salary_allocation_mode')
+        )
+        # Фиксируем сумму при закрытии; при правке дат/режима у уже закрытого — пересчёт только его.
+        if became_frozen or (stays_frozen and salary_inputs_changed):
+            counts = _build_salary_calendar_counts(current_user.id)
+            recalc_object_salary(obj_id, current_user.id, calendar_counts=counts, include_frozen=True)
     except Exception:
         logging.exception("update_object: salary recalc failed for user %s object %s", current_user.id, obj_id)
 
