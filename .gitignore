@@ -71,3 +71,6 @@ deploy/static/images/catalog/
 
 # Local AI IDE settings
 .qwen/
+_cookies.txt
+_run_log.txt
+_*.txt
