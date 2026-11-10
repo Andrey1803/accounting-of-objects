@@ -3754,13 +3754,7 @@
                 const data = await res.json();
 
                 // Добавляем в список
-                objectWorkersData.push({
-                    id: data.id,
-                    full_name: worker.full_name,
-                    daily_rate: worker.daily_rate,
-                    days_worked: days,
-                    total_pay: data.total_pay
-                });
+                if (typeof loadWorkersForObject === "function") { await loadWorkersForObject(); }
 
                 // Обновляем поле зарплаты в форме объекта
                 const salaryInput = document.getElementById('salary');
