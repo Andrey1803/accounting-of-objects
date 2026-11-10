@@ -3691,13 +3691,19 @@
                 list.innerHTML = '<p style="text-align:center;color:#999;padding:20px;">Нет рабочих. Добавьте первого рабочего выше.</p>';
                 return;
             }
-            
+
+            const selectedDate = (document.getElementById('ow-date')?.value) || '';
+            const rows = selectedDate
+                ? objectWorkersData.filter(aw => (aw.work_date || '') === selectedDate)
+                : objectWorkersData;
+
             let html = '<table style="width:100%; border-collapse:collapse; font-size:12px;">';
-            html += '<thead><tr style="background:#f5f5f5;"><th style="padding:6px;text-align:left;">Рабочий</th><th style="padding:6px;text-align:center;">Ставка</th><th style="padding:6px;text-align:center;">Дней</th><th style="padding:6px;text-align:right;">Сумма</th><th style="padding:6px;"></th></tr></thead>';
+            html += '<thead><tr style="background:#f5f5f5;"><th style="padding:6px;text-align:left;">Дата</th><th style="padding:6px;text-align:left;">Рабочий</th><th style="padding:6px;text-align:center;">Ставка</th><th style="padding:6px;text-align:center;">Дней</th><th style="padding:6px;text-align:right;">Сумма</th><th style="padding:6px;"></th></tr></thead>';
             html += '<tbody>';
-            
-            objectWorkersData.forEach(aw => {
+
+            rows.forEach(aw => {
                 html += `<tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:6px;color:#666;">${escHtml(aw.work_date || '')}</td>
                     <td style="padding:6px;">${escHtml(aw.full_name)}</td>
                     <td style="padding:6px;text-align:center;">${aw.daily_rate} руб</td>
                     <td style="padding:6px;text-align:center;">${aw.days_worked}</td>
@@ -3707,7 +3713,7 @@
                     </td>
                 </tr>`;
             });
-            
+
             html += '</tbody></table>';
             list.innerHTML = html;
         }
