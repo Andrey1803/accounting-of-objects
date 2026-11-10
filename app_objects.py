@@ -2828,6 +2828,8 @@ def add_object_worker(obj_id):
         total_pay = worker['daily_rate'] * days
         work_date = data.get('work_date', '')
         
+        _wd_norm = _parse_iso_date_ymd(work_date) or work_date
+        execute("DELETE FROM worker_assignments WHERE user_id = ? AND worker_id = ? AND object_id = ? AND work_date = ?", (current_user.id, worker_id, obj_id, _wd_norm))
         aid = execute("""INSERT INTO worker_assignments
             (user_id, worker_id, object_id, work_date, days_worked, total_pay)
             VALUES (?, ?, ?, ?, ?, ?)""",
