@@ -2517,6 +2517,7 @@ def update_worker(worker_id):
         (data.get('full_name'), data.get('phone'), data.get('daily_rate', 300),
          data.get('hire_date', ''), data.get('notes', ''), data.get('is_active', 1),
          worker_id, current_user.id))
+    execute("UPDATE worker_assignments SET total_pay = ? * days_worked WHERE worker_id = ? AND user_id = ?", (data.get('daily_rate', 300), worker_id, current_user.id))
     w = fetch_one("SELECT * FROM workers WHERE id = ? AND user_id = ?", (worker_id, current_user.id))
     if not w:
         return jsonify({"error": "Не найдено"}), 404
