@@ -62,7 +62,7 @@ from object_audit import (
 
 # Версия в шапке и /health (minor = financial_logic_version)
 APP_VERSION_MAJOR = 4
-FINANCIAL_LOGIC_VERSION = 4
+FINANCIAL_LOGIC_VERSION = 5
 APP_VERSION = f"{APP_VERSION_MAJOR}.{FINANCIAL_LOGIC_VERSION}"
 
 
