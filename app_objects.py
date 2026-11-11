@@ -62,7 +62,7 @@ from object_audit import (
 
 # Версия в шапке и /health (minor = financial_logic_version)
 APP_VERSION_MAJOR = 4
-FINANCIAL_LOGIC_VERSION = 6
+FINANCIAL_LOGIC_VERSION = 7
 APP_VERSION = f"{APP_VERSION_MAJOR}.{FINANCIAL_LOGIC_VERSION}"
 
 
@@ -480,6 +480,14 @@ def _integration_sync_workers_roster(user_id, members, deactivate_missing=True):
 
 
 def _object_work_dates_for_crew_sync(obj, fallback_dates):
+    if fallback_dates:
+        cleaned = []
+        for x in fallback_dates:
+            d = _parse_iso_date_ymd(x)
+            if d:
+                cleaned.append(d)
+        if cleaned:
+            return sorted(set(cleaned))
     """Даты выезда для назначения бригады: календарь объекта ∪ даты из диспетчера."""
     days = set()
     raw = obj.get('work_dates') if obj else None
