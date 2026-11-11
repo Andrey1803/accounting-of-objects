@@ -62,7 +62,7 @@ from object_audit import (
 
 # Версия в шапке и /health (minor = financial_logic_version)
 APP_VERSION_MAJOR = 4
-FINANCIAL_LOGIC_VERSION = 5
+FINANCIAL_LOGIC_VERSION = 6
 APP_VERSION = f"{APP_VERSION_MAJOR}.{FINANCIAL_LOGIC_VERSION}"
 
 
@@ -516,8 +516,8 @@ def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assi
                 continue
             execute(
                 """DELETE FROM worker_assignments
-                   WHERE user_id = ? AND object_id = ? AND work_date = ? AND integration_source = ?""",
-                (user_id, object_id, wd_norm, TASKMGR_AUTO_ASSIGN_SOURCE),
+                   WHERE user_id = ? AND object_id = ? AND integration_source = ?""",
+                (user_id, object_id, TASKMGR_AUTO_ASSIGN_SOURCE),
             )
         if set_assigned_mode:
             execute(
@@ -540,8 +540,8 @@ def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assi
                 continue
             execute(
                 """DELETE FROM worker_assignments
-                   WHERE user_id = ? AND object_id = ? AND work_date = ? AND integration_source = ?""",
-                (user_id, object_id, wd_norm, TASKMGR_AUTO_ASSIGN_SOURCE),
+                   WHERE user_id = ? AND object_id = ? AND integration_source = ?""",
+                (user_id, object_id, TASKMGR_AUTO_ASSIGN_SOURCE),
             )
         if set_assigned_mode:
             execute(
@@ -558,8 +558,8 @@ def _integration_sync_object_crew(user_id, object_id, work_dates, crew, set_assi
             continue
         execute(
             """DELETE FROM worker_assignments
-               WHERE user_id = ? AND object_id = ? AND work_date = ? AND integration_source = ?""",
-            (user_id, object_id, wd_norm, TASKMGR_AUTO_ASSIGN_SOURCE),
+               WHERE user_id = ? AND object_id = ? AND integration_source = ?""",
+            (user_id, object_id, TASKMGR_AUTO_ASSIGN_SOURCE),
         )
         for wid in worker_ids:
             w = fetch_one('SELECT daily_rate FROM workers WHERE id = ? AND user_id = ?', (wid, user_id))
